@@ -1,0 +1,11 @@
+[env_setup] example environment loaded
+Activating DSim version: 2026
+Questa Altera Starter FPGA Edition-64 vlog 2025.2 Compiler 2025.05 May 31 2025
+Start time: 07:12:50 on Jul 20,2026
+vlog /tmp/broken.sv 
+** Note: (vlog-220) '/home/caioplazas/altera/25.1std/questa_fse/linux_x86_64/../modelsim.ini' is used as the ini file.
+-- Compiling module broken
+** Error: /tmp/broken.sv(6): (vlog-2730) Undefined variable: 'missing_signal'.
+** Error: (vlog-13069) /tmp/broken.sv(6): near ";": syntax error, unexpected ';'.
+End time: 07:12:50 on Jul 20,2026, Elapsed time: 0:00:00
+Errors: 2, Warnings: 0

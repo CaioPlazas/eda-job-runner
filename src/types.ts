@@ -1,0 +1,184 @@
+export interface JobDefinition {
+  id: string;
+  name: string;
+  command: string;
+  /** Path relative to the workspace root. "." means the workspace root itself. */
+  cwd: string;
+  /**
+   * When true, this is the workspace's default job — the one run by the
+   * "EDA: Run Default Job" command (and the F5 keybinding, when a default
+   * exists). At most one job may be default; JobStore enforces that.
+   */
+  default?: boolean;
+  /**
+   * Whether to scan this job's output for errors/warnings and surface them in
+   * the Problems panel (and let them influence pass/fail). Undefined means
+   * enabled — the default. Set false as a safeguard for an unsupported tool
+   * whose output the built-in patterns misread; the job then runs and logs
+   * normally, with pure exit-code status and no diagnostics.
+   */
+  parseProblems?: boolean;
+  /**
+   * Optional case-insensitive regex, tested against each captured output
+   * line, tool-agnostic (any tool's own printed "this actually failed" line
+   * works, not just the four built-in UVM/Questa/Icarus/DSim/Verilator
+   * patterns). If it matches anywhere in the run, the job is marked FAILED
+   * even if the process exited 0. Works independently of `parseProblems`.
+   * A `failPattern` match overrides everything except a user Stop.
+   */
+  failPattern?: string;
+  /**
+   * Optional case-insensitive regex marking this job's required "passed"
+   * signal, tool-agnostic like `failPattern`. When set it fully governs
+   * pass/fail: the job passes only if this matches at least once
+   * (regardless of exit code -- for tools that always exit non-zero even on
+   * success) and is marked FAILED if it never appears. A matching
+   * `failPattern` still overrides to failed. Works independently of
+   * `parseProblems`.
+   */
+  passPattern?: string;
+  /**
+   * Optional external file to tail in the live log viewer instead of the
+   * captured pipe output. Set this to a scheduler's output file (e.g. an
+   * LSF/SGE `bsub -o` / `qsub -o` path) when the job detaches to a farm host,
+   * so the live viewer streams the real job output. Absolute, or relative to
+   * the job's working directory; supports `${workspaceFolder}`.
+   */
+  logFile?: string;
+  /**
+   * Per-job override of `eda-job-runner.postSetupCwd` — the directory this
+   * job's shell starts in, which `cwd` above then resolves against, instead
+   * of the workspace-wide setting. Blank/undefined inherits the setting.
+   * Supports `${workspaceFolder}` / `${env:NAME}`. Set via a job's Advanced
+   * configuration.
+   */
+  postSetupCwd?: string;
+  /**
+   * Sequential repeat count for Run — e.g. 10 back-to-back runs of the same
+   * test with a random seed, one after another (never in parallel). 1 or
+   * undefined means a normal single run. Set via a job's Advanced
+   * configuration.
+   */
+  runCount?: number;
+  /**
+   * Optional link to a tool registered in Tool Setup, used only to
+   * re-show that tool's checkbox builder when reopening this job's
+   * Configure form. Purely a UI convenience — `command` above remains the
+   * single source of truth for what actually runs, unaffected by this
+   * field (tool-agnostic core).
+   */
+  toolId?: string;
+  /** Which of `toolId`'s variants (sub-tool) the builder should show. "" is the top-level variant. */
+  toolVariantLabel?: string;
+  /**
+   * Per-job override of a `toolId` list's insert template, keyed by the
+   * list's `name` (see `ToolList`). Lets one job insert a picked value as
+   * `+UVM_TESTNAME=${value}` and another as `--test ${value}` from the same
+   * shared tool list. Absent keys inherit the tool's own `insertTemplate`.
+   * UI convenience only — `command` remains the single source of truth.
+   */
+  listInsertOverrides?: Record<string, string>;
+  /**
+   * Which sidebar folder this job is grouped under (must match an entry in
+   * `JobsFile.folders`). Undefined, or a name no longer in that list, means
+   * ungrouped -- shown flat at the top level, today's behavior. A job
+   * belongs to at most one folder; folders are a single flat level, not a
+   * nested tree.
+   */
+  folder?: string;
+}
+
+/** A single discovered CLI flag for a tool, e.g. `-s SEED, --seed SEED`. */
+export interface ToolOption {
+  /** All flag spellings, e.g. ["-s", "--seed"]. */
+  flags: string[];
+  /** Placeholder text if the flag takes a value (e.g. "SEED"); undefined for a pure toggle. */
+  metavar?: string;
+  description?: string;
+  /** Starred in Tool Setup so it surfaces first in a job's builder, ahead of a long flag list. */
+  favorite?: boolean;
+}
+
+/**
+ * One scannable "mode" of a tool. `variants[0]` on a `ToolDefinition` is
+ * always the implicit top-level variant (`label: ""`, `selectArgs: []`) —
+ * plain `<command> <helpArg>`. Additional variants are dispatcher
+ * sub-commands whose own flag set differs from the top level (e.g. a run
+ * script's `compile` mode vs. its `regression` mode taking different
+ * flags), scanned as `<command> ...selectArgs <helpArg>`.
+ */
+export interface ToolVariant {
+  label: string;
+  selectArgs: string[];
+  options: ToolOption[];
+  /** Captured help text, capped, kept for troubleshooting a misparse in the Tool Setup panel. */
+  rawHelp?: string;
+  /** Set only when the scan failed AND produced zero parseable options. */
+  scanError?: string;
+}
+
+/**
+ * A named, tool-agnostic "value list" — the source behind a test-list
+ * dropdown in the job builder. Its members are discovered from exactly one
+ * source (a file, or a command's stdout) and cached in `values`, refreshed
+ * whenever the tool's flags are rescanned. `parseListLines`/`discoverList`
+ * do the reading; `applyInsertTemplate` turns a picked value into a Command
+ * fragment via `insertTemplate` so no tool's flag syntax is assumed.
+ */
+export interface ToolList {
+  /** Label shown next to the dropdown in the builder, e.g. "Test". */
+  name: string;
+  /** Command whose stdout lines are the values. Exactly one of command/file is set. */
+  command?: string;
+  /** File whose lines are the values (absolute, or relative to the tool's cwd). */
+  file?: string;
+  /** Optional regex applied per line; capture group 1 (or the whole match) is the value. */
+  pattern?: string;
+  /** How a picked value is inserted into the Command; `${value}` is substituted. Defaults to `${value}`. */
+  insertTemplate?: string;
+  /** Discovered + cached values (like `ToolVariant.options`), refreshed on rescan. */
+  values: string[];
+  /** Set when the last discovery failed (spawn/read error, or no values found). */
+  scanError?: string;
+}
+
+export interface ToolDefinition {
+  id: string;
+  /** Command as typed by the user, e.g. "run_simulation.py" or a full path. */
+  command: string;
+  /** Flag used to introspect the tool. Defaults to "--help". */
+  helpArg?: string;
+  variants: ToolVariant[];
+  /** Named value lists (e.g. a test list) surfaced as dropdowns in the job builder. */
+  lists?: ToolList[];
+  /** Epoch ms of the last scan attempt (successful or not). */
+  lastScanned?: number;
+}
+
+export interface ToolsFile {
+  version: 1;
+  tools: ToolDefinition[];
+}
+
+export function emptyToolsFile(): ToolsFile {
+  return { version: 1, tools: [] };
+}
+
+export interface JobsFileSetup {
+  /** Path (relative to workspace root) to a script that is sourced before every job. */
+  script?: string;
+  /** Literal shell commands run (in order) before every job, after `setup.script`. */
+  commands?: string[];
+}
+
+export interface JobsFile {
+  version: 1;
+  setup?: JobsFileSetup;
+  /** Ordered list of sidebar folder names. A job groups under one by name via `JobDefinition.folder`. */
+  folders?: string[];
+  jobs: JobDefinition[];
+}
+
+export function emptyJobsFile(): JobsFile {
+  return { version: 1, jobs: [] };
+}

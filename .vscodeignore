@@ -1,0 +1,15 @@
+.vscode/**
+.vscode-test/**
+src/**
+.gitignore
+tsconfig.json
+esbuild.js
+**/*.map
+**/.eslintrc.json
+node_modules/**
+# Repo-only content — not part of the shipped extension
+examples/**
+sample-projects/**
+test-fixtures/**
+docs/**
+scripts/**

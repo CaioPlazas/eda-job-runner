@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "setup": {
+    "script": "scripts/env_setup.sh"
+  },
+  "folders": [
+    "Compile"
+  ],
+  "jobs": [
+    {
+      "id": "c0adb71a-85b5-4e05-af81-fa11d3e634b8",
+      "name": "Compile (mock)",
+      "command": "echo Compiling...; sleep 1; echo Compile OK",
+      "cwd": ".",
+      "runCount": 5,
+      "folder": "Compile"
+    },
+    {
+      "id": "5ddf7aef-a6a1-4933-b7d7-909f0bc59601",
+      "name": "smoke_test (pass)",
+      "command": "bash scripts/mock_uvm_sim.sh",
+      "cwd": "."
+    },
+    {
+      "id": "fdcfe415-4021-4b8f-9e21-55b29f4e7078",
+      "name": "regression (fail)",
+      "command": "bash scripts/mock_uvm_sim.sh --fail",
+      "cwd": "."
+    },
+    {
+      "id": "2fc82756-3bf8-4f44-b9ca-e4e5f4bb4dce",
+      "name": "long_running (stop me)",
+      "command": "bash scripts/long_running.sh",
+      "cwd": "."
+    },
+    {
+      "id": "33e870e0-5ccb-4094-b3c6-25e8deb0efde",
+      "name": "noisy (truncation test)",
+      "command": "bash scripts/noisy.sh",
+      "cwd": "."
+    },
+    {
+      "id": "3e3bfe57-3cbe-4e28-964e-0801304a33f2",
+      "name": "Verilator Compile (lint -- no sim, tool limitation)",
+      "command": "verilator --lint-only -Wall rtl/counter.v",
+      "cwd": "."
+    },
+    {
+      "id": "d3301c6e-f8f3-405f-b79f-4170219bb1e3",
+      "name": "Icarus Compile",
+      "command": "mkdir -p build && iverilog -o build/counter_sim rtl/counter.v tb/counter_tb.v",
+      "cwd": "."
+    },
+    {
+      "id": "692defac-c658-40a9-8db8-329f30dc22fe",
+      "name": "Icarus Test",
+      "command": "vvp build/counter_sim",
+      "cwd": "."
+    },
+    {
+      "id": "6b66503f-93d5-4f36-ae7c-6ed14dedc456",
+      "name": "DSim UVM Compile+Test (pass)",
+      "command": "dsim -uvm 1.2 tb/uvm_smoke_test.sv +UVM_TESTNAME=smoke_test",
+      "cwd": "."
+    },
+    {
+      "id": "b6d31d6d-0718-41f6-b490-6dcf2ace67ec",
+      "name": "DSim UVM Compile+Test (fail -- watch the exit code)",
+      "command": "dsim -uvm 1.2 tb/uvm_smoke_test.sv +UVM_TESTNAME=smoke_test +FAIL",
+      "cwd": "."
+    },
+    {
+      "id": "dbfee2fd-b3a3-4fed-aed7-5a38756fc30b",
+      "name": "Questa Compile",
+      "command": "vlog rtl/counter.v tb/counter_tb.v",
+      "cwd": "."
+    },
+    {
+      "id": "fdf7fee1-2837-4727-8fba-e7bc59b6da8a",
+      "name": "Questa Test",
+      "command": "vsim -c -do \"run -all; quit\" counter_tb",
+      "cwd": "."
+    }
+  ]
+}

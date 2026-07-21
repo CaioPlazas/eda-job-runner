@@ -1,0 +1,15 @@
+%Warning-WIDTHEXPAND: warnmod.sv:3:15: Operator ASSIGNW expects 8 bits on the Assign RHS, but Assign RHS's VARREF 'a' generates 4 bits.
+                                     : ... note: In instance 'warnmod'
+    3 |   assign wide = a;
+      |               ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.020
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHTRUNC: warnmod.sv:4:12: Operator ASSIGNW expects 4 bits on the Assign RHS, but Assign RHS's VARREF 'wide' generates 8 bits.
+                                    : ... note: In instance 'warnmod'
+    4 |   assign y = wide;
+      |            ^
+%Warning-UNUSEDSIGNAL: warnmod.sv:2:15: Bits of signal are not used: 'wide'[7:4]
+                                      : ... note: In instance 'warnmod'
+    2 |   logic [7:0] wide;
+      |               ^~~~
+%Error: Exiting due to 3 warning(s)

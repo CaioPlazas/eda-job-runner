@@ -1,0 +1,10 @@
+%Error: broken.sv:3:10: Can't find definition of variable: 'undeclared_sig'
+    3 |     a <= undeclared_sig;
+      |          ^~~~~~~~~~~~~~
+%Error: broken.sv:3:5: Can't find definition of variable: 'a'
+    3 |     a <= undeclared_sig;
+      |     ^
+%Error: broken.sv:5:14: Can't find definition of variable: 'b'
+    5 |   assign q = b;
+      |              ^
+%Error: Exiting due to 3 error(s)

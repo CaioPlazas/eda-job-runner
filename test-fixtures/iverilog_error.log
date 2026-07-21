@@ -1,0 +1,6 @@
+[env_setup] example environment loaded
+Activating DSim version: 2026
+/tmp/broken.sv:2: error: Net data type requires SystemVerilog.
+/tmp/broken.sv:5: syntax error
+/tmp/broken.sv:5: error: Invalid module instantiation
+I give up.

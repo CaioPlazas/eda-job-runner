@@ -1,0 +1,198 @@
+Activating DSim version: 2026
+Copyright (C) 2017-2025 Altair Engineering Inc. All rights reserved.
+=N:[UVMSource] Using sources from '/home/caioplazas/AltairDSim/2026/uvm/1.2'
+=N:[UsageMeter (2026-07-20 07:45:56 +0200)] Using /etc/ssl/certs as location of CA certificates to verify license server.
+=N:[UsageMeter (2026-07-20 07:45:56 +0200)] usage server initial connection
+=N:[License] 
+********************************************************************************
+
+[DSIM LICENSE NOTICE]
+
+The free license for DSim on-prem is scheduled to expire on September 1st.
+
+To ensure uninterrupted service after this date, please transition your
+
+environment to use Altair licensing.
+
+KEY DATES:
+
+Sept 1st: Free On-Prem licenses and DSim Cloud services discontinued.
+
+Oct 15th: All DSim Cloud data will be permanently deleted.
+
+For migration instructions and Altair licensing details, visit: altair.com/dsim
+
+********************************************************************************
+=N:[License] New lease granted.
+Analyzing...
+Elaborating...
+  Top-level modules:
+    $unit
+    tb_top
+=W:[IneffectiveDynamicCast]:
+    The following dynamic $cast cases will always be false    
+
+    /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_callback.svh:521:9             class uvm_pkg::uvm_callbacks#(class uvm_pkg::uvm_phase,class uvm_pkg::uvm_phase_cb)    class uvm_pkg::uvm_callbacks#(class uvm_pkg::uvm_phase,class uvm_pkg::uvm_callback)    
+    Included from /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_base.svh:76:3                                                                                                                                                                                  
+    Included from /home/caioplazas/AltairDSim/2026/uvm/1.2/src/uvm_pkg.sv:31:3                                                                                                                                                                                         
+
+    /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_callback.svh:671:12            class uvm_pkg::uvm_phase                                                               class uvm_pkg::uvm_report_object                                                       
+    Included from /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_base.svh:76:3                                                                                                                                                                                  
+
+    /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_callback.svh:731:10            class uvm_pkg::uvm_component                                                           class uvm_pkg::uvm_phase                                                               
+    Included from /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_base.svh:76:3                                                                                                                                                                                  
+
+    /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_callback.svh:808:10            class uvm_pkg::uvm_component                                                           class uvm_pkg::uvm_phase                                                               
+    Included from /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_base.svh:76:3                                                                                                                                                                                  
+
+  Found 6 unique specialization(s) of 6 design element(s).
+=W:[MissingTimescale]:
+    It is illegal for some design elements to have time specifications    
+    while others don't.  A complete time specification includes           
+    both a time unit and time precision.                                  
+
+        Have complete time spec    Have no/incomplete time spec    
+
+        tb_top                     alu                             
+                                   alu_if                          
+                                   alu_pkg                         
+                                   uvm_pkg                         
+
+Optimizing...
+Building models...
+PLI/VPI access: (none) 
+Simulation time precision is 1ps.
+  [1/8] module $root: 1791 functions, 3952 basic blocks
+  [2/8] module $pkgs: 1 functions, 2 basic blocks
+  [3/8] module tb_top: 14 functions, 59 basic blocks
+  [4/8] package std: 33 functions, 84 basic blocks
+  [5/8] package uvm_pkg: 6 submodules, 3894 functions, 41652 basic blocks
+  [6/8] package alu_pkg: 94 functions, 943 basic blocks
+  [7/8] interface alu_if#(32): 1 functions, 2 basic blocks
+  [8/8] module alu#(32): 11 functions, 82 basic blocks
+Linking image.so...
+/usr/bin/ld: warning: dsim_work/obj/LBuvm_pkg.o: missing .note.GNU-stack section implies executable stack
+/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+Using default typical min/typ/max.
+=S:Begin run-time elaboration and static initialization...
+UVM_INFO /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_root.svh(392) @ 0: reporter [UVM/RELNOTES] 
+----------------------------------------------------------------
+UVM-1.2
+(C) 2007-2014 Mentor Graphics Corporation
+(C) 2007-2014 Cadence Design Systems, Inc.
+(C) 2006-2014 Synopsys, Inc.
+(C) 2011-2013 Cypress Semiconductor Corp.
+(C) 2013-2014 NVIDIA Corporation
+----------------------------------------------------------------
+
+  ***********       IMPORTANT RELEASE NOTES         ************
+
+  You are using a version of the UVM library that has been compiled
+  with `UVM_NO_DEPRECATED undefined.
+  See http://www.eda.org/svdb/view.php?id=3313 for more details.
+
+  You are using a version of the UVM library that has been compiled
+  with `UVM_OBJECT_DO_NOT_NEED_CONSTRUCTOR undefined.
+  See http://www.eda.org/svdb/view.php?id=3770 for more details.
+
+      (Specify +UVM_NO_RELNOTES to turn off this notice)
+
+=N:Starting event scheduler...
+UVM_INFO tb/tb_top.sv(34) @ 0: reporter [TB_TOP] +BUG set: DUT SUB is intentionally broken
+UVM_INFO @ 0: reporter [RNTST] Running test alu_random_test...
+UVM_INFO /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_root.svh(579) @ 0: reporter [UVMTOP] UVM testbench topology:
+--------------------------------------------------------------
+Name                       Type                    Size  Value
+--------------------------------------------------------------
+uvm_test_top               alu_random_test         -     @341 
+  env                      alu_env                 -     @354 
+    agent                  alu_agent               -     @363 
+      drv                  alu_driver              -     @411 
+        rsp_port           uvm_analysis_port       -     @430 
+        seq_item_port      uvm_seq_item_pull_port  -     @420 
+      mon                  alu_monitor             -     @577 
+        ap                 uvm_analysis_port       -     @586 
+      seqr                 uvm_sequencer           -     @440 
+        rsp_export         uvm_analysis_export     -     @449 
+        seq_item_export    uvm_seq_item_pull_imp   -     @567 
+        arbitration_queue  array                   0     -    
+        lock_queue         array                   0     -    
+        num_last_reqs      integral                32    'd1  
+        num_last_rsps      integral                32    'd1  
+    cov                    alu_coverage            -     @391 
+      analysis_imp         uvm_analysis_imp        -     @400 
+    sb                     alu_scoreboard          -     @372 
+      analysis_imp         uvm_analysis_imp        -     @381 
+--------------------------------------------------------------
+
+UVM_ERROR tb/alu_pkg.sv(160) @ 130000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xffffffff b=0x00000001 : DUT=0x00000000 expected=0xfffffffe
+UVM_ERROR tb/alu_pkg.sv(160) @ 150000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x80000000 b=0x7fffffff : DUT=0xffffffff expected=0x00000001
+UVM_ERROR tb/alu_pkg.sv(160) @ 170000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xdeadbeef b=0x00000004 : DUT=0xdeadbef3 expected=0xdeadbeeb
+UVM_ERROR tb/alu_pkg.sv(160) @ 810000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x68c90874 b=0xd8b0a950 : DUT=0x4179b1c4 expected=0x90185f24
+UVM_ERROR tb/alu_pkg.sv(160) @ 890000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x296c79cb b=0x89fe94a9 : DUT=0xb36b0e74 expected=0x9f6de522
+UVM_ERROR tb/alu_pkg.sv(160) @ 1290000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x0cf42705 b=0xcb7ceb83 : DUT=0xd8711288 expected=0x41773b82
+UVM_ERROR tb/alu_pkg.sv(160) @ 1330000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x56b54406 b=0xdbf6cc42 : DUT=0x32ac1048 expected=0x7abe77c4
+UVM_ERROR tb/alu_pkg.sv(160) @ 1350000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xf7ad15aa b=0x9503eaa5 : DUT=0x8cb1004f expected=0x62a92b05
+UVM_ERROR tb/alu_pkg.sv(160) @ 2010000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x2fcb7e9f b=0x9b59aa49 : DUT=0xcb2528e8 expected=0x9471d456
+UVM_ERROR tb/alu_pkg.sv(160) @ 2030000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x3789c47e b=0x81a030d4 : DUT=0xb929f552 expected=0xb5e993aa
+UVM_ERROR tb/alu_pkg.sv(160) @ 2130000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x90c7a822 b=0x48eeb763 : DUT=0xd9b65f85 expected=0x47d8f0bf
+UVM_ERROR tb/alu_pkg.sv(160) @ 2150000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x6ebdb135 b=0x0c77d013 : DUT=0x7b358148 expected=0x6245e122
+UVM_ERROR tb/alu_pkg.sv(160) @ 2250000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x185f6d36 b=0x629fb1e0 : DUT=0x7aff1f16 expected=0xb5bfbb56
+UVM_ERROR tb/alu_pkg.sv(160) @ 2670000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x1937b314 b=0x42c005d2 : DUT=0x5bf7b8e6 expected=0xd677ad42
+UVM_ERROR tb/alu_pkg.sv(160) @ 2750000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x4c1f08df b=0x47b10ca4 : DUT=0x93d01583 expected=0x046dfc3b
+UVM_ERROR tb/alu_pkg.sv(160) @ 2790000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x3d299df9 b=0xbb157303 : DUT=0xf83f10fc expected=0x82142af6
+UVM_ERROR tb/alu_pkg.sv(160) @ 3030000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xf208b02e b=0x219b3b65 : DUT=0x13a3eb93 expected=0xd06d74c9
+UVM_ERROR tb/alu_pkg.sv(160) @ 3290000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xbfaf3f2d b=0xd9cfe763 : DUT=0x997f2690 expected=0xe5df57ca
+UVM_ERROR tb/alu_pkg.sv(160) @ 3350000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x7376369f b=0x53fb7182 : DUT=0xc771a821 expected=0x1f7ac51d
+UVM_ERROR tb/alu_pkg.sv(160) @ 3370000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x1eab28b8 b=0x2318096c : DUT=0x41c33224 expected=0xfb931f4c
+UVM_ERROR tb/alu_pkg.sv(160) @ 3510000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x16fdc706 b=0x12759828 : DUT=0x29735f2e expected=0x04882ede
+UVM_ERROR tb/alu_pkg.sv(160) @ 3750000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xcfd266d4 b=0x2e83d95a : DUT=0xfe56402e expected=0xa14e8d7a
+UVM_ERROR tb/alu_pkg.sv(160) @ 3970000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xf3a4b472 b=0x2eca42c0 : DUT=0x226ef732 expected=0xc4da71b2
+UVM_ERROR tb/alu_pkg.sv(160) @ 4050000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x52588162 b=0x6b1b8ed0 : DUT=0xbd741032 expected=0xe73cf292
+UVM_ERROR tb/alu_pkg.sv(160) @ 4110000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xc4bce623 b=0x12c0c02f : DUT=0xd77da652 expected=0xb1fc25f4
+UVM_ERROR tb/alu_pkg.sv(160) @ 4310000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x496b0923 b=0xe1db4e93 : DUT=0x2b4657b6 expected=0x678fba90
+UVM_ERROR tb/alu_pkg.sv(160) @ 4350000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xa9b69ea2 b=0x07f64615 : DUT=0xb1ace4b7 expected=0xa1c0588d
+UVM_ERROR tb/alu_pkg.sv(160) @ 4370000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x13b01831 b=0xfe7f4d62 : DUT=0x122f6593 expected=0x1530cacf
+UVM_ERROR tb/alu_pkg.sv(160) @ 4450000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x6ccbdf68 b=0x75efee76 : DUT=0xe2bbcdde expected=0xf6dbf0f2
+UVM_ERROR tb/alu_pkg.sv(160) @ 4530000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x3c47087d b=0x58d35067 : DUT=0x951a58e4 expected=0xe373b816
+UVM_ERROR tb/alu_pkg.sv(160) @ 4570000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xa6fcb4f4 b=0x5c27828e : DUT=0x03243782 expected=0x4ad53266
+UVM_ERROR tb/alu_pkg.sv(160) @ 4650000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x4f218d43 b=0xbb5ae5d6 : DUT=0x0a7c7319 expected=0x93c6a76d
+UVM_ERROR tb/alu_pkg.sv(160) @ 4810000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xeb68654c b=0x5428887b : DUT=0x3f90edc7 expected=0x973fdcd1
+UVM_ERROR tb/alu_pkg.sv(160) @ 4910000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x29eb05ae b=0xa01ebd0d : DUT=0xca09c2bb expected=0x89cc48a1
+UVM_ERROR tb/alu_pkg.sv(160) @ 5110000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x8daf66ab b=0x882e2b3b : DUT=0x15dd91e6 expected=0x05813b70
+UVM_ERROR tb/alu_pkg.sv(160) @ 5230000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x03a26e31 b=0x575b8318 : DUT=0x5afdf149 expected=0xac46eb19
+UVM_ERROR tb/alu_pkg.sv(160) @ 5530000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xc441348b b=0xdcd615bf : DUT=0xa1174a4a expected=0xe76b1ecc
+UVM_ERROR tb/alu_pkg.sv(160) @ 5730000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x6e210d30 b=0x7136145a : DUT=0xdf57218a expected=0xfceaf8d6
+UVM_ERROR tb/alu_pkg.sv(160) @ 5870000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xb6a55cf0 b=0xf752ddae : DUT=0xadf83a9e expected=0xbf527f42
+UVM_ERROR tb/alu_pkg.sv(160) @ 6150000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xbd5c7be4 b=0x2c9fc57a : DUT=0xe9fc415e expected=0x90bcb66a
+UVM_ERROR tb/alu_pkg.sv(160) @ 6190000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xc8c0e24c b=0x502deb55 : DUT=0x18eecda1 expected=0x7892f6f7
+UVM_ERROR tb/alu_pkg.sv(160) @ 6330000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xac49d530 b=0xca19d16e : DUT=0x7663a69e expected=0xe23003c2
+UVM_ERROR tb/alu_pkg.sv(160) @ 6370000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xa1a33d17 b=0xa8cc9ce7 : DUT=0x4a6fd9fe expected=0xf8d6a030
+UVM_ERROR tb/alu_pkg.sv(160) @ 6430000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xde5576c0 b=0x9b4e5947 : DUT=0x79a3d007 expected=0x43071d79
+UVM_ERROR tb/alu_pkg.sv(160) @ 6450000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0xc31a31cb b=0x12ffca0a : DUT=0xd619fbd5 expected=0xb01a67c1
+UVM_ERROR tb/alu_pkg.sv(160) @ 6510000: uvm_test_top.env.sb [ALU_MISMATCH] op=OP_SUB a=0x46ed225c b=0x9cb585e0 : DUT=0xe3a2a83c expected=0xaa379c7c
+UVM_INFO /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_objection.svh(1270) @ 6745000: reporter [TEST_DONE] 'run' phase is ready to proceed to the 'extract' phase
+UVM_INFO tb/alu_pkg.sv(171) @ 6745000: uvm_test_top.env.sb [SB] scoreboard: 330 checked, 46 mismatch(es)
+UVM_INFO /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_report_server.svh(847) @ 6745000: reporter [UVM/REPORT/SERVER] 
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :    6
+UVM_WARNING :    0
+UVM_ERROR :   46
+UVM_FATAL :    0
+** Report counts by id
+[ALU_MISMATCH]    46
+[RNTST]     1
+[SB]     1
+[TB_TOP]     1
+[TEST_DONE]     1
+[UVM/RELNOTES]     1
+[UVMTOP]     1
+
+=N:[WriteMetrics] Writing coverage metrics...
+=T:Simulation terminated by $finish at time 6745000 (/home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_root.svh:517);
+Run directory: /home/caioplazas/vscode-verilog-manager/sample-projects/uvm_alu
+  System timescale is 1ps / 1ps
+  Altair DSim version: 2026.0.0 (b:R #c:127 h:14cc828913 os:rocky_8.10)
+  Random seed: (defaulted to 1)

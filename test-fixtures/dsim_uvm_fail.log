@@ -1,0 +1,106 @@
+[env_setup] example environment loaded
+Activating DSim version: 2026
+Copyright (C) 2017-2025 Altair Engineering Inc. All rights reserved.
+=N:[UVMSource] Using sources from '/home/caioplazas/AltairDSim/2026/uvm/1.2'
+=N:[UsageMeter (2026-07-20 07:12:24 +0200)] Using /etc/ssl/certs as location of CA certificates to verify license server.
+=N:[UsageMeter (2026-07-20 07:12:24 +0200)] usage server initial connection
+=N:[License] 
+********************************************************************************
+
+[DSIM LICENSE NOTICE]
+
+The free license for DSim on-prem is scheduled to expire on September 1st.
+
+To ensure uninterrupted service after this date, please transition your
+
+environment to use Altair licensing.
+
+KEY DATES:
+
+Sept 1st: Free On-Prem licenses and DSim Cloud services discontinued.
+
+Oct 15th: All DSim Cloud data will be permanently deleted.
+
+For migration instructions and Altair licensing details, visit: altair.com/dsim
+
+********************************************************************************
+=N:[License] New lease granted.
+Analyzing...
+Elaborating...
+  Top-level modules:
+    $unit
+    uvm_smoke_test_top
+=W:[IneffectiveDynamicCast]:
+    The following dynamic $cast cases will always be false    
+
+    /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_callback.svh:521:9             class uvm_pkg::uvm_callbacks#(class uvm_pkg::uvm_phase,class uvm_pkg::uvm_phase_cb)    class uvm_pkg::uvm_callbacks#(class uvm_pkg::uvm_phase,class uvm_pkg::uvm_callback)    
+    Included from /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_base.svh:76:3                                                                                                                                                                                  
+    Included from /home/caioplazas/AltairDSim/2026/uvm/1.2/src/uvm_pkg.sv:31:3                                                                                                                                                                                         
+
+    /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_callback.svh:671:12            class uvm_pkg::uvm_phase                                                               class uvm_pkg::uvm_report_object                                                       
+    Included from /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_base.svh:76:3                                                                                                                                                                                  
+
+    /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_callback.svh:731:10            class uvm_pkg::uvm_component                                                           class uvm_pkg::uvm_phase                                                               
+    Included from /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_base.svh:76:3                                                                                                                                                                                  
+
+    /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_callback.svh:808:10            class uvm_pkg::uvm_component                                                           class uvm_pkg::uvm_phase                                                               
+    Included from /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_base.svh:76:3                                                                                                                                                                                  
+
+  Found 4 unique specialization(s) of 4 design element(s).
+Optimizing...
+Building models...
+PLI/VPI access: (none) 
+Simulation time precision is 1ns.
+Linking image.so...
+/usr/bin/ld: warning: dsim_work/obj/LBuvm_pkg.o: missing .note.GNU-stack section implies executable stack
+/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+Using default typical min/typ/max.
+=S:Begin run-time elaboration and static initialization...
+UVM_INFO /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_root.svh(392) @ 0: reporter [UVM/RELNOTES] 
+----------------------------------------------------------------
+UVM-1.2
+(C) 2007-2014 Mentor Graphics Corporation
+(C) 2007-2014 Cadence Design Systems, Inc.
+(C) 2006-2014 Synopsys, Inc.
+(C) 2011-2013 Cypress Semiconductor Corp.
+(C) 2013-2014 NVIDIA Corporation
+----------------------------------------------------------------
+
+  ***********       IMPORTANT RELEASE NOTES         ************
+
+  You are using a version of the UVM library that has been compiled
+  with `UVM_NO_DEPRECATED undefined.
+  See http://www.eda.org/svdb/view.php?id=3313 for more details.
+
+  You are using a version of the UVM library that has been compiled
+  with `UVM_OBJECT_DO_NOT_NEED_CONSTRUCTOR undefined.
+  See http://www.eda.org/svdb/view.php?id=3770 for more details.
+
+      (Specify +UVM_NO_RELNOTES to turn off this notice)
+
+=N:Starting event scheduler...
+UVM_INFO @ 0: reporter [RNTST] Running test smoke_test...
+UVM_INFO tb/uvm_smoke_test.sv(16) @ 0: uvm_test_top [SMOKE] Starting smoke test
+UVM_WARNING tb/uvm_smoke_test.sv(18) @ 10: uvm_test_top [SMOKE] Latency higher than expected (12ns)
+UVM_ERROR tb/uvm_smoke_test.sv(22) @ 20: uvm_test_top [SMOKE] Data mismatch: expected 32'hDEAD_BEEF got 32'h0000_0000
+UVM_INFO tb/uvm_smoke_test.sv(25) @ 20: uvm_test_top [SMOKE] Smoke test complete
+UVM_INFO /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_objection.svh(1270) @ 20: reporter [TEST_DONE] 'run' phase is ready to proceed to the 'extract' phase
+UVM_INFO /home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_report_server.svh(847) @ 20: reporter [UVM/REPORT/SERVER] 
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :    5
+UVM_WARNING :    1
+UVM_ERROR :    1
+UVM_FATAL :    0
+** Report counts by id
+[RNTST]     1
+[SMOKE]     4
+[TEST_DONE]     1
+[UVM/RELNOTES]     1
+
+=T:Simulation terminated by $finish at time 20 (/home/caioplazas/AltairDSim/2026/uvm/1.2/src/base/uvm_root.svh:517);
+Run directory: /home/caioplazas/vscode-verilog-manager/examples
+  System timescale is 1ns / 1ns
+  Altair DSim version: 2026.0.0 (b:R #c:127 h:14cc828913 os:rocky_8.10)
+  Random seed: (defaulted to 1)

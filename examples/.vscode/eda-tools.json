@@ -1,0 +1,924 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "id": "95ddd32f-e82c-44a9-98b4-282a5a47c776",
+      "command": "dsim",
+      "helpArg": "-help",
+      "variants": [
+        {
+          "label": "",
+          "selectArgs": [],
+          "options": [
+            {
+              "flags": [
+                "-error"
+              ],
+              "metavar": "MsgName",
+              "description": "Promote severity of MsgName (or \"info\" / \"warning\") to the \"error\" level"
+            },
+            {
+              "flags": [
+                "-help"
+              ],
+              "description": "Print summary of generally available command line options"
+            },
+            {
+              "flags": [
+                "-info"
+              ],
+              "metavar": "MsgName",
+              "description": "Demote severity of MsgName (or \"warning\" / \"error\") to the \"info\" level"
+            },
+            {
+              "flags": [
+                "-l"
+              ],
+              "metavar": "dsim.log",
+              "description": "Specify log file (compile/run)"
+            },
+            {
+              "flags": [
+                "-repro"
+              ],
+              "metavar": "dsim.env",
+              "description": "Reproduce compile/run from file"
+            },
+            {
+              "flags": [
+                "-suppress"
+              ],
+              "metavar": "MsgName",
+              "description": "Suppress emission of MsgName (or \"info\" / \"warning\" / \"error\")"
+            },
+            {
+              "flags": [
+                "-warn"
+              ],
+              "metavar": "MsgName",
+              "description": "Change severity of MsgName (or \"info\" / \"error\") to the \"warning\" level"
+            },
+            {
+              "flags": [
+                "-gen-proto"
+              ],
+              "description": "Generate prototypes for VHDL direct instantiation"
+            },
+            {
+              "flags": [
+                "-v"
+              ],
+              "metavar": "lib.v",
+              "description": "Set library file to search for modules"
+            },
+            {
+              "flags": [
+                "-y"
+              ],
+              "metavar": "dir",
+              "description": "Set directory to search for modules"
+            },
+            {
+              "flags": [
+                "-f"
+              ],
+              "metavar": "manifest.f",
+              "description": "Read options relative to invocation directory"
+            },
+            {
+              "flags": [
+                "-F"
+              ],
+              "metavar": "manifest.f",
+              "description": "Read options relative to manifest file"
+            },
+            {
+              "flags": [
+                "-acc-specs"
+              ],
+              "metavar": "file",
+              "description": "Specify file from which detailed +acc specs are read"
+            },
+            {
+              "flags": [
+                "-all-class-spec"
+              ],
+              "description": "Create default class specializations"
+            },
+            {
+              "flags": [
+                "-all-pkgs"
+              ],
+              "description": "Compile all packages, even if unreferenced"
+            },
+            {
+              "flags": [
+                "-allow-ext-vif"
+              ],
+              "description": "Allow use of implicitly-specialized interfaces as virtual interfaces"
+            },
+            {
+              "flags": [
+                "-allow-fwd-pkg"
+              ],
+              "description": "Allow references to items in packages declared later in the code"
+            },
+            {
+              "flags": [
+                "-allow-int-enum-assign"
+              ],
+              "description": "Allow assignment from integers to enums without explicit cast"
+            },
+            {
+              "flags": [
+                "-allow-self-vif"
+              ],
+              "description": "Allow use of bare interface identifier as self virtual interface reference"
+            },
+            {
+              "flags": [
+                "-allow-string-int-assign"
+              ],
+              "description": "Allow assignment between strings and integers without explicit cast"
+            },
+            {
+              "flags": [
+                "-build-all"
+              ],
+              "description": "Build all modules (not incremental)"
+            },
+            {
+              "flags": [
+                "-c-opts"
+              ],
+              "metavar": "options",
+              "description": "Additional options to pass to the C compiler."
+            },
+            {
+              "flags": [
+                "-cc"
+              ],
+              "metavar": "cmd",
+              "description": "The C/C++ compiler (default: gcc)"
+            },
+            {
+              "flags": [
+                "-cc-verbose"
+              ],
+              "description": "Elevate verbosity when compiling C/C++ files"
+            },
+            {
+              "flags": [
+                "-comp-maxdelays"
+              ],
+              "description": "Compile maximum delays"
+            },
+            {
+              "flags": [
+                "-comp-mindelays"
+              ],
+              "description": "Compile minimum delays"
+            },
+            {
+              "flags": [
+                "-comp-typdelays"
+              ],
+              "description": "Compile typical delays"
+            },
+            {
+              "flags": [
+                "-compile-top"
+              ],
+              "metavar": "name",
+              "description": "Specify top-level module(s) to compile and optionally enable at run time"
+            },
+            {
+              "flags": [
+                "-dedupe-all"
+              ],
+              "description": "Force deduplication flow for all non-library cells"
+            },
+            {
+              "flags": [
+                "-expr-cov-row-limit"
+              ],
+              "metavar": "n",
+              "description": "Set row limit for focused expression coverage (default: 256)"
+            },
+            {
+              "flags": [
+                "-g"
+              ],
+              "description": "Generate info for GDB debugging"
+            },
+            {
+              "flags": [
+                "-gen-profile"
+              ],
+              "description": "Instrument code to track call counts when profiling"
+            },
+            {
+              "flags": [
+                "-genimage"
+              ],
+              "metavar": "image",
+              "description": "Generate compiled code; do not run"
+            },
+            {
+              "flags": [
+                "-heed-synth-on-off"
+              ],
+              "description": "respect synthesis translate_off/on in comments"
+            },
+            {
+              "flags": [
+                "-implicit-bitstream-assign"
+              ],
+              "description": "Allow assignment between bitstream types without explicit cast"
+            },
+            {
+              "flags": [
+                "-incdir"
+              ],
+              "metavar": "dir[...]",
+              "description": "Set search path for include files"
+            },
+            {
+              "flags": [
+                "-initial-var-assign"
+              ],
+              "description": "Force Verilog-2005 semantics for variable initialization in SystemVerilog"
+            },
+            {
+              "flags": [
+                "-int-time-literal"
+              ],
+              "description": "Treat time literals as integers where possible"
+            },
+            {
+              "flags": [
+                "-j"
+              ],
+              "metavar": "N",
+              "description": "Specify number of parallel compile jobs (default: 1)"
+            },
+            {
+              "flags": [
+                "-ld-opts"
+              ],
+              "metavar": "options",
+              "description": "Additional options to pass to the linker."
+            },
+            {
+              "flags": [
+                "-lib"
+              ],
+              "metavar": "name",
+              "description": "Sets default design library name (default: work)"
+            },
+            {
+              "flags": [
+                "-libmap"
+              ],
+              "metavar": "name",
+              "description": "Specify name of lib.map file"
+            },
+            {
+              "flags": [
+                "-max-inst-depth"
+              ],
+              "metavar": "n",
+              "description": "Specify maximum depth of instance tree (default: DEFAULT_INST_DEPTH)"
+            },
+            {
+              "flags": [
+                "-no-incr-compile"
+              ],
+              "description": "Do not perform overhead tasks required for incremental compile"
+            },
+            {
+              "flags": [
+                "-no-sva"
+              ],
+              "description": "Disables concurrent assertions"
+            },
+            {
+              "flags": [
+                "-nonegtchk"
+              ],
+              "description": "Turn off negative timing check limits by setting negatives to 0"
+            },
+            {
+              "flags": [
+                "-noopt"
+              ],
+              "description": "Disable high-level optimizations"
+            },
+            {
+              "flags": [
+                "-noopt-comb-shadow"
+              ],
+              "description": "Disable combinational shadowing"
+            },
+            {
+              "flags": [
+                "-nospecify"
+              ],
+              "description": "Turn off specify blocks, including timing checks, excluding specparams"
+            },
+            {
+              "flags": [
+                "-notimingchecks"
+              ],
+              "description": "Turn off timing checks"
+            },
+            {
+              "flags": [
+                "-opt-comb-glitch"
+              ],
+              "description": "Enable combinational glitch mitigation"
+            },
+            {
+              "flags": [
+                "-opt-switch-allow-delay"
+              ],
+              "description": "Allow delays on switch-optimized devices"
+            },
+            {
+              "flags": [
+                "-separate-unit-scopes"
+              ],
+              "description": "Use a compilation-unit scope per file"
+            },
+            {
+              "flags": [
+                "-seq-udp-nba-region"
+              ],
+              "description": "Schedule an update of a sequential UDP output into the NBA region (default Active)"
+            },
+            {
+              "flags": [
+                "-shared-unit-scope"
+              ],
+              "description": "Use a shared compilation-unit scope"
+            },
+            {
+              "flags": [
+                "-show-ld"
+              ],
+              "description": "Show linker command"
+            },
+            {
+              "flags": [
+                "-sv"
+              ],
+              "description": "Make -sv20XX options apply to all files regardless of suffix"
+            },
+            {
+              "flags": [
+                "-sv2005"
+              ],
+              "description": "Treat SystemVerilog-2005 keywords as reserved in .sv files"
+            },
+            {
+              "flags": [
+                "-sv2009"
+              ],
+              "description": "Treat SystemVerilog-2009 keywords as reserved in .sv files"
+            },
+            {
+              "flags": [
+                "-sv2012"
+              ],
+              "description": "Treat SystemVerilog-2012 keywords as reserved in .sv files (default)"
+            },
+            {
+              "flags": [
+                "-sv2017"
+              ],
+              "description": "Treat SystemVerilog-2017 keywords as reserved in .sv files"
+            },
+            {
+              "flags": [
+                "-top"
+              ],
+              "metavar": "name",
+              "description": "Specify top-level module(s); default is to use LRM procedure"
+            },
+            {
+              "flags": [
+                "-vhdl-no-ov-chk"
+              ],
+              "description": "Disable VHDL arithmetic overflow checking (analysis and code generation)"
+            },
+            {
+              "flags": [
+                "-vlog1995"
+              ],
+              "description": "Treat only Verilog-1995 keywords as reserved in non-.sv files"
+            },
+            {
+              "flags": [
+                "-vlog2001"
+              ],
+              "description": "Treat Verilog-2001 keywords as reserved in non-.sv files"
+            },
+            {
+              "flags": [
+                "-vlog2005"
+              ],
+              "description": "Treat Verilog-2005 keywords as reserved in non-.sv files (default)"
+            },
+            {
+              "flags": [
+                "-vlog_sv2005"
+              ],
+              "description": "Treat SystemVerilog-2005 keywords as reserved in non-.sv files"
+            },
+            {
+              "flags": [
+                "-vlog_sv2009"
+              ],
+              "description": "Treat SystemVerilog-2009 keywords as reserved in non-.sv files"
+            },
+            {
+              "flags": [
+                "-vlog_sv2012"
+              ],
+              "description": "Treat SystemVerilog-2012 keywords as reserved in non-.sv files"
+            },
+            {
+              "flags": [
+                "-code-cov-scope-specs"
+              ],
+              "metavar": "file",
+              "description": "Specifies a file which indicates the detailed scopes for code coverage"
+            },
+            {
+              "flags": [
+                "-exit-on-error"
+              ],
+              "metavar": "n",
+              "description": "Terminate the execution after n errors (default: no limit)"
+            },
+            {
+              "flags": [
+                "-nosdf"
+              ],
+              "description": "Turn off sdf annotation"
+            },
+            {
+              "flags": [
+                "-pli_lib"
+              ],
+              "metavar": "libpli.so",
+              "description": "Load PLI shared library"
+            },
+            {
+              "flags": [
+                "-sdf-fa-keywords"
+              ],
+              "description": "Treat SDF forward annotation keywords as reserved in files read with $sdf_annotate"
+            },
+            {
+              "flags": [
+                "-uvm"
+              ],
+              "metavar": "indicator",
+              "description": "Incorporate the indicated UVM package. Provide a version, a custom path, or 'default' . Explicit version or path are recommended"
+            },
+            {
+              "flags": [
+                "-version"
+              ],
+              "description": "Print version string"
+            },
+            {
+              "flags": [
+                "-version-verbose"
+              ],
+              "description": "Print verbose version string"
+            },
+            {
+              "flags": [
+                "-work"
+              ],
+              "metavar": "dsim_work",
+              "description": "Specify directory to create to hold intermediate build files"
+            },
+            {
+              "flags": [
+                "-cov-db"
+              ],
+              "metavar": "metrics.db",
+              "description": "Specify coverage database file"
+            },
+            {
+              "flags": [
+                "-cs-array-max"
+              ],
+              "metavar": "n",
+              "description": "Set max value for randomized array.size (default: 1000000)"
+            },
+            {
+              "flags": [
+                "-cs-randc-max"
+              ],
+              "metavar": "n",
+              "description": "Set max number of bits in randc variables (default: 16)"
+            },
+            {
+              "flags": [
+                "-cs-use-bdd"
+              ],
+              "description": "Use BDD constraint solver"
+            },
+            {
+              "flags": [
+                "-cs-use-sat"
+              ],
+              "description": "Use SAT constraint solver (default)"
+            },
+            {
+              "flags": [
+                "-debug-resolve-end"
+              ],
+              "metavar": "time",
+              "description": "End net resolver debug at given time (default: end of simulation)"
+            },
+            {
+              "flags": [
+                "-debug-resolve-start"
+              ],
+              "metavar": "time",
+              "description": "Start net resolver debug at given time (default: 0)"
+            },
+            {
+              "flags": [
+                "-debug-sched-end"
+              ],
+              "metavar": "time",
+              "description": "End scheduler debug at given time (default: end of simulation)"
+            },
+            {
+              "flags": [
+                "-debug-sched-start"
+              ],
+              "metavar": "time",
+              "description": "Start scheduler debug at given time (default: 0)"
+            },
+            {
+              "flags": [
+                "-debug-toggle-cov"
+              ],
+              "description": "Debug toggle coverage"
+            },
+            {
+              "flags": [
+                "-debug-vpi"
+              ],
+              "description": "Log illegal/unsupported VPI calls"
+            },
+            {
+              "flags": [
+                "-dump-agg"
+              ],
+              "description": "Dump aggregates (arrays/structs)"
+            },
+            {
+              "flags": [
+                "-dump-end"
+              ],
+              "metavar": "time",
+              "description": "End wave dump at given time (default: end of simulation)"
+            },
+            {
+              "flags": [
+                "-dump-start"
+              ],
+              "metavar": "time",
+              "description": "Start wave dump at given time (default: 0)"
+            },
+            {
+              "flags": [
+                "-dump-vcd-9s"
+              ],
+              "description": "Do not coerce VHDL std_logic items to 4-state in VCD"
+            },
+            {
+              "flags": [
+                "-fcov-save-empty-bins"
+              ],
+              "description": "Record the existance of empty bins (often artifacts of an ignore directive) in the coverage database"
+            },
+            {
+              "flags": [
+                "-fcov-tuple-str-limit"
+              ],
+              "metavar": "n",
+              "description": "truncates string description of a cross range. Has no effect on bins or bin counts. Zero means no limit  (default: 100)"
+            },
+            {
+              "flags": [
+                "-heartbeat"
+              ],
+              "metavar": "time",
+              "description": "Enable heartbeat messages (default: none)"
+            },
+            {
+              "flags": [
+                "-image"
+              ],
+              "metavar": "name",
+              "description": "Run previously compiled image"
+            },
+            {
+              "flags": [
+                "-iter-limit"
+              ],
+              "metavar": "n",
+              "description": "Set scheduler iteration limit to detect infinite zero-delay loops (default: 1000000)"
+            },
+            {
+              "flags": [
+                "-limit-enum-bins"
+              ],
+              "description": "Subject enum coverage bins to auto_bin_max"
+            },
+            {
+              "flags": [
+                "-linebuf"
+              ],
+              "description": "Force line-buffered stdout"
+            },
+            {
+              "flags": [
+                "-maxdelays"
+              ],
+              "description": "Use maximum delays"
+            },
+            {
+              "flags": [
+                "-mindelays"
+              ],
+              "description": "Use minimum delays"
+            },
+            {
+              "flags": [
+                "-no-cs-range"
+              ],
+              "description": "Disable range analysis recoding"
+            },
+            {
+              "flags": [
+                "-no-demangle"
+              ],
+              "description": "Do not demangle SV function names in runtime logs"
+            },
+            {
+              "flags": [
+                "-no-fcov"
+              ],
+              "description": "Disable functional coverage collection"
+            },
+            {
+              "flags": [
+                "-no-linebuf"
+              ],
+              "description": "Do not force line-buffered stdout"
+            },
+            {
+              "flags": [
+                "-no_tchk_msg"
+              ],
+              "description": "Turn off timing check violation messages, notifier still toggles"
+            },
+            {
+              "flags": [
+                "-nonotifier"
+              ],
+              "description": "Turn off timing check notifier toggling"
+            },
+            {
+              "flags": [
+                "-noshowcancelled"
+              ],
+              "description": "Do not show negative pulses"
+            },
+            {
+              "flags": [
+                "-ntcnotchk"
+              ],
+              "description": "Turn off timing checks, however delayed signals wrt negative timing checks"
+            },
+            {
+              "flags": [
+                "-override-finish-completion"
+              ],
+              "metavar": "n",
+              "description": "Override the diagnostics type for $finish by 0, 1 or 2"
+            },
+            {
+              "flags": [
+                "-pathpulse"
+              ],
+              "description": "Filters pulses using $PATHPULSE specparams"
+            },
+            {
+              "flags": [
+                "-profile-end"
+              ],
+              "metavar": "time",
+              "description": "End profiling at given time (default: end of simulation)"
+            },
+            {
+              "flags": [
+                "-profile-start"
+              ],
+              "metavar": "time",
+              "description": "Start profiling at given time (default: 0)"
+            },
+            {
+              "flags": [
+                "-pulse_e"
+              ],
+              "metavar": "n",
+              "description": "Set percent of module path delay for error limit (default: 100)"
+            },
+            {
+              "flags": [
+                "-pulse_e-no-cancelled-msg"
+              ],
+              "description": "Turn off warnings when negative pulses are cancelled"
+            },
+            {
+              "flags": [
+                "-pulse_e-no-warn-msg"
+              ],
+              "description": "Turn off warnings when pulses cause error state"
+            },
+            {
+              "flags": [
+                "-pulse_e-ondetect"
+              ],
+              "description": "Indicate pulse errors on detection"
+            },
+            {
+              "flags": [
+                "-pulse_e-onevent"
+              ],
+              "description": "Indicate pulse errors on event"
+            },
+            {
+              "flags": [
+                "-pulse_r"
+              ],
+              "metavar": "n",
+              "description": "Set percent of module path delay for reject limit (default: 100)"
+            },
+            {
+              "flags": [
+                "-run-top"
+              ],
+              "metavar": "name",
+              "description": "Enable top-level module(s) at run time"
+            },
+            {
+              "flags": [
+                "-run-until"
+              ],
+              "metavar": "time",
+              "description": "Run until given time (default: no limit)"
+            },
+            {
+              "flags": [
+                "-sdf-verbose"
+              ],
+              "description": "Log SDF annotation information about all errors"
+            },
+            {
+              "flags": [
+                "-showcancelled"
+              ],
+              "description": "Show negative pulses as X"
+            },
+            {
+              "flags": [
+                "-sig-xpose"
+              ],
+              "description": "Enable X detection"
+            },
+            {
+              "flags": [
+                "-sig-xpose-start"
+              ],
+              "metavar": "time",
+              "description": "Enable X detection at given time"
+            },
+            {
+              "flags": [
+                "-specify-unit"
+              ],
+              "metavar": "unit",
+              "description": "Override module path delays with a unit (if no unit given the option is ignored)"
+            },
+            {
+              "flags": [
+                "-specify-zero"
+              ],
+              "description": "Overrides specify path delays with zero unless annotated by SDF"
+            },
+            {
+              "flags": [
+                "-sv_lib"
+              ],
+              "metavar": "libdpi.so",
+              "description": "Load DPI shared library"
+            },
+            {
+              "flags": [
+                "-sv_seed"
+              ],
+              "metavar": "n",
+              "description": "SystemVerilog random seed. Specify n as a hex number or 'random'. (default: 1)",
+              "favorite": true
+            },
+            {
+              "flags": [
+                "-tchk_msg_start"
+              ],
+              "metavar": "time",
+              "description": "Start timing check violation messages at time (default: 1)"
+            },
+            {
+              "flags": [
+                "-timingcheck-specs"
+              ],
+              "metavar": "file",
+              "description": "Specifies a file from which detailed timing check specs are read"
+            },
+            {
+              "flags": [
+                "-trace-dpi"
+              ],
+              "description": "Trace DPI library loading"
+            },
+            {
+              "flags": [
+                "-trace-vpi"
+              ],
+              "description": "Log all VPI calls"
+            },
+            {
+              "flags": [
+                "-try-all-soft-first"
+              ],
+              "description": "Try all soft constraints prior to binary search"
+            },
+            {
+              "flags": [
+                "-typdelays"
+              ],
+              "description": "Use typical delays (default)"
+            },
+            {
+              "flags": [
+                "-vacuous"
+              ],
+              "description": "Execute action blocks for assertions on vacuous success"
+            },
+            {
+              "flags": [
+                "-wave-scope-specs"
+              ],
+              "metavar": "file",
+              "description": "Specifies a file which indicates the detailed scopes to dump"
+            },
+            {
+              "flags": [
+                "-waves"
+              ],
+              "metavar": "file.vcd",
+              "description": "Enable wave dump to file.vcd; +acc is required at compile time"
+            },
+            {
+              "flags": [
+                "-wildcard-limit"
+              ],
+              "metavar": "n",
+              "description": "Set limit on number of ranges created when expanding wildcard coverage bins (default: 1000)"
+            },
+            {
+              "flags": [
+                "-write-sql"
+              ],
+              "description": "Write coverage as SQLite database"
+            }
+          ],
+          "rawHelp": "[env_setup] example environment loaded\nActivating DSim version: 2026\n\nAltair tool usage: dsim [option(s)] [file(s)]\n\nvalid options:\n\n=============================== General options ===============================\n\n  -error MsgName                 Promote severity of MsgName (or \"info\" / \"warning\") to the \"error\" level\n  -help                          Print summary of generally available command line options\n  -info MsgName                  Demote severity of MsgName (or \"warning\" / \"error\") to the \"info\" level\n  -io_dir ...                    Record read/written files and put reports in given directory.\n  -l dsim.log                    Specify log file (compile/run)\n  -meter-env-vars ...            Specify environment variables, an optional values, to pass to licensing system\n  -repro dsim.env                Reproduce compile/run from file\n  -suppress MsgName              Suppress emission of MsgName (or \"info\" / \"warning\" / \"error\")\n  -warn MsgName                  Change severity of MsgName (or \"info\" / \"error\") to the \"warning\" level\n\n=================== Classic Verilog compile-time arguments ====================\n\n  +define+name[=value]...        Define macros\n  -gen-proto                     Generate prototypes for VHDL direct instantiation\n  +ignore+item[+...]             Set 'item as ignored if it is not defined or a supported directive\n  +incdir+dir[+...]              Set search path for include files\n  +libext+.v[+...]               Set extension(s) for library files\n  -v lib.v                       Set library file to search for modules\n  -y dir                         Set directory to search for modules\n\n============================= Manifest arguments ==============================\n\n  -f manifest.f                  Read options relative to invocation directory\n  -F manifest.f                  Read options relative to manifest file\n\n==================== DSim-specific compile-time arguments =====================\n\n  +acc[+rwcbfsWF]                Generate support for waveform dump, VPI, and toggle coverage\n  -acc-specs file                Specify file from which detailed +acc specs are read\n  -all-class-spec                Create default class specializations\n  -all-pkgs                      Compile all packages, even if unreferenced\n  -allow-ext-vif                 Allow use of implicitly-specialized interfaces as virtual interfaces\n  -allow-fwd-pkg                 Allow references to items in packages declared later in the code\n  -allow-int-enum-assign         Allow assignment from integers to enums without explicit cast\n  -allow-self-vif                Allow use of bare interface identifier as self virtual interface reference\n  -allow-string-int-assign       Allow assignment between strings and integers without explicit cast\n  -build-all                     Build all modules (not incremental)\n  -c-opts options                Additional options to pass to the C compiler.\n  -cc cmd                        The C/C++ compiler (default: gcc)\n  -cc-verbose                    Elevate verbosity when compiling C/C++ files\n  -comp-maxdelays                Compile maximum delays\n  -comp-mindelays                Compile minimum delays\n  -comp-typdelays                Compile typical delays\n  -compile-top name              Specify top-level module(s) to compile and optionally enable at run time\n  -debug-verbose ...             Verbose debugging information for pp=pre-processing lib=libmap, hier=module, config and instance hierarchy\n  -dedupe-all                    Force deduplication flow for all non-library cells\n  -define name[=value]           name...:Define macros\n  -defparam name=value           Override parameters for top-level modules or paths\n  +delay_mode_distributed        Remove path delays simulate with distributed delays\n  +delay_mode_path               For modules with path delays, remove distributed delays simulate with path delays\n  +delay_mode_unit               Use 1 time unit for distributed delays & remove path delays and timing checks\n  +delay_mode_zero               Remove distributed delays, path delays and timing checks\n  -dpiheader ...                 Generate C header for DPI export\n  -expr-cov-row-limit n           Set row limit for focused expression coverage (default: 256)\n  -g                             Generate info for GDB debugging\n  -gen-profile                   Instrument code to track call counts when profiling\n  -genimage image                Generate compiled code; do not run\n  -heed-synth-on-off             respect synthesis translate_off/on in comments\n  -implicit-bitstream-assign     Allow assignment between bitstream types without explicit cast\n  -incdir dir[...]               Set search path for include files\n  -initial-var-assign            Force Verilog-2005 semantics for variable initialization in SystemVerilog\n  -int-time-literal              Treat time literals as integers where possible\n  -j N                           Specify number of parallel compile jobs (default: 1)\n  -L ...                         Compiled library search order\n  -ld-opts options               Additional options to pass to the linker.\n  -lib name                      Sets default design library name (default: work)\n  -libmap name                   Specify name of lib.map file\n  -max-inst-depth n               Specify maximum depth of instance tree (default: DEFAULT_INST_DEPTH)\n  -no-incr-compile               Do not perform overhead tasks required for incremental compile\n  -no-sva                        Disables concurrent assertions\n  -nonegtchk                     Turn off negative timing check limits by setting negatives to 0\n  +nonegtchk                     Turn off negative timing check limits by setting negatives to 0\n  -noopt                         Disable high-level optimizations\n  -noopt-comb-shadow             Disable combinational shadowing\n  -nospecify                     Turn off specify blocks, including timing checks, excluding specparams\n  +nospecify                     Turn off specify blocks, including timing checks, excluding specparams\n  -notimingchecks                Turn off timing checks\n  +notimingchecks                Turn off timing checks\n  -opt-comb-glitch               Enable combinational glitch mitigation\n  -opt-switch-allow-delay        Allow delays on switch-optimized devices\n  -separate-unit-scopes          Use a compilation-unit scope per file\n  -seq-udp-nba-region            Schedule an update of a sequential UDP output into the NBA region (default Active)\n  -shared-unit-scope             Use a shared compilation-unit scope\n  -show-ld                       Show linker command\n  -sv                            Make -sv20XX options apply to all files regardless of suffix\n  -sv2005                        Treat SystemVerilog-2005 keywords as reserved in .sv files\n  -sv2009                        Treat SystemVerilog-2009 keywords as reserved in .sv files\n  -sv2012                        Treat SystemVerilog-2012 keywords as reserved in .sv files (default)\n  -sv2017                        Treat SystemVerilog-2017 keywords as reserved in .sv files\n  -sysvlog-ext .ext[,...]        Specify extensions for SystemVerilog files (default:.sv)\n  -timescale 1ns/1ps             Set default timescale (default: 1ns/1ns)\n  -top name                      Specify top-level module(s); default is to use LRM procedure\n  -vhdl-no-ov-chk                Disable VHDL arithmetic overflow checking (analysis and code generation)\n  -vlog-ext .ext[,...]           Specify extensions for Verilog files (default:)\n  -vlog1995                      Treat only Verilog-1995 keywords as reserved in non-.sv files\n  -vlog2001                      Treat Verilog-2001 keywords as reserved in non-.sv files\n  -vlog2005                      Treat Verilog-2005 keywords as reserved in non-.sv files (default)\n  -vlog_sv2005                   Treat SystemVerilog-2005 keywords as reserved in non-.sv files\n  -vlog_sv2009                   Treat SystemVerilog-2009 keywords as reserved in non-.sv files\n  -vlog_sv2012                   Treat SystemVerilog-2012 keywords as reserved in non-.sv files\n\n====================== Options for both compile and run =======================\n\n  -code-cov ...                  Enables coverage for b[lock], e[xpression], t[oggle] or a[ll] code coverage features\n  -code-cov-scope-specs file     Specifies a file which indicates the detailed scopes for code coverage\n  -exit-on-error n               Terminate the execution after n errors (default: no limit)\n  +nosdf                         Turn off sdf annotation\n  -nosdf                         Turn off sdf annotation\n  -pli_lib libpli.so             Load PLI shared library\n  -sdf-fa-keywords               Treat SDF forward annotation keywords as reserved in files read with $sdf_annotate\n  -uvm indicator                 Incorporate the indicated UVM package. Provide a version, a custom path, or 'default' . Explicit version or path are recommended\n  -version                       Print version string\n  -version-verbose               Print verbose version string\n  -work dsim_work                Specify directory to create to hold intermediate build files\n\n============================= Run-time arguments ==============================\n\n  -cov-db metrics.db             Specify coverage database file\n  -cs-array-max n                Set max value for randomized array.size (default: 1000000)\n  -cs-randc-max n                Set max number of bits in randc variables (default: 16)\n  -cs-use-bdd                    Use BDD constraint solver\n  -cs-use-sat                    Use SAT constraint solver (default)\n  -debug-resolve-end time        End net resolver debug at given time (default: end of simulation)\n  -debug-resolve-start time      Start net resolver debug at given time (default: 0)\n  -debug-sched-end time          End scheduler debug at given time (default: end of simulation)\n  -debug-sched-start time        Start scheduler debug at given time (default: 0)\n  -debug-toggle-cov              Debug toggle coverage\n  -debug-vpi                     Log illegal/unsupported VPI calls\n  -dump-agg                      Dump aggregates (arrays/structs)\n  -dump-end time                 End wave dump at given time (default: end of simulation)\n  -dump-start time               Start wave dump at given time (default: 0)\n  -dump-vcd-9s                   Do not coerce VHDL std_logic items to 4-state in VCD\n  -fcov-save-empty-bins          Record the existance of empty bins (often artifacts of an ignore directive) in the coverage database\n  -fcov-tuple-str-limit n        truncates string description of a cross range. Has no effect on bins or bin counts. Zero means no limit  (default: 100)\n  -heartbeat time                Enable heartbeat messages (default: none)\n  -image name                    Run previously compiled image\n  -iter-limit n                  Set scheduler iteration limit to detect infinite zero-delay loops (default: 1000000)\n  -limit-enum-bins               Subject enum coverage bins to auto_bin_max\n  -linebuf                       Force line-buffered stdout\n  -maxdelays                     Use maximum delays\n  -mindelays                     Use minimum delays\n  +multisource_int_delays        Turns on interconnect multisource and pulse handling with SDF annotation\n  -no-cs-range                   Disable range analysis recoding\n  -no-demangle                   Do not demangle SV function names in runtime logs\n  -no-fcov                       Disable functional coverage collection\n  -no-linebuf                    Do not force line-buffered stdout\n  +no_tchk_msg                   Turn off timing check violation messages, notifier still toggles\n  -no_tchk_msg                   Turn off timing check violation messages, notifier still toggles\n  -nonotifier                    Turn off timing check notifier toggling\n  +nonotifier                    Turn off timing check notifier toggling\n  -noshowcancelled               Do not show negative pulses\n  +ntcnotchk                     Turn off timing checks, however delayed signals wrt negative timing checks\n  -ntcnotchk                     Turn off timing checks, however delayed signals wrt negative timing checks\n  -override-finish-completion n  Override the diagnostics type for $finish by 0, 1 or 2\n  -pathpulse                     Filters pulses using $PATHPULSE specparams\n  -profile ...                   Enable time profiling\n  -profile-end time              End profiling at given time (default: end of simulation)\n  -profile-start time            Start profiling at given time (default: 0)\n  -pulse_e n                     Set percent of module path delay for error limit (default: 100)\n  -pulse_e-no-cancelled-msg      Turn off warnings when negative pulses are cancelled\n  -pulse_e-no-warn-msg           Turn off warnings when pulses cause error state\n  -pulse_e-ondetect              Indicate pulse errors on detection\n  -pulse_e-onevent               Indicate pulse errors on event\n  -pulse_r n                     Set percent of module path delay for reject limit (default: 100)\n  -reseed time=seed              Reset RNGs with a new seed at start of given time\n  -run-top name                  Enable top-level module(s) at run time\n  -run-until time                Run until given time (default: no limit)\n  -sdf-verbose                   Log SDF annotation information about all errors\n  -showcancelled                 Show negative pulses as X\n  -sig-xpose                     Enable X detection\n  -sig-xpose-start time          Enable X detection at given time\n  -specify-unit unit              Override module path delays with a unit (if no unit given the option is ignored)\n  -specify-zero                  Overrides specify path delays with zero unless annotated by SDF\n  -sv_lib libdpi.so              Load DPI shared library\n  -sv_seed n                     SystemVerilog random seed. Specify n as a hex number or 'random'. (default: 1)\n  -tchk_msg_start time           Start timing check violation messages at time (default: 1)\n  -timingcheck-specs file        Specifies a file from which detailed timing check specs are read\n  -trace-dpi                     Trace DPI library loading\n  -trace-vpi                     Log all VPI calls\n  +transport_path_delays         Transmit pulses using pulse limits = 0, unless otherwise filtered\n  -try-all-soft-first            Try all soft constraints prior to binary search\n  -typdelays                     Use typical delays (default)\n  -vacuous                       Execute action blocks for assertions on vacuous success\n  -wave-scope-specs file         Specifies a file which indicates the detailed scopes to dump\n  -waves file.vcd                Enable wave dump to file.vcd; +acc is required at compile time\n  -wildcard-limit n              Set limit on number of ranges created when expanding wildcard coverage bins (default: 1000)\n  -write-sql                     Write coverage as SQLite database\n\n"
+        }
+      ],
+      "lastScanned": 1784615238642
+    }
+  ]
+}
