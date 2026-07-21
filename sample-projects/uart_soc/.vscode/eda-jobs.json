@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "setup": {
+    "script": "scripts/env_setup.sh"
+  },
+  "jobs": [
+    {
+      "id": "c40b9044-482b-48e8-b13c-5c9a3428aa80",
+      "name": "Lint (Verilator)",
+      "command": "verilator --lint-only -Wall -Wno-PINCONNECTEMPTY --timing rtl/*.v --top-module uart_top",
+      "cwd": "."
+    },
+    {
+      "id": "36aa7f58-1547-40c4-9284-112d0d1e8371",
+      "name": "Icarus: build + run TB",
+      "command": "mkdir -p build && iverilog -g2012 -o build/uart_sim rtl/*.v tb/tb_uart_top.v && vvp build/uart_sim",
+      "cwd": ".",
+      "default": true
+    },
+    {
+      "id": "e569f135-9c2c-4201-a0b9-c347881a982b",
+      "name": "Questa: compile",
+      "command": "vlog rtl/*.v tb/tb_uart_top.v",
+      "cwd": "."
+    },
+    {
+      "id": "0af07b63-3601-4b3d-b81b-7bb417c84e8f",
+      "name": "Questa: run TB",
+      "command": "vsim -c -do \"run -all; quit\" tb_uart_top",
+      "cwd": "."
+    },
+    {
+      "id": "69e154bc-257a-4afd-b08f-b307068d00e8",
+      "name": "DSim: build + run TB",
+      "command": "dsim -top tb_uart_top rtl/sync_fifo.v rtl/uart_tx.v rtl/uart_rx.v rtl/uart_top.v tb/tb_uart_top.v",
+      "cwd": "."
+    }
+  ]
+}

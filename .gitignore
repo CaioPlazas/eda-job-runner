@@ -1,0 +1,18 @@
+node_modules/
+dist/
+out/
+*.vsix
+.eda-runner/
+.vscode-test/
+*.log
+# but keep the committed parser test fixtures (captured real tool output)
+!test-fixtures/*.log
+examples/build/
+dsim_work/
+dsim.env
+metrics.db
+examples/work/
+transcript
+vsim.wlf
+
+.claude/

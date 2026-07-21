@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "setup": {
+    "script": "scripts/env_setup.sh"
+  },
+  "jobs": [
+    {
+      "id": "1c7809c6-48c4-4215-a7e3-07afe692df63",
+      "name": "DSim UVM: random test (PASS)",
+      "command": "dsim -uvm 1.2 -top tb_top rtl/alu.sv tb/alu_if.sv tb/alu_pkg.sv tb/tb_top.sv +UVM_TESTNAME=alu_random_test",
+      "cwd": ".",
+      "default": true
+    },
+    {
+      "id": "5b4eba53-4490-40fa-850d-7026b7e14128",
+      "name": "DSim UVM: random test +BUG (fails -> Problems panel)",
+      "command": "dsim -uvm 1.2 -top tb_top rtl/alu.sv tb/alu_if.sv tb/alu_pkg.sv tb/tb_top.sv +UVM_TESTNAME=alu_random_test +BUG",
+      "cwd": "."
+    },
+    {
+      "id": "0fd05ce3-00c5-4e64-955a-aa68bead5e46",
+      "name": "DSim UVM: smoke test",
+      "command": "dsim -uvm 1.2 -top tb_top rtl/alu.sv tb/alu_if.sv tb/alu_pkg.sv tb/tb_top.sv +UVM_TESTNAME=alu_smoke_test",
+      "cwd": "."
+    },
+    {
+      "id": "3545e3da-6a6b-4d19-a8fd-00686114794e",
+      "name": "Questa: compile/elaborate UVM (no run -- see README)",
+      "command": "vlog -sv +incdir+$UVM_SRC $UVM_SRC/uvm_pkg.sv +incdir+tb rtl/alu.sv tb/alu_if.sv tb/alu_pkg.sv tb/tb_top.sv",
+      "cwd": "."
+    }
+  ]
+}

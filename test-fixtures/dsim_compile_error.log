@@ -1,0 +1,33 @@
+[env_setup] example environment loaded
+Activating DSim version: 2026
+Copyright (C) 2017-2025 Altair Engineering Inc. All rights reserved.
+=N:[UsageMeter (2026-07-20 07:13:42 +0200)] Using /etc/ssl/certs as location of CA certificates to verify license server.
+=N:[UsageMeter (2026-07-20 07:13:42 +0200)] usage server initial connection
+=N:[License] 
+********************************************************************************
+
+[DSIM LICENSE NOTICE]
+
+The free license for DSim on-prem is scheduled to expire on September 1st.
+
+To ensure uninterrupted service after this date, please transition your
+
+environment to use Altair licensing.
+
+KEY DATES:
+
+Sept 1st: Free On-Prem licenses and DSim Cloud services discontinued.
+
+Oct 15th: All DSim Cloud data will be permanently deleted.
+
+For migration instructions and Altair licensing details, visit: altair.com/dsim
+
+********************************************************************************
+=N:[License] New lease granted.
+Analyzing...
+=E:[ParseError]:
+    Parser errors encountered at the following locations:    
+
+    /tmp/broken_dsim.sv:4:27    expected 'null', 'super', 'this'... before ';'    
+
+  Altair DSim version: 2026.0.0 (b:R #c:127 h:14cc828913 os:rocky_8.10)
