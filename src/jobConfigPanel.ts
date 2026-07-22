@@ -385,11 +385,12 @@ function renderHtml(
     'Shell command to run. Runs via the configured shell (bash login shell by default; see the Shell &amp; Environment panel), so module load / sourced environment setup is available.<br /><br />Optional placeholders: <code>${param:NAME}</code> (or <code>${param:NAME=default}</code>) prompts for a value on every Run, remembering what you last entered; <code>${randomSeed}</code> fills in a fresh random integer on every run with no prompt. "Re-run Last" on an already-run job replays its exact previous values/seed with no new prompt.'
   )}</label>
   <textarea id="command" placeholder="e.g. make sim TEST=smoke_test">${esc(job?.command ?? '')}</textarea>
+  <div class="hint" id="builderHint"></div>
 
   <details id="toolBuilder" ${job?.toolId ? 'open' : ''}>
     <summary>Tool builder</summary>
     <label for="toolSelect">Tool ${help(
-      'Registered in the <b>Tool Setup</b> panel (wrench icon in the EDA Jobs view). Checking its flags below writes them into the Command field above — a hand-edit to Command always wins until you click "Sync".'
+      'Registered in the <b>Tool Setup</b> panel (wrench icon in the EDA Jobs view). Checking its flags below writes them into the Command field above while this section is expanded — collapse it to hand-edit the Command field instead.'
     )}</label>
     <select id="toolSelect">
       <option value="">(none — plain command)</option>
@@ -413,9 +414,6 @@ function renderHtml(
 
     <div id="customArgsWrap"></div>
     <button class="secondary" id="addCustomArg" type="button" style="margin-top:10px;">+ Add custom argument</button>
-
-    <div class="hint" id="builderHint"></div>
-    <button class="secondary" id="syncBuilder" type="button" style="margin-top:10px;">↻ Sync command from builder</button>
   </details>
 
   <label for="cwd">Working Directory ${help('Relative to the workspace root. Use "." for the root itself.')}</label>
@@ -514,10 +512,11 @@ function renderHtml(
     const listsWrap = document.getElementById('toolListsWrap');
     const customArgsWrap = document.getElementById('customArgsWrap');
     const builderHint = document.getElementById('builderHint');
-    const syncBtn = document.getElementById('syncBuilder');
+    const toolBuilderEl = document.getElementById('toolBuilder');
 
-    let settingFromBuilder = false;
-    let manualOverride = commandEl.value.trim().length > 0;
+    function builderOwns() {
+      return toolBuilderEl.open;
+    }
 
     function currentTool() {
       return TOOLS.find(t => t.id === toolSelectEl.value);
@@ -835,15 +834,12 @@ function renderHtml(
     function applyBuilderToCommand() {
       const built = buildCommandFromBuilder();
       if (built === null) { return; }
-      settingFromBuilder = true;
       commandEl.value = built;
-      settingFromBuilder = false;
-      manualOverride = false;
       updateHint();
     }
 
     function onBuilderChange() {
-      if (!manualOverride) {
+      if (builderOwns()) {
         applyBuilderToCommand();
       } else {
         updateHint();
@@ -851,16 +847,16 @@ function renderHtml(
     }
 
     function updateHint() {
-      builderHint.textContent = manualOverride
-        ? "Command was hand-edited -- builder changes won't overwrite it until you click Sync."
-        : (toolSelectEl.value ? 'Builder is driving the Command field live.' : '');
+      builderHint.textContent = builderOwns()
+        ? 'Tool builder is controlling the Command field — collapse it to hand-edit the command.'
+        : 'Hand-written command is in effect — expand Tool builder to build it from flags.';
     }
 
-    commandEl.addEventListener('input', () => {
-      if (!settingFromBuilder) {
-        manualOverride = true;
-        updateHint();
+    toolBuilderEl.addEventListener('toggle', () => {
+      if (toolBuilderEl.open) {
+        applyBuilderToCommand();
       }
+      updateHint();
     });
 
     toolSelectEl.addEventListener('change', () => {
@@ -875,7 +871,6 @@ function renderHtml(
       renderOptions(tool, currentVariant(tool));
       renderLists(tool);
     });
-    syncBtn.addEventListener('click', () => applyBuilderToCommand());
 
     (function initBuilder() {
       // Guarded: a fault in the optional tool-builder must never leave the
