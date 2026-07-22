@@ -79,6 +79,13 @@ that detach to a farm scheduler (`bsub -o`/`qsub -o`) — point it at the
 scheduler's output file and it polls that instead, which also works over
 NFS where filesystem-change notifications don't.
 
+**Log Viewer** is a fourth view-title icon: a page listing every past run
+across every job, newest first, filterable by job/folder/pass-fail/seed/
+date, with collapsible per-job sections and a search box that greps
+through log contents for something like a specific `UVM_ERROR`. Built
+entirely from what's already in each log file's own header/trailer — no
+separate index to keep in sync.
+
 **Tool Setup** is a GUI builder for a job's Command field, for the common
 case of an in-house run script with a large flag set nobody wants to
 memorize. Register the script; the extension runs its `--help` and parses

@@ -304,7 +304,7 @@ export class JobRunner implements vscode.Disposable {
     template: string
   ): Promise<JobRunState> {
     void ensureGitignoreEntry(this.workspaceFolder, this.memento);
-    const resolvedCommand = substituteRandomSeed(template);
+    const { command: resolvedCommand, seed } = substituteRandomSeed(template);
 
     const config = vscode.workspace.getConfiguration('eda-job-runner', this.workspaceFolder.uri);
     const shellPath = (config.get<string>('shellPath', 'bash') || 'bash').trim() || 'bash';
@@ -340,6 +340,7 @@ export class JobRunner implements vscode.Disposable {
     const startTime = Date.now();
     stream.write(
       `# EDA Job Runner\n# job: ${job.name}${label ? ` (run ${label})` : ''}\n# command: ${resolvedCommand}\n` +
+        (seed !== undefined ? `# seed: ${seed}\n` : '') +
         `# cwd: ${cwdAbs}\n# started: ${new Date(startTime).toISOString()}\n\n`
     );
     if ((job.failPattern?.trim() && !compilePattern(job.failPattern)) || (job.passPattern?.trim() && !compilePattern(job.passPattern))) {
