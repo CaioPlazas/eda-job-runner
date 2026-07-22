@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.21.0 — Command field vs. Tool builder precedence, made obvious
+
+Whether the hand-written Command field or the Tool builder "owns" what's
+in it used to depend on whether you'd typed in the field recently — hard
+to predict, with a "Sync" button as an escape hatch. Precedence is now
+tied to whether the Tool builder section is expanded or collapsed:
+collapsed, your hand-written command is untouched; expanded, the builder
+drives the field live as you check flags. A hint above the Command field
+always shows which one currently owns it.
+
 ## 0.20.0 — Decouple Tool Setup scanning from a specific folder
 
 Registering or rescanning a tool used to require the scan to actually run
