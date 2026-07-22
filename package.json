@@ -2,7 +2,7 @@
   "name": "eda-job-runner",
   "displayName": "EDA Job Runner",
   "description": "Tool-agnostic sidebar for running and tracking EDA compile/simulation jobs (Xcelium, Questa, or any custom script) without leaving VS Code.",
-  "version": "0.27.0",
+  "version": "0.31.0",
   "publisher": "CaioPlazas",
   "license": "GPL-3.0",
   "icon": "media/icon.png",
@@ -482,17 +482,40 @@
           "default": {},
           "markdownDescription": "Extra environment variables merged on top of the inherited environment for every job. Supports `${workspaceFolder}` and `${env:NAME}` substitution. For heavier setup (module loads, sourcing an activation script) prefer the `setup` block in `.vscode/eda-jobs.json`."
         },
+        "eda-job-runner.killSignals": {
+          "type": "array",
+          "default": [
+            { "signal": "SIGINT", "graceSeconds": 5 },
+            { "signal": "SIGTERM", "graceSeconds": 5 },
+            { "signal": "SIGKILL" }
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "signal": {
+                "type": "string",
+                "enum": ["SIGINT", "SIGTERM", "SIGKILL", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGABRT"]
+              },
+              "graceSeconds": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": ["signal"]
+          },
+          "markdownDescription": "Ordered escalation sequence used when stopping a job (signalled against the whole process group, so it reaches the entire `make`/shell/simulator tree). Each stage waits `graceSeconds` (falling back to `killGracePeriodSeconds` when omitted) before moving to the next; a final `SIGKILL` is always appended even if omitted here. Defaults to `SIGINT` first since many EDA tools release their license cleanly on ctrl+c but not on `SIGTERM`."
+        },
         "eda-job-runner.killGracePeriodSeconds": {
           "type": "number",
           "default": 5,
           "minimum": 0,
-          "description": "Seconds to wait after sending SIGTERM before escalating to SIGKILL when stopping a job."
+          "description": "Fallback grace period (seconds) for a killSignals stage that doesn't specify its own graceSeconds."
         },
         "eda-job-runner.logMaxSizeMB": {
           "type": "number",
           "default": 200,
           "minimum": 1,
-          "description": "Maximum size (MB) captured per run log. Once exceeded, capture stops (with a marker) but the job keeps running."
+          "description": "Maximum amount (MB) of a run's output fed into error/warning parsing and Fail/Pass pattern matching. Once exceeded, parsing stops (with a marker) but the job keeps running and its full output keeps being recorded to the log file regardless -- since v0.30.0 the log file is written directly by the job's own process, so this setting no longer limits the file's own size (use logRetentionCount to bound total disk usage)."
         },
         "eda-job-runner.logRetentionCount": {
           "type": "number",
@@ -503,7 +526,7 @@
         "eda-job-runner.stripAnsiCodes": {
           "type": "boolean",
           "default": true,
-          "description": "Strip ANSI color/cursor escape codes from captured output before writing to the log file, so logs read cleanly as plain text."
+          "description": "No longer has any effect since v0.30.0: the log file is now written directly by the job's own process (needed so capture survives a window reload) and can no longer be selectively stripped before writing. Error/warning parsing always strips ANSI codes internally regardless of this setting. Kept registered for backward compatibility with existing settings.json files."
         },
         "eda-job-runner.failOnLogErrors": {
           "type": "boolean",

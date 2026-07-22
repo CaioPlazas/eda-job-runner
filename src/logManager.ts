@@ -22,20 +22,30 @@ export class LogManager {
    * other or with the primary lane's log, and don't relink `latest.log`
    * (that always tracks the primary lane).
    */
+  /**
+   * Opens the log file with the `a` (append) flag and returns the raw
+   * `FileHandle` rather than a `WriteStream`: the caller passes its `.fd`
+   * straight into the spawned child's `stdio` array so the job's own
+   * stdout/stderr write directly to this file at the OS level (append mode
+   * guarantees the header write below and the child's own writes never
+   * interleave out of order) -- this is what lets capture survive an
+   * extension-host restart, since it no longer depends on this process
+   * staying alive to relay the child's output through a pipe.
+   */
   async createLogFile(
     jobId: string,
     retentionCount: number,
     laneSuffix?: string
-  ): Promise<{ logPath: string; stream: fs.WriteStream }> {
+  ): Promise<{ logPath: string; handle: fs.promises.FileHandle }> {
     const dir = path.join(this.logsRoot, jobId);
     await fs.promises.mkdir(dir, { recursive: true });
     const logPath = path.join(dir, `${timestamp()}${laneSuffix ? `_${laneSuffix}` : ''}.log`);
-    const stream = fs.createWriteStream(logPath, { flags: 'a' });
+    const handle = await fs.promises.open(logPath, 'a');
     if (!laneSuffix) {
       await this.relinkLatest(dir, logPath);
     }
     await this.prune(jobId, retentionCount);
-    return { logPath, stream };
+    return { logPath, handle };
   }
 
   async getLatestLogPath(jobId: string): Promise<string | undefined> {

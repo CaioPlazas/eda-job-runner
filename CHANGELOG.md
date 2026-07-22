@@ -1,5 +1,84 @@
 # Changelog
 
+## 0.31.0 — Full reattachment after a window reload
+
+The last piece of clearing out the kill/reattachment backlog. Until now, a
+job that outlived a window reload just sat "running (detached)" forever —
+Stop still worked, but live output capture, error/warning counts, and
+Problems-panel diagnostics were frozen from the moment of the reload, and
+the only way to see how it actually finished was to open its log by hand.
+Now, at activation, every such job automatically resumes: a fresh tailer
+re-reads its log file from the start (rebuilding correct cumulative counts
+and diagnostics, since nothing survives a reload to resume from), and a
+liveness poll watches for its process to actually finish. Since a
+reattached process was never spawned by this session, there's no real Node
+exit event or exit code available for it — its pass/fail is instead
+inferred from its own captured output (a matched Fail/Pass pattern, or the
+structured error parser), defaulting conservatively to failed if nothing
+says otherwise, so a run that disappeared without proof can't be credited
+as a pass. New pure `reattach.ts` (`decideReattachState`, unit-tested via
+`run-reattach-tests.mjs`) makes that call, reusing `jobOutcome.ts`'s exact
+precedence with a conservative baseline instead of an optimistic one. The
+tree/status bar now show "running (resumed)" (normal blue spinner) once
+re-tailing is active, distinct from the old frozen "running (detached)"
+look, which is now only ever visible for the brief instant before
+reattachment kicks in.
+
+## 0.30.0 — Capture survives closing VS Code
+
+The prerequisite for full reattachment: a job's stdout/stderr now write
+directly to its log file at the OS level (an inherited file descriptor
+passed straight into the spawned process, not a shell-level redirect —
+works the same across bash/tcsh/csh and doesn't disturb exit-code capture)
+instead of being piped through the extension host. That's what let capture
+silently die on a window reload before, even though the job itself (its
+own detached process group) kept running untouched. A `FileTailer` now
+feeds every run's error/warning parsing and Fail/Pass pattern matching by
+reading the file back, live or reattached alike, rather than the extension
+host relaying the child's output itself. Two settings change meaning as a
+result: `logMaxSizeMB` now caps how much of a run is fed into parsing, not
+the log file's own size (which the OS controls directly now — disk usage
+stays bounded by `logRetentionCount` as before); `stripAnsiCodes` no longer
+has any effect (the file is always raw now — parsing still always strips
+ANSI internally regardless), kept registered for backward compatibility.
+
+## 0.29.0 — Configurable, SIGINT-first kill signal escalation
+
+Stopping a job now runs a configurable ordered signal sequence
+(`killSignals`, new setting) instead of a hardcoded SIGTERM-then-SIGKILL —
+defaulting to **SIGINT, then SIGTERM, then SIGKILL**, each with its own
+grace period, since ctrl+c alone is often enough for an EDA tool to release
+its license cleanly, which SIGTERM doesn't always trigger. New pure
+`killPlan.ts` (`computeKillSchedule`, unit-tested via `run-kill-tests.mjs`)
+turns the setting into a concrete schedule — dropping unrecognized entries,
+falling back to today's historical two-stage sequence if the list is empty
+or entirely invalid, and always guaranteeing a final SIGKILL stage
+regardless of what's configured. `killGracePeriodSeconds` (existing
+setting) is kept as the fallback grace for a stage that doesn't specify its
+own. Both of `stop()`'s existing branches (a live run, and a "running
+(detached)" job reconstructed after a reload) now consume the same
+schedule through shared logic instead of each hand-rolling its own
+two-stage sequence.
+
+## 0.28.0 — Fix a pid-reuse race in the detached-reload Stop path
+
+A "running (detached)" job (one whose status survived a window reload,
+with no live process handle) is stopped by signalling its raw pid. Until
+now that path trusted a bare `/proc/<pid>` existence check with no
+identity verification — if the original process had already exited and
+the OS later recycled that pid for something unrelated (plausible minutes
+after a reload, on a host that's spawned many short-lived subprocesses in
+the interim), Stop could end up signalling the wrong process group. Fixed
+by persisting each run's process start time (`/proc/<pid>/stat` field 22)
+alongside its pid and verifying both match before ever sending a signal —
+if they don't, the job is simply marked idle instead of being signalled.
+A status persisted before this change (no recorded start time) falls back
+to the previous existence-only check rather than being treated as dead.
+New pure `procStat.ts` (`parseStartTimeTicks`, unit-tested via
+`run-procstat-tests.mjs`) handles the actual `/proc/<pid>/stat` parsing,
+including the gotcha that its `comm` field can itself contain spaces and
+parens.
+
 ## 0.27.0 — README rewrite
 
 No functional changes. The README was rewritten from scratch to actually

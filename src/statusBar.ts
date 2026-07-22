@@ -49,7 +49,7 @@ export class StatusBarController implements vscode.Disposable {
 
     const { job, status } = running[0];
     const elapsed = formatDuration(Date.now() - (status.startTime ?? Date.now()));
-    const suffix = status.detached ? ' (detached)' : '';
+    const suffix = status.reattached ? ' (resumed)' : status.detached ? ' (detached)' : '';
     const laneNote = status.laneLabel ? ` (${status.laneLabel})` : '';
     const errs = status.errorCount ?? 0;
     const warns = status.warningCount ?? 0;

@@ -237,7 +237,11 @@ export class EdaTreeDragAndDropController implements vscode.TreeDragAndDropContr
 function iconForState(status: JobRunStatus): vscode.ThemeIcon {
   switch (status.state) {
     case 'running':
-      return status.detached
+      // A job that's detached but not yet reattached has no live capture at
+      // all (the frozen "lost track" state); one that's been reattached is
+      // actively re-tailing its log again, so it gets the normal running
+      // look back rather than looking permanently disconnected.
+      return status.detached && !status.reattached
         ? new vscode.ThemeIcon('debug-disconnect', new vscode.ThemeColor('charts.yellow'))
         : new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.blue'));
     case 'passed':
@@ -255,7 +259,11 @@ function describeStatus(status: JobRunStatus): string {
   switch (status.state) {
     case 'running': {
       const elapsed = formatDuration(Date.now() - (status.startTime ?? Date.now()));
-      const base = status.detached ? `running (detached) ${elapsed}` : `running ${elapsed}`;
+      const base = status.reattached
+        ? `running (resumed) ${elapsed}`
+        : status.detached
+          ? `running (detached) ${elapsed}`
+          : `running ${elapsed}`;
       return base + countSuffix(status);
     }
     case 'passed':
@@ -293,7 +301,9 @@ function describeStatusLong(status: JobRunStatus): string {
     return '_Never run in this session._';
   }
   const parts = [`status: **${status.state}**`];
-  if (status.detached) {
+  if (status.reattached) {
+    parts.push('_Resumed live tailing after a window reload — log, counts, and Problems keep updating as normal._');
+  } else if (status.detached) {
     parts.push(
       '_Lost track of this job across a window reload — still running detached. ' +
         'Stop still works; check its log directly for progress._'
