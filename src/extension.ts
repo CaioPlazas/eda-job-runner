@@ -10,6 +10,7 @@ import { StatusBarController } from './statusBar';
 import { JobConfigPanel } from './jobConfigPanel';
 import { ShellEnvPanel } from './shellEnvPanel';
 import { ParamsPanel } from './paramsPanel';
+import { LogViewerPanel } from './logViewerPanel';
 import { LogLiveView } from './logLiveView';
 import { substituteVars } from './shellInvocation';
 import {
@@ -108,6 +109,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.configureTools', () => ToolSetupPanel.createOrShow(toolStore, jobStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore)),
+    vscode.commands.registerCommand('eda-job-runner.openLogViewer', () => LogViewerPanel.createOrShow(jobStore, logManager)),
     vscode.commands.registerCommand('eda-job-runner.addFolder', () => addFolder(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.addJobInFolder', (item: FolderTreeItem) =>
       item ? JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), undefined, item.folderName) : undefined

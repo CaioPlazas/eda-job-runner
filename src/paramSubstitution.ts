@@ -45,15 +45,25 @@ export function substituteParams(command: string, values: Record<string, string>
   return command.replace(PARAM_TOKEN, (_full, name: string) => values[name] ?? '');
 }
 
-/** Replace every `${randomSeed}` placeholder with one freshly generated value (same value for every occurrence in this one call). */
-export function substituteRandomSeed(command: string, randomInt: () => number = defaultRandomInt): string {
+/**
+ * Replace every `${randomSeed}` placeholder with one freshly generated value
+ * (same value for every occurrence in this one call). `seed` in the result is
+ * that generated value, or undefined when the command had no placeholder --
+ * callers (jobRunner.ts) use it to record the actual seed a run used, e.g. in
+ * the log header for the log viewer's seed filter.
+ */
+export function substituteRandomSeed(
+  command: string,
+  randomInt: () => number = defaultRandomInt
+): { command: string; seed: string | undefined } {
   let seed: string | undefined;
-  return command.replace(RANDOM_SEED_TOKEN, () => {
+  const resolved = command.replace(RANDOM_SEED_TOKEN, () => {
     if (seed === undefined) {
       seed = String(randomInt());
     }
     return seed;
   });
+  return { command: resolved, seed };
 }
 
 function defaultRandomInt(): number {

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.25.0 — Log Viewer
+
+A new "Log Viewer" icon (next to Shell & Environment / Tool Setup /
+Parameters) opens a page listing every past run across every job, newest
+first — no more digging through `.eda-runner/logs/` by hand or clicking
+through jobs one at a time. Filter by job, folder, pass/fail/killed/
+running, seed, or a date range; collapsible sections group everything by
+job below the combined "All logs" view; a search box finds runs whose
+output contains a given string (e.g. a specific `UVM_ERROR`), scoped to
+whatever's currently filtered. Click any row to open that log.
+
+Runs using `${randomSeed}` now record the actual seed value they used in
+the log file itself, so it's filterable and doesn't have to be dug out of
+the resolved command by eye.
+
 ## 0.24.0 — Docs only: scoped out the next two backlog items
 
 No code changes. `PLAN.md`'s two remaining Phase 4 items — license-friendly

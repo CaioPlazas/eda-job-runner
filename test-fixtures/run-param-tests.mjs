@@ -59,34 +59,38 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   check(out === 'run.sh ', `missing value -> empty string (got ${JSON.stringify(out)})`);
 }
 
-// --- substituteRandomSeed: no placeholder -> command unchanged ---
+// --- substituteRandomSeed: no placeholder -> command unchanged, seed undefined ---
 {
-  const out = substituteRandomSeed('make sim TEST=smoke_test', () => 999);
-  check(out === 'make sim TEST=smoke_test', 'no ${randomSeed} -> command unchanged');
+  const { command, seed } = substituteRandomSeed('make sim TEST=smoke_test', () => 999);
+  check(command === 'make sim TEST=smoke_test', 'no ${randomSeed} -> command unchanged');
+  check(seed === undefined, `no \${randomSeed} -> seed undefined (got ${JSON.stringify(seed)})`);
 }
 
-// --- substituteRandomSeed: replaces with the injected generator's value ---
+// --- substituteRandomSeed: replaces with the injected generator's value, and returns it as seed ---
 {
-  const out = substituteRandomSeed('sim -seed ${randomSeed}', () => 12345);
-  check(out === 'sim -seed 12345', `substituteRandomSeed uses generator (got ${JSON.stringify(out)})`);
+  const { command, seed } = substituteRandomSeed('sim -seed ${randomSeed}', () => 12345);
+  check(command === 'sim -seed 12345', `substituteRandomSeed uses generator (got ${JSON.stringify(command)})`);
+  check(seed === '12345', `returned seed matches the generated value (got ${JSON.stringify(seed)})`);
 }
 
 // --- substituteRandomSeed: every occurrence in one call gets the SAME value ---
 {
   let calls = 0;
-  const out = substituteRandomSeed('sim -seed ${randomSeed} -sv_seed ${randomSeed}', () => {
+  const { command, seed } = substituteRandomSeed('sim -seed ${randomSeed} -sv_seed ${randomSeed}', () => {
     calls++;
     return 7;
   });
-  check(out === 'sim -seed 7 -sv_seed 7', `multiple occurrences share one value (got ${JSON.stringify(out)})`);
+  check(command === 'sim -seed 7 -sv_seed 7', `multiple occurrences share one value (got ${JSON.stringify(command)})`);
   check(calls === 1, `generator called exactly once per substitution call (got ${calls})`);
+  check(seed === '7', `returned seed matches (got ${JSON.stringify(seed)})`);
 }
 
 // --- substituteRandomSeed: default generator produces a non-negative integer ---
 {
-  const out = substituteRandomSeed('sim -seed ${randomSeed}');
-  const m = /^sim -seed (\d+)$/.exec(out);
-  check(!!m && Number(m[1]) >= 0, `default generator produces a plain integer (got ${JSON.stringify(out)})`);
+  const { command, seed } = substituteRandomSeed('sim -seed ${randomSeed}');
+  const m = /^sim -seed (\d+)$/.exec(command);
+  check(!!m && Number(m[1]) >= 0, `default generator produces a plain integer (got ${JSON.stringify(command)})`);
+  check(seed === m?.[1], `returned seed matches the substituted value (got ${JSON.stringify(seed)})`);
 }
 
 console.log(failures === 0 ? '\nAll param-substitution tests passed.' : `\n${failures} param-substitution test(s) FAILED.`);
