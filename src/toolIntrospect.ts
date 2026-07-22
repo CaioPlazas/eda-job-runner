@@ -41,7 +41,12 @@ interface ProbeResult {
  * discovery (`discoverList`) so neither invents its own subprocess mechanism —
  * keeping both within the CentOS 7 / no-native-deps ground rules.
  */
-function runProbe(probeCommand: string, jobStore: JobStore, folder: vscode.WorkspaceFolder): Promise<ProbeResult> {
+function runProbe(
+  probeCommand: string,
+  jobStore: JobStore,
+  folder: vscode.WorkspaceFolder,
+  scanDir?: string
+): Promise<ProbeResult> {
   const config = vscode.workspace.getConfiguration('eda-job-runner', folder.uri);
   const shellPath = config.get<string>('shellPath', 'bash');
   const shellArgs = config.get<string[] | null>('shellArgs', null);
@@ -62,9 +67,13 @@ function runProbe(probeCommand: string, jobStore: JobStore, folder: vscode.Works
   const probe = probeParts.join(' && ');
 
   const { file, args } = buildShellInvocation(shellPath, shellArgs, probe);
-  const cwd = postSetupCwd.trim()
-    ? path.resolve(workspaceRoot, substituteVars(postSetupCwd.trim(), workspaceRoot))
-    : workspaceRoot;
+  // A tool's own scan-directory override wins over the workspace-wide
+  // postSetupCwd default -- this is what lets the same script be registered
+  // twice (e.g. "work1/launch_sim", "work2/launch_sim") and scanned
+  // independently from each folder. Never affects a job's own runtime cwd,
+  // which is resolved separately in jobRunner.ts.
+  const effectiveDir = (scanDir?.trim() || postSetupCwd.trim());
+  const cwd = effectiveDir ? path.resolve(workspaceRoot, substituteVars(effectiveDir, workspaceRoot)) : workspaceRoot;
 
   return new Promise<ProbeResult>(resolve => {
     let child: cp.ChildProcess;
@@ -122,12 +131,14 @@ export async function scanVariant(
   selectArgs: string[],
   helpArg: string,
   jobStore: JobStore,
-  folder: vscode.WorkspaceFolder
+  folder: vscode.WorkspaceFolder,
+  scanDir?: string
 ): Promise<ScanResult> {
   const { output, code, signal, launchError } = await runProbe(
     [command, ...selectArgs, helpArg].join(' '),
     jobStore,
-    folder
+    folder,
+    scanDir
   );
   if (launchError) {
     return { options: [], rawHelp: output, scanError: launchError };
@@ -152,7 +163,7 @@ export async function scanTool(
   const helpArg = tool.helpArg?.trim() || '--help';
   const variants: ToolVariant[] = [];
   for (const variant of tool.variants) {
-    const result = await scanVariant(tool.command, variant.selectArgs, helpArg, jobStore, folder);
+    const result = await scanVariant(tool.command, variant.selectArgs, helpArg, jobStore, folder, tool.scanDir);
     variants.push({
       label: variant.label,
       selectArgs: variant.selectArgs,
@@ -175,13 +186,14 @@ export async function scanTool(
 export async function discoverList(
   list: ToolList,
   jobStore: JobStore,
-  folder: vscode.WorkspaceFolder
+  folder: vscode.WorkspaceFolder,
+  scanDir?: string
 ): Promise<ToolList> {
   const command = list.command?.trim();
   const file = list.file?.trim();
 
   if (command) {
-    const { output, launchError } = await runProbe(command, jobStore, folder);
+    const { output, launchError } = await runProbe(command, jobStore, folder, scanDir);
     if (launchError) {
       return { ...list, values: [], scanError: launchError };
     }
@@ -191,7 +203,7 @@ export async function discoverList(
 
   if (file) {
     try {
-      const filePath = resolveListFilePath(file, folder);
+      const filePath = resolveListFilePath(file, folder, scanDir);
       const text = await readCapped(filePath);
       const values = parseListLines(text, list.pattern);
       return { ...list, values, scanError: values.length === 0 ? 'file has no list items' : undefined };
@@ -228,13 +240,13 @@ export async function scanLists(
 ): Promise<ToolList[]> {
   const lists: ToolList[] = [];
   for (const list of tool.lists ?? []) {
-    lists.push(await discoverList(list, jobStore, folder));
+    lists.push(await discoverList(list, jobStore, folder, tool.scanDir));
   }
   return lists;
 }
 
-/** Resolve a list file path the same way a job's cwd resolves: against postSetupCwd, then workspace root. */
-function resolveListFilePath(file: string, folder: vscode.WorkspaceFolder): string {
+/** Resolve a list file path the same way a scan's cwd resolves: against a tool's own scanDir override, then postSetupCwd, then workspace root. */
+function resolveListFilePath(file: string, folder: vscode.WorkspaceFolder, scanDir?: string): string {
   const workspaceRoot = folder.uri.fsPath;
   const resolved = substituteVars(file, workspaceRoot);
   if (path.isAbsolute(resolved)) {
@@ -242,9 +254,8 @@ function resolveListFilePath(file: string, folder: vscode.WorkspaceFolder): stri
   }
   const config = vscode.workspace.getConfiguration('eda-job-runner', folder.uri);
   const postSetupCwd = config.get<string>('postSetupCwd', '');
-  const baseDir = postSetupCwd.trim()
-    ? path.resolve(workspaceRoot, substituteVars(postSetupCwd.trim(), workspaceRoot))
-    : workspaceRoot;
+  const effectiveDir = scanDir?.trim() || postSetupCwd.trim();
+  const baseDir = effectiveDir ? path.resolve(workspaceRoot, substituteVars(effectiveDir, workspaceRoot)) : workspaceRoot;
   return path.resolve(baseDir, resolved);
 }
 

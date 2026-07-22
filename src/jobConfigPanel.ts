@@ -394,7 +394,10 @@ function renderHtml(
     <select id="toolSelect">
       <option value="">(none — plain command)</option>
       ${tools
-        .map(t => `<option value="${esc(t.id)}" ${job?.toolId === t.id ? 'selected' : ''}>${esc(t.command)}</option>`)
+        .map(
+          t =>
+            `<option value="${esc(t.id)}" ${job?.toolId === t.id ? 'selected' : ''}>${esc(t.displayName || t.command)}</option>`
+        )
         .join('')}
     </select>
 

@@ -180,6 +180,16 @@ export interface ToolDefinition {
   id: string;
   /** Command as typed by the user, e.g. "run_simulation.py" or a full path. */
   command: string;
+  /** Friendly label shown wherever this tool is listed. Falls back to `command` when unset/blank -- never affects what actually runs. */
+  displayName?: string;
+  /**
+   * Optional per-tool override of the directory tool scans/rescans run from
+   * (manual add, manual rescan, and the window-reload auto-rescan). Blank/unset
+   * uses the workspace `eda-job-runner.postSetupCwd` setting. Supports
+   * `${workspaceFolder}`/`${env:NAME}`. Scan-time only -- never affects a job's
+   * own runtime cwd, which is resolved independently per job.
+   */
+  scanDir?: string;
   /** Flag used to introspect the tool. Defaults to "--help". */
   helpArg?: string;
   variants: ToolVariant[];

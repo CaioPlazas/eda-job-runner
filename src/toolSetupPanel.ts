@@ -9,6 +9,8 @@ interface ScanNewMessage {
   type: 'scanNew';
   command: string;
   helpArg: string;
+  displayName: string;
+  scanDir: string;
 }
 interface CancelAddMessage {
   type: 'cancelAdd';
@@ -42,6 +44,8 @@ interface SaveEditMessage {
   id: string;
   command: string;
   helpArg: string;
+  displayName: string;
+  scanDir: string;
 }
 interface StartAddVariantMessage {
   type: 'startAddVariant';
@@ -121,6 +125,8 @@ type WebviewMessage =
 interface PendingAdd {
   command: string;
   helpArg: string;
+  displayName: string;
+  scanDir: string;
   topLevel: { options: ToolOption[]; rawHelp: string; scanError?: string };
   suggestedChoices: string[];
 }
@@ -182,10 +188,14 @@ export class ToolSetupPanel {
           return;
         }
         const helpArg = msg.helpArg.trim() || '--help';
-        const result = await scanVariant(command, [], helpArg, this.jobStore, this.folder);
+        const displayName = msg.displayName.trim();
+        const scanDir = msg.scanDir.trim();
+        const result = await scanVariant(command, [], helpArg, this.jobStore, this.folder, scanDir || undefined);
         this.pendingAdd = {
           command,
           helpArg,
+          displayName,
+          scanDir,
           topLevel: { options: result.options, rawHelp: result.rawHelp, scanError: result.scanError },
           suggestedChoices: detectSubcommandChoices(result.rawHelp)
         };
@@ -218,10 +228,24 @@ export class ToolSetupPanel {
           if (!label || selectArgs.length === 0) {
             continue;
           }
-          const result = await scanVariant(pending.command, selectArgs, pending.helpArg, this.jobStore, this.folder);
+          const result = await scanVariant(
+            pending.command,
+            selectArgs,
+            pending.helpArg,
+            this.jobStore,
+            this.folder,
+            pending.scanDir || undefined
+          );
           variants.push({ label, selectArgs, options: result.options, rawHelp: result.rawHelp, scanError: result.scanError });
         }
-        await this.toolStore.addTool({ command: pending.command, helpArg: pending.helpArg, variants, lastScanned: Date.now() });
+        await this.toolStore.addTool({
+          command: pending.command,
+          helpArg: pending.helpArg,
+          displayName: pending.displayName || undefined,
+          scanDir: pending.scanDir || undefined,
+          variants,
+          lastScanned: Date.now()
+        });
         this.pendingAdd = undefined;
         this.render();
         return;
@@ -249,7 +273,14 @@ export class ToolSetupPanel {
           return;
         }
         const helpArg = tool.helpArg?.trim() || '--help';
-        const result = await scanVariant(tool.command, tool.variants[idx].selectArgs, helpArg, this.jobStore, this.folder);
+        const result = await scanVariant(
+          tool.command,
+          tool.variants[idx].selectArgs,
+          helpArg,
+          this.jobStore,
+          this.folder,
+          tool.scanDir
+        );
         const variants = tool.variants.slice();
         variants[idx] = {
           ...variants[idx],
@@ -283,7 +314,14 @@ export class ToolSetupPanel {
           return;
         }
         const helpArg = msg.helpArg.trim() || '--help';
-        await this.toolStore.updateTool(msg.id, { command, helpArg });
+        const displayName = msg.displayName.trim();
+        const scanDir = msg.scanDir.trim();
+        await this.toolStore.updateTool(msg.id, {
+          command,
+          helpArg,
+          displayName: displayName || undefined,
+          scanDir: scanDir || undefined
+        });
         const updated = this.toolStore.getTool(msg.id);
         if (updated) {
           const variants = await scanTool(updated, this.jobStore, this.folder);
@@ -313,7 +351,7 @@ export class ToolSetupPanel {
           return;
         }
         const helpArg = tool.helpArg?.trim() || '--help';
-        const result = await scanVariant(tool.command, selectArgs, helpArg, this.jobStore, this.folder);
+        const result = await scanVariant(tool.command, selectArgs, helpArg, this.jobStore, this.folder, tool.scanDir);
         const variants = tool.variants.filter(v => v.label !== label);
         variants.push({ label, selectArgs, options: result.options, rawHelp: result.rawHelp, scanError: result.scanError });
         await this.toolStore.updateTool(msg.id, { variants, lastScanned: Date.now() });
@@ -390,7 +428,7 @@ export class ToolSetupPanel {
           insertTemplate: msg.insertTemplate.trim() || undefined,
           values: []
         };
-        const discovered = await discoverList(list, this.jobStore, this.folder);
+        const discovered = await discoverList(list, this.jobStore, this.folder, tool.scanDir);
         // Replace any existing list of the same name (edit-in-place), else append.
         const lists = (tool.lists ?? []).filter(l => l.name !== name);
         lists.push(discovered);
@@ -409,7 +447,7 @@ export class ToolSetupPanel {
           return;
         }
         const lists = tool.lists.slice();
-        lists[idx] = await discoverList(lists[idx], this.jobStore, this.folder);
+        lists[idx] = await discoverList(lists[idx], this.jobStore, this.folder, tool.scanDir);
         await this.toolStore.updateTool(msg.id, { lists });
         this.render();
         return;
@@ -586,13 +624,24 @@ function renderHtml(
         <button class="primary small" data-save-edit="${esc(tool.id)}" type="button">Save &amp; Rescan</button>
         <button class="secondary small" id="cancelEdit" type="button">Cancel</button>
       </div>
+      <details class="advancedFields">
+        <summary>Advanced (name, scan directory)</summary>
+        <label>Display name</label>
+        <div class="hint">Friendly label shown wherever this tool is listed. Leave blank to just show the command.</div>
+        <input type="text" class="editDisplayName" value="${esc(tool.displayName ?? '')}" placeholder="${esc(tool.command)}" />
+        <label>Scan directory</label>
+        <div class="hint">Directory this tool's scans/rescans run from. Leave blank to use the workspace's postSetupCwd setting. Register the same command twice with different scan directories (and names) if colleagues keep separate copies in different folders.</div>
+        <input type="text" class="editScanDir" value="${esc(tool.scanDir ?? '')}" placeholder="(workspace default)" />
+      </details>
     </div>`;
     }
     return `
     <div class="tool">
       <div class="toolHeader">
-        <b>${esc(tool.command)}</b>
+        <b>${esc(tool.displayName || tool.command)}</b>
+        ${tool.displayName ? `<span class="hint"><code>${esc(tool.command)}</code></span>` : ''}
         ${tool.helpArg && tool.helpArg !== '--help' ? `<span class="hint">(${esc(tool.helpArg)})</span>` : ''}
+        ${tool.scanDir ? `<span class="hint">scans from <code>${esc(tool.scanDir)}</code></span>` : ''}
         <span class="hint">${tool.lastScanned ? 'scanned ' + esc(new Date(tool.lastScanned).toLocaleString()) : 'never scanned'}</span>
         <button class="secondary small" data-edit-tool="${esc(tool.id)}" type="button">Edit</button>
         <button class="secondary small" data-rescan-tool="${esc(tool.id)}" type="button">Rescan All</button>
@@ -611,7 +660,9 @@ function renderHtml(
   const pendingHtml = pendingAdd
     ? `
     <div class="pendingAdd">
-      <h3>Add ${esc(pendingAdd.command)}</h3>
+      <h3>Add ${esc(pendingAdd.displayName || pendingAdd.command)}</h3>
+      ${pendingAdd.displayName ? `<div class="hint"><code>${esc(pendingAdd.command)}</code></div>` : ''}
+      ${pendingAdd.scanDir ? `<div class="hint">scanning from <code>${esc(pendingAdd.scanDir)}</code></div>` : ''}
       <div class="hint">
         Top-level scan: ${pendingAdd.topLevel.options.length} option(s)${
         pendingAdd.topLevel.scanError ? ` — ${esc(pendingAdd.topLevel.scanError)}` : ''
@@ -648,6 +699,14 @@ function renderHtml(
       <label for="newHelpArg">Help argument</label>
       <input id="newHelpArg" type="text" value="--help" />
       <div class="hint">Scanned through the same shell &amp; workspace setup chain a job uses (Shell &amp; Environment panel).</div>
+      <details class="advancedFields">
+        <summary>Advanced (name, scan directory)</summary>
+        <label for="newDisplayName">Display name</label>
+        <input id="newDisplayName" type="text" placeholder="(defaults to the command)" />
+        <label for="newScanDir">Scan directory</label>
+        <div class="hint">Leave blank to use the workspace's postSetupCwd setting. Set this (with a distinguishing display name) to register the same command a second time for a different folder, e.g. colleagues keeping separate copies in work1/work2.</div>
+        <input id="newScanDir" type="text" placeholder="(workspace default)" />
+      </details>
       <div class="actions">
         <button class="primary" id="scanNew">Scan</button>
       </div>
@@ -903,7 +962,9 @@ function renderHtml(
         type: 'saveEdit',
         id: btn.getAttribute('data-save-edit'),
         command: wrap.querySelector('.editCommand').value,
-        helpArg: wrap.querySelector('.editHelpArg').value
+        helpArg: wrap.querySelector('.editHelpArg').value,
+        displayName: wrap.querySelector('.editDisplayName').value,
+        scanDir: wrap.querySelector('.editScanDir').value
       });
     });
     wire('[data-confirm-addvariant]', btn => {
@@ -926,7 +987,13 @@ function renderHtml(
     if ($('scanNew')) {
       $('scanNew').addEventListener('click', () => {
         showBusy();
-        vscode.postMessage({ type: 'scanNew', command: $('newCommand').value, helpArg: $('newHelpArg').value });
+        vscode.postMessage({
+          type: 'scanNew',
+          command: $('newCommand').value,
+          helpArg: $('newHelpArg').value,
+          displayName: $('newDisplayName').value,
+          scanDir: $('newScanDir').value
+        });
       });
       $('newCommand').focus();
     }

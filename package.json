@@ -2,7 +2,7 @@
   "name": "eda-job-runner",
   "displayName": "EDA Job Runner",
   "description": "Tool-agnostic sidebar for running and tracking EDA compile/simulation jobs (Xcelium, Questa, or any custom script) without leaving VS Code.",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "publisher": "CaioPlazas",
   "license": "GPL-3.0",
   "icon": "media/icon.png",
@@ -493,7 +493,7 @@
         "eda-job-runner.postSetupCwd": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Directory a job's shell starts in — after its own startup (sourcing `.bashrc`/`.zshrc`/`.cshrc` etc.) — before the workspace setup and the job's command run. A job's own **Working Directory** then resolves relative to this instead of the workspace root. Supports `${workspaceFolder}` and `${env:NAME}`. Leave blank to keep resolving against the workspace root (default). A job can override this individually in its Advanced settings. Configure from the Shell & Environment panel."
+          "markdownDescription": "Directory a job's shell starts in — after its own startup (sourcing `.bashrc`/`.zshrc`/`.cshrc` etc.) — before the workspace setup and the job's command run. A job's own **Working Directory** then resolves relative to this instead of the workspace root. Supports `${workspaceFolder}` and `${env:NAME}`. Leave blank to keep resolving against the workspace root (default). A job can override this individually in its Advanced settings. Also the *default* directory Tool Setup scans a tool from — a tool can override that individually too, so the same script registered from two different folders can be scanned independently. Configure from the Shell & Environment panel."
         },
         "eda-job-runner.experimentalMultipleRuns": {
           "type": "boolean",
