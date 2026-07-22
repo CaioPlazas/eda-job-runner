@@ -56,8 +56,11 @@ run verbatim when you need to chase a specific failing seed.
 that shouldn't need a prompt at all — a shared testbench path, say. The
 Parameters panel (a third view-title icon) holds global name/value pairs;
 referencing one in a job's command as `${var:NAME}` resolves it silently,
-every run, from whatever's currently configured. `${param:...}` and
-`${var:...}` are independent and can be mixed freely in the same command.
+every run, from whatever's currently configured. A job's own Configure
+form can override any parameter's value for itself alone (an "override
+NAME" checkbox), or define one that's only ever used by that job.
+`${param:...}` and `${var:...}` are independent and can be mixed freely
+in the same command.
 
 **Output is scanned, not just captured.** Full stdout/stderr streams to a
 log file per run (never buffered in memory, size-capped, ANSI-stripped),

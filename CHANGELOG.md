@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.23.0 — Per-job parameter overrides, right in the Configure form
+
+Follow-up to v0.22.0's Parameters panel. A job's Configure form now shows
+a "Parameters" section listing every global parameter (plus any
+`${var:NAME}` already in its command) as a checkbox — check "override
+NAME" to set a value just for this job, or add a parameter that's only
+ever used by this one job. Free-text fields throughout the Tool builder
+now autocomplete `${var:NAME}` references, and a fixed-choices dropdown
+can be switched to free text when a parameter reference is needed instead
+of one of the listed choices.
+
 ## 0.22.0 — New Parameters panel: global values, resolved silently
 
 Parametrized runs (`${param:NAME}`) always prompt on every Run, which is

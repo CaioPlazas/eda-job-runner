@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
-import { JobDefinition, JobTemplate, ToolDefinition } from './types';
+import { GlobalParam, JobDefinition, JobTemplate, ToolDefinition } from './types';
 
 interface SaveMessage {
   type: 'save';
@@ -19,6 +19,7 @@ interface SaveMessage {
   listInsertOverrides: Record<string, string>;
   folder: string;
   customArgs: { arg: string; value?: string }[];
+  paramOverrides: Record<string, string>;
 }
 
 interface CancelMessage {
@@ -89,7 +90,8 @@ export class JobConfigPanel {
       tools,
       jobStore.getFolders(),
       presetFolder ?? presetTemplate?.folder,
-      autoSave
+      autoSave,
+      jobStore.getParams()
     );
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
@@ -122,6 +124,7 @@ export class JobConfigPanel {
     const listInsertOverrides = toolId ? sanitizeOverrides(msg.listInsertOverrides) : undefined;
     const folder = msg.folder.trim() || undefined;
     const customArgs = sanitizeCustomArgs(msg.customArgs);
+    const paramOverrides = sanitizeOverrides(msg.paramOverrides);
 
     if (!name || !command) {
       void this.panel.webview.postMessage({
@@ -146,7 +149,8 @@ export class JobConfigPanel {
       toolVariantLabel,
       listInsertOverrides,
       folder,
-      customArgs
+      customArgs,
+      paramOverrides
     };
     if (this.currentJobId) {
       await this.jobStore.updateJob(this.currentJobId, fields);
@@ -194,7 +198,8 @@ function renderHtml(
   tools: ToolDefinition[],
   folders: string[],
   presetFolder: string | undefined,
-  autoSave: boolean
+  autoSave: boolean,
+  globalParams: GlobalParam[]
 ): string {
   const nonce = getNonce();
   const esc = (s: string) =>
@@ -229,6 +234,9 @@ function renderHtml(
     }))
   ).replace(/</g, '\\u003c');
   const customArgsJson = JSON.stringify(job?.customArgs ?? []).replace(/</g, '\\u003c');
+  const globalParamsJson = JSON.stringify(globalParams).replace(/</g, '\\u003c');
+  const paramOverridesJson = JSON.stringify(job?.paramOverrides ?? {}).replace(/</g, '\\u003c');
+  const hasVarRef = /\$\{var:[A-Za-z_][\w-]*\}/.test(job?.command ?? '');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -312,6 +320,9 @@ function renderHtml(
   .optRow { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .optRow label.check { font-weight: 400; flex: 1 1 auto; min-width: 200px; }
   .optRow .optValue { width: auto; flex: 0 1 160px; margin-top: 0; }
+  .paramOverrideRow .poName { font-weight: 600; }
+  .paramOverrideRow .poNameInput { width: auto; flex: 0 1 180px; margin-top: 0; font-weight: 400; }
+  .paramOverrideRow .poValue { width: auto; flex: 0 1 220px; margin-top: 0; }
   .listRow { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .listRow > label { font-weight: 400; margin-top: 0; flex: 1 1 auto; min-width: 200px; }
   .listRow .listValue { width: auto; flex: 0 1 200px; margin-top: 0; }
@@ -416,6 +427,23 @@ function renderHtml(
     <button class="secondary" id="addCustomArg" type="button" style="margin-top:10px;">+ Add custom argument</button>
   </details>
 
+  <datalist id="varOptions">
+    ${globalParams.map(p => `<option value="\${var:${esc(p.name)}}"></option>`).join('')}
+  </datalist>
+
+  <details id="paramsSection" ${job?.paramOverrides && Object.keys(job.paramOverrides).length > 0 ? 'open' : hasVarRef ? 'open' : ''}>
+    <summary>Parameters</summary>
+    <div class="hint">
+      Override a workspace parameter's value for this job only, or add a
+      job-only one. Referenced in the Command (including Tool builder
+      free-text fields) as <code>\${var:NAME}</code> — resolved silently,
+      no prompt. Set globally from the Parameters panel (the puzzle-piece
+      icon in the EDA Jobs view).
+    </div>
+    <div id="paramOverridesWrap"></div>
+    <button class="secondary" id="addParamOverride" type="button" style="margin-top:10px;">+ Add parameter override</button>
+  </details>
+
   <label for="cwd">Working Directory ${help('Relative to the workspace root. Use "." for the root itself.')}</label>
   <input id="cwd" type="text" value="${esc(job?.cwd ?? '.')}" placeholder="." />
 
@@ -504,6 +532,9 @@ function renderHtml(
     const SAVED_TOOL_VARIANT = ${JSON.stringify(job?.toolVariantLabel ?? '')};
     // Per-job insert-template overrides for a tool's value lists, keyed by list name.
     let LIST_OVERRIDES = ${JSON.stringify(job?.listInsertOverrides ?? {})};
+    const GLOBAL_PARAMS = ${globalParamsJson};
+    const SAVED_PARAM_OVERRIDES = ${paramOverridesJson};
+    const paramOverridesWrap = document.getElementById('paramOverridesWrap');
     const toolSelectEl = document.getElementById('toolSelect');
     const variantWrap = document.getElementById('variantWrap');
     const variantSelectEl = document.getElementById('variantSelect');
@@ -555,6 +586,96 @@ function renderHtml(
       const override = LIST_OVERRIDES[list.name];
       return (override && override.trim().length > 0) ? override : (list.insertTemplate || '\${value}');
     }
+
+    // Mirrors paramVars.ts's VAR_TOKEN -- distinct names referenced as
+    // \${var:NAME} in the given text, in first-appearance order.
+    function parseVarNames(text) {
+      const re = /\$\{var:([A-Za-z_][\w-]*)\}/g;
+      const seen = new Set();
+      const names = [];
+      let m;
+      while ((m = re.exec(text))) {
+        if (!seen.has(m[1])) { seen.add(m[1]); names.push(m[1]); }
+      }
+      return names;
+    }
+    function globalParamValue(name) {
+      const p = GLOBAL_PARAMS.find(p => p.name === name);
+      return p ? p.value : '';
+    }
+
+    function addParamOverrideRow(name, value, checked, isGlobal) {
+      const row = document.createElement('div');
+      row.className = 'optRow paramOverrideRow';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'poToggle';
+      checkbox.checked = !!checked;
+
+      const label = document.createElement('label');
+      label.className = 'check';
+      label.appendChild(checkbox);
+      label.appendChild(document.createTextNode('override '));
+
+      let nameEl;
+      if (isGlobal) {
+        nameEl = document.createElement('span');
+        nameEl.className = 'poName';
+        nameEl.dataset.name = name;
+        nameEl.textContent = name;
+      } else {
+        nameEl = document.createElement('input');
+        nameEl.type = 'text';
+        nameEl.className = 'poName poNameInput';
+        nameEl.placeholder = 'name';
+        nameEl.value = name || '';
+      }
+      label.appendChild(nameEl);
+      row.appendChild(label);
+
+      const valueInput = document.createElement('input');
+      valueInput.type = 'text';
+      valueInput.className = 'poValue';
+      valueInput.placeholder = isGlobal ? (globalParamValue(name) || '(no global default)') : 'value';
+      valueInput.value = value || '';
+      valueInput.disabled = !checkbox.checked;
+      row.appendChild(valueInput);
+
+      checkbox.addEventListener('change', () => { valueInput.disabled = !checkbox.checked; });
+
+      if (!isGlobal) {
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'secondary';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', () => row.remove());
+        row.appendChild(removeBtn);
+      }
+
+      paramOverridesWrap.appendChild(row);
+    }
+
+    (function initParamOverrides() {
+      const seenNames = new Set();
+      GLOBAL_PARAMS.forEach(p => {
+        seenNames.add(p.name);
+        const hasOverride = Object.prototype.hasOwnProperty.call(SAVED_PARAM_OVERRIDES, p.name);
+        addParamOverrideRow(p.name, hasOverride ? SAVED_PARAM_OVERRIDES[p.name] : '', hasOverride, true);
+      });
+      Object.keys(SAVED_PARAM_OVERRIDES).forEach(name => {
+        if (seenNames.has(name)) { return; }
+        seenNames.add(name);
+        addParamOverrideRow(name, SAVED_PARAM_OVERRIDES[name], true, false);
+      });
+      parseVarNames(commandEl.value).forEach(name => {
+        if (seenNames.has(name)) { return; }
+        seenNames.add(name);
+        addParamOverrideRow(name, '', false, false);
+      });
+    })();
+
+    document.getElementById('addParamOverride').addEventListener('click', () => addParamOverrideRow('', '', true, false));
 
     function renderVariantSelect(tool) {
       variantSelectEl.innerHTML = '';
@@ -627,10 +748,37 @@ function renderHtml(
           valueInput.type = 'text';
           valueInput.className = 'optValue';
           valueInput.placeholder = opt.metavar;
+          valueInput.setAttribute('list', 'varOptions');
           if (existing) { valueInput.value = existing; }
         }
         valueInput.disabled = !checkbox.checked;
         row.appendChild(valueInput);
+
+        // A fixed-choices dropdown can't hold a \${var:NAME} reference -- this
+        // one-way toggle swaps it for a free-text field (with the same
+        // varOptions autocomplete as any other builder value field) for
+        // whoever needs a parameter instead of one of the listed choices.
+        if (choices) {
+          const varToggle = document.createElement('button');
+          varToggle.type = 'button';
+          varToggle.className = 'secondary varToggle';
+          varToggle.textContent = '✎ var';
+          varToggle.title = 'Use a parameter (\${var:NAME}) instead of one of the fixed choices';
+          varToggle.addEventListener('click', () => {
+            const freeInput = document.createElement('input');
+            freeInput.type = 'text';
+            freeInput.className = 'optValue';
+            freeInput.setAttribute('list', 'varOptions');
+            freeInput.placeholder = '\${var:NAME}';
+            freeInput.disabled = valueInput.disabled;
+            freeInput.addEventListener('input', onBuilderChange);
+            valueInput.replaceWith(freeInput);
+            valueInput = freeInput;
+            varToggle.remove();
+            onBuilderChange();
+          });
+          row.appendChild(varToggle);
+        }
       }
 
       checkbox.addEventListener('change', () => {
@@ -726,6 +874,7 @@ function renderHtml(
       tmplInput.className = 'listTemplate hidden';
       tmplInput.value = row.dataset.template;
       tmplInput.placeholder = '\${value}';
+      tmplInput.setAttribute('list', 'varOptions');
       tmplBtn.addEventListener('click', () => tmplInput.classList.toggle('hidden'));
       tmplInput.addEventListener('input', () => {
         const v = tmplInput.value.trim();
@@ -772,6 +921,7 @@ function renderHtml(
       valInput.type = 'text';
       valInput.className = 'caVal';
       valInput.placeholder = 'value (optional)';
+      valInput.setAttribute('list', 'varOptions');
       valInput.value = value || '';
 
       const removeBtn = document.createElement('button');
@@ -907,7 +1057,18 @@ function renderHtml(
         customArgs: Array.from(customArgsWrap.querySelectorAll('.customArgRow')).map(row => ({
           arg: row.querySelector('.caArg').value,
           value: row.querySelector('.caVal').value
-        }))
+        })),
+        paramOverrides: (() => {
+          const out = {};
+          paramOverridesWrap.querySelectorAll('.paramOverrideRow').forEach(row => {
+            if (!row.querySelector('.poToggle').checked) { return; }
+            const nameEl = row.querySelector('.poName');
+            const name = (nameEl.tagName === 'SPAN' ? nameEl.dataset.name : nameEl.value).trim();
+            if (!name) { return; }
+            out[name] = row.querySelector('.poValue').value;
+          });
+          return out;
+        })()
       };
     }
 
