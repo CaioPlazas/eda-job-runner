@@ -104,6 +104,12 @@ export class LogManager {
         await handle.read(tailBuf, 0, tailLen, Math.max(0, size - tailLen));
       }
       return { head: headBuf.toString('utf8'), tail: tailBuf.toString('utf8'), size };
+    } catch {
+      // A file that vanishes or errors mid-read (pruned by retention, or
+      // another run's log rotation, between being listed and being read)
+      // must not take down the whole log-viewer table build with an
+      // unhandled rejection -- treat it the same as "couldn't open".
+      return { head: '', tail: '', size: 0 };
     } finally {
       await handle.close();
     }

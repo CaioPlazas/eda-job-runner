@@ -338,10 +338,17 @@ export class JobRunner implements vscode.Disposable {
     const laneSuffix = laneKey === job.id ? undefined : sanitizeLaneSuffix(label ?? laneKey);
     const { logPath, stream } = await this.logManager.createLogFile(job.id, retentionCount, laneSuffix);
     const startTime = Date.now();
+    // The structured fields (seed/cwd/started) are written BEFORE the
+    // free-text command line deliberately: the log viewer's header parser
+    // only reads a capped prefix of the file (see logManager.ts's
+    // readHeadTail), and a long resolved command (common for EDA compile
+    // invocations with many file arguments) would otherwise push those
+    // fields past the cap and silently drop them from the viewer.
     stream.write(
-      `# EDA Job Runner\n# job: ${job.name}${label ? ` (run ${label})` : ''}\n# command: ${resolvedCommand}\n` +
+      `# EDA Job Runner\n# job: ${job.name}${label ? ` (run ${label})` : ''}\n` +
         (seed !== undefined ? `# seed: ${seed}\n` : '') +
-        `# cwd: ${cwdAbs}\n# started: ${new Date(startTime).toISOString()}\n\n`
+        `# cwd: ${cwdAbs}\n# started: ${new Date(startTime).toISOString()}\n` +
+        `# command: ${resolvedCommand}\n\n`
     );
     if ((job.failPattern?.trim() && !compilePattern(job.failPattern)) || (job.passPattern?.trim() && !compilePattern(job.passPattern))) {
       stream.write('# EDA Job Runner: an invalid fail/pass pattern (bad regex) was ignored\n\n');

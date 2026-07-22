@@ -124,7 +124,7 @@ export class JobConfigPanel {
     const listInsertOverrides = toolId ? sanitizeOverrides(msg.listInsertOverrides) : undefined;
     const folder = msg.folder.trim() || undefined;
     const customArgs = sanitizeCustomArgs(msg.customArgs);
-    const paramOverrides = sanitizeOverrides(msg.paramOverrides);
+    const paramOverrides = sanitizeParamOverrides(msg.paramOverrides);
 
     if (!name || !command) {
       void this.panel.webview.postMessage({
@@ -729,7 +729,16 @@ function renderHtml(
       if (opt.metavar) {
         const choices = optionChoices(opt, tool);
         const existing = opt.flags.map(f => extractValue(f, text)).find(v => v);
-        if (choices) {
+        // A choices dropdown only actually applies when the existing value (if
+        // any) is one of its fixed choices -- an existing value that ISN'T
+        // (most commonly a \${var:NAME} reference from the toggle below, but
+        // also just a stale value from a since-rescanned choice list) must
+        // still render as free text pre-filled with it. Silently falling back
+        // to the dropdown's blank option here would drop that value the next
+        // time the builder rebuilds Command from the row (e.g. reopening this
+        // job's Configure form, where the details section renders pre-open).
+        const useDropdown = choices && (!existing || choices.includes(existing));
+        if (useDropdown) {
           valueInput = document.createElement('select');
           valueInput.className = 'optValue';
           const blank = document.createElement('option');
@@ -742,7 +751,7 @@ function renderHtml(
             o.textContent = c;
             valueInput.appendChild(o);
           });
-          if (existing && choices.includes(existing)) { valueInput.value = existing; }
+          if (existing) { valueInput.value = existing; }
         } else {
           valueInput = document.createElement('input');
           valueInput.type = 'text';
@@ -758,7 +767,7 @@ function renderHtml(
         // one-way toggle swaps it for a free-text field (with the same
         // varOptions autocomplete as any other builder value field) for
         // whoever needs a parameter instead of one of the listed choices.
-        if (choices) {
+        if (useDropdown) {
           const varToggle = document.createElement('button');
           varToggle.type = 'button';
           varToggle.className = 'secondary varToggle';
@@ -1014,12 +1023,13 @@ function renderHtml(
       renderVariantSelect(tool);
       renderOptions(tool, currentVariant(tool));
       renderLists(tool);
-      updateHint();
+      onBuilderChange();
     });
     variantSelectEl.addEventListener('change', () => {
       const tool = currentTool();
       renderOptions(tool, currentVariant(tool));
       renderLists(tool);
+      onBuilderChange();
     });
 
     (function initBuilder() {
@@ -1127,6 +1137,26 @@ function sanitizeOverrides(raw: Record<string, string> | undefined): Record<stri
   for (const [key, value] of Object.entries(raw)) {
     if (key.trim().length > 0 && typeof value === 'string' && value.trim().length > 0) {
       out[key] = value;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Like `sanitizeOverrides`, but keeps an explicit empty-string value -- a
+ * checked "override" row with a blank value is a real, intentional override
+ * to empty (paramVars.ts's `effectiveVarValue` distinguishes it from "no
+ * override", which falls back to the global default), so it must survive
+ * the round-trip through this sanitizer.
+ */
+function sanitizeParamOverrides(raw: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (key.trim().length > 0 && typeof value === 'string') {
+      out[key.trim()] = value;
     }
   }
   return Object.keys(out).length > 0 ? out : undefined;
