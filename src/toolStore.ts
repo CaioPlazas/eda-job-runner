@@ -102,6 +102,8 @@ function normalize(parsed: Partial<ToolsFile> | undefined): ToolsFile {
     .map(t => ({
       id: t.id,
       command: t.command,
+      displayName: typeof t.displayName === 'string' && t.displayName.trim() ? t.displayName.trim() : undefined,
+      scanDir: typeof t.scanDir === 'string' && t.scanDir.trim() ? t.scanDir.trim() : undefined,
       helpArg: typeof t.helpArg === 'string' && t.helpArg.trim() ? t.helpArg.trim() : undefined,
       variants: normalizeVariants(t.variants),
       lists: normalizeLists(t.lists),

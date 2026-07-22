@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.20.0 — Decouple Tool Setup scanning from a specific folder
+
+Registering or rescanning a tool used to require the scan to actually run
+from a directory containing the script — awkward when colleagues keep
+separate copies of the same script under `project/work1`, `project/work2`,
+etc. A job's own working directory was already fully independent at run
+time; only the scan step was pinned. A tool can now optionally set its own
+**scan directory** (falls back to the existing workspace `postSetupCwd`
+setting when unset) and a **display name**, so the same command can be
+registered more than once — one per folder, each scanned independently —
+for the cases where different copies genuinely have different flags.
+
 ## 0.15.0–0.19.0 — Colleague feedback (18 fixes)
 
 A round of feedback from colleagues who tried the extension, fixed and
