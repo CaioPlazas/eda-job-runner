@@ -178,7 +178,7 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  void jobStore.load();
+  void jobStore.load().then(() => jobRunner.beginReattachment(id => jobStore.getJob(id)));
   void toolStore.load().then(() => rescanAllTools(toolStore, jobStore, folder));
 }
 

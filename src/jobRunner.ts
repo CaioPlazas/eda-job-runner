@@ -11,6 +11,11 @@ import { buildShellInvocation, resolveJobEnv, substituteVars } from './shellInvo
 import { ParamSpec, parseParams, substituteParams, substituteRandomSeed } from './paramSubstitution';
 import { flattenGlobalParams, substituteParamVars } from './paramVars';
 import { decideFinalState, compilePattern } from './jobOutcome';
+import { parseStartTimeTicks } from './procStat';
+import { computeKillSchedule, KillStage, RawKillSignalEntry } from './killPlan';
+import { FileTailer } from './tailer';
+import { parseLogTrailer } from './logIndex';
+import { decideReattachState } from './reattach';
 
 export type { JobRunState } from './jobOutcome';
 import type { JobRunState } from './jobOutcome';
@@ -35,6 +40,26 @@ export interface JobRunStatus {
    */
   detached?: boolean;
   /**
+   * This process's start time (field 22 of /proc/<pid>/stat, clock ticks
+   * since boot), captured right after spawn. Lets a later liveness check
+   * confirm `pid` still refers to the same process instead of trusting bare
+   * `/proc/<pid>` existence -- on a long-lived host, the OS can recycle a pid
+   * for an unrelated process well before this status is next checked (e.g.
+   * minutes after a window reload). Undefined for a status persisted before
+   * this field existed; treated as "can't verify, fall back to existence
+   * only" rather than a hard failure.
+   */
+  pidStartTime?: number;
+  /**
+   * True once a "running (detached)" job's live tailing/counts/diagnostics
+   * have been resumed after a window reload (see JobRunner.beginReattachment)
+   * -- distinct from `detached`, which just means "no live ChildProcess
+   * handle exists in this session." A job can be `detached && !reattached`
+   * only very briefly, right at extension activation before reattachment
+   * kicks in.
+   */
+  reattached?: boolean;
+  /**
    * Set when this status is one of several tracked runs for its job — one
    * iteration of a sequential repeat-count batch ("3/10"). Undefined for a
    * normal single run. Drives the tree's expandable group view (see
@@ -53,9 +78,21 @@ export interface JobRunStatus {
 
 interface ActiveRun {
   child: cp.ChildProcess;
-  logStream: fs.WriteStream;
-  bytesWritten: number;
-  truncated: boolean;
+  /**
+   * The job's own stdout/stderr are redirected straight to this handle at
+   * spawn time (see runLane) so capture survives an extension-host restart —
+   * we only use it ourselves for the header/trailer/notice lines, never for
+   * the job's actual output, which the child writes directly.
+   */
+  logHandle: fs.promises.FileHandle;
+  logPath: string;
+  /** Tails logPath to feed captured output into the parser -- the same mechanism used to resume a reattached job's counts, so live and reattached runs share one code path. */
+  tailer: FileTailer;
+  /** Total (ANSI-stripped) bytes fed into parsing so far this run -- independent of the log file's own size, which the OS controls now. */
+  parseBytesFed: number;
+  /** Once true, further chunks are no longer fed to the parser (logMaxSizeMB cap) -- the log file itself keeps growing regardless, that's no longer something this class controls. */
+  parseTruncated: boolean;
+  maxParseBytes: number;
   killRequested: boolean;
   killTimer?: ReturnType<typeof setTimeout>;
   cwdAbs: string;
@@ -81,6 +118,36 @@ interface ActiveRun {
   matchedPass: boolean;
 }
 
+/**
+ * A job resumed after a window reload -- no live `ChildProcess`/exit event
+ * exists for it in this session (it was never spawned here), so it's tracked
+ * separately from `ActiveRun` rather than shoehorned into that lane-oriented
+ * shape. Only ever the job's primary run (batch/concurrent lanes aren't
+ * persisted across a reload at all, so there's nothing to reattach to for
+ * those). See JobRunner.beginReattachment/reattach.ts.
+ */
+interface ReattachRun {
+  jobId: string;
+  logPath: string;
+  cwdAbs: string;
+  tailer: FileTailer;
+  parseState: ParseState;
+  lineCarry: string;
+  parseProblems: boolean;
+  failRegex?: RegExp;
+  passRegex?: RegExp;
+  matchedFail: boolean;
+  matchedPass: boolean;
+  parseBytesFed: number;
+  parseTruncated: boolean;
+  maxParseBytes: number;
+  pid: number;
+  pidStartTime?: number;
+  pollTimer?: ReturnType<typeof setInterval>;
+  /** Guards pollReattachment against running twice concurrently if a poll tick fires again before an earlier one's async finalize work finishes. */
+  finalizing: boolean;
+}
+
 const MB = 1024 * 1024;
 const STATUS_STORAGE_KEY = 'eda-job-runner.jobStatuses';
 const PARAM_VALUES_STORAGE_KEY = 'eda-job-runner.jobParamValues';
@@ -98,6 +165,8 @@ export class JobRunner implements vscode.Disposable {
 
   private readonly statuses: Map<string, JobRunStatus>;
   private readonly activeRuns = new Map<string, ActiveRun>();
+  /** Jobs currently being re-tailed after a window reload. See beginReattachment/ReattachRun. */
+  private readonly reattachedRuns = new Map<string, ReattachRun>();
   /**
    * Lane-group tracking for a job that has run as a sequential repeat-count
    * batch (a job can never run concurrently with itself — see `run()`). Not
@@ -142,10 +211,14 @@ export class JobRunner implements vscode.Disposable {
       if (status.state !== 'running') {
         continue;
       }
-      if (status.pid && isPidAlive(status.pid)) {
-        this.statuses.set(jobId, { ...status, detached: true });
+      if (status.pid && isPidAliveWithIdentity(status.pid, status.pidStartTime)) {
+        // `reattached` always starts false here even if it was true when
+        // last persisted -- re-tailing hasn't resumed yet in *this* session
+        // (beginReattachment needs the job's definition, which JobStore
+        // hasn't finished loading yet at construction time).
+        this.statuses.set(jobId, { ...status, detached: true, reattached: undefined });
       } else {
-        this.statuses.set(jobId, { ...status, state: 'idle', pid: undefined, detached: undefined });
+        this.statuses.set(jobId, { ...status, state: 'idle', pid: undefined, pidStartTime: undefined, detached: undefined });
       }
     }
     void this.persistStatuses();
@@ -290,6 +363,22 @@ export class JobRunner implements vscode.Disposable {
   }
 
   /**
+   * The directory a job's shell starts in: its own Advanced override wins
+   * over the workspace-wide `postSetupCwd` setting; once resolved, `cwd`
+   * resolves against that instead of the workspace root. Shared by runLane
+   * (a real spawn) and startReattachment (needs the same directory to
+   * resolve a reattached run's Problems-panel paths correctly).
+   */
+  private resolveCwdAbs(job: JobDefinition, globalPostSetupCwd: string): string {
+    const workspaceRoot = this.workspaceFolder.uri.fsPath;
+    const effectivePostSetupCwd = (job.postSetupCwd && job.postSetupCwd.trim()) || globalPostSetupCwd;
+    const baseDir = effectivePostSetupCwd.trim()
+      ? path.resolve(workspaceRoot, substituteVars(effectivePostSetupCwd.trim(), workspaceRoot))
+      : workspaceRoot;
+    return path.resolve(baseDir, job.cwd || '.');
+  }
+
+  /**
    * `template` is the job's command with `${param:...}` already resolved (or
    * a "Re-run Last" replay's already-fully-resolved command, which has no
    * placeholders left); `${randomSeed}` is resolved fresh right here so every
@@ -312,19 +401,10 @@ export class JobRunner implements vscode.Disposable {
     const envSetting = config.get<Record<string, string>>('env', {});
     const maxBytes = Math.max(1, config.get<number>('logMaxSizeMB', 200)) * MB;
     const retentionCount = Math.max(1, config.get<number>('logRetentionCount', 20));
-    const stripAnsi = config.get<boolean>('stripAnsiCodes', true);
     const globalPostSetupCwd = config.get<string>('postSetupCwd', '');
 
     const workspaceRoot = this.workspaceFolder.uri.fsPath;
-    // A job's own Advanced override wins over the workspace-wide setting.
-    // Once set, `cwd` below resolves against this instead of the workspace
-    // root — the directory the shell starts in, after its own dotfile
-    // sourcing and before workspace setup / the job's command run.
-    const effectivePostSetupCwd = (job.postSetupCwd && job.postSetupCwd.trim()) || globalPostSetupCwd;
-    const baseDir = effectivePostSetupCwd.trim()
-      ? path.resolve(workspaceRoot, substituteVars(effectivePostSetupCwd.trim(), workspaceRoot))
-      : workspaceRoot;
-    const cwdAbs = path.resolve(baseDir, job.cwd || '.');
+    const cwdAbs = this.resolveCwdAbs(job, globalPostSetupCwd);
     const shellCommand = buildShellCommand(this.getSetup(), resolvedCommand, workspaceRoot);
 
     // Fresh run: drop the previous run's Problems-panel entries for this job
@@ -336,7 +416,7 @@ export class JobRunner implements vscode.Disposable {
     }
 
     const laneSuffix = laneKey === job.id ? undefined : sanitizeLaneSuffix(label ?? laneKey);
-    const { logPath, stream } = await this.logManager.createLogFile(job.id, retentionCount, laneSuffix);
+    const { logPath, handle: logHandle } = await this.logManager.createLogFile(job.id, retentionCount, laneSuffix);
     const startTime = Date.now();
     // The structured fields (seed/cwd/started) are written BEFORE the
     // free-text command line deliberately: the log viewer's header parser
@@ -344,14 +424,14 @@ export class JobRunner implements vscode.Disposable {
     // readHeadTail), and a long resolved command (common for EDA compile
     // invocations with many file arguments) would otherwise push those
     // fields past the cap and silently drop them from the viewer.
-    stream.write(
+    await logHandle.write(
       `# EDA Job Runner\n# job: ${job.name}${label ? ` (run ${label})` : ''}\n` +
         (seed !== undefined ? `# seed: ${seed}\n` : '') +
         `# cwd: ${cwdAbs}\n# started: ${new Date(startTime).toISOString()}\n` +
         `# command: ${resolvedCommand}\n\n`
     );
     if ((job.failPattern?.trim() && !compilePattern(job.failPattern)) || (job.passPattern?.trim() && !compilePattern(job.passPattern))) {
-      stream.write('# EDA Job Runner: an invalid fail/pass pattern (bad regex) was ignored\n\n');
+      await logHandle.write('# EDA Job Runner: an invalid fail/pass pattern (bad regex) was ignored\n\n');
     }
 
     // Argument vector is derived from the shell family (or a user override) so
@@ -359,18 +439,32 @@ export class JobRunner implements vscode.Disposable {
     // buildShellInvocation. env is only passed when the user configured extra
     // vars, otherwise the child inherits process.env as before.
     const { file: shellFile, args: shellSpawnArgs } = buildShellInvocation(shellPath, shellArgs, shellCommand);
+    // stdout/stderr are redirected straight to the log file's own fd (an
+    // inherited fd, not a shell-level `>` redirect -- shell-agnostic across
+    // bash/tcsh/csh and doesn't disturb exit-code capture) instead of being
+    // piped through this extension host. This is what lets capture survive a
+    // window reload: the write goes straight from the child to the file at
+    // the OS level, so it doesn't depend on this process staying alive to
+    // relay it. `feedLines`/logParser now get their input by tailing the file
+    // (see the FileTailer below) instead of from a 'data' event on a pipe --
+    // the same mechanism a reattached (post-reload) job uses to resume, so
+    // live and reattached runs share one code path rather than one being a
+    // special case of the other.
     const child = cp.spawn(shellFile, shellSpawnArgs, {
       cwd: cwdAbs,
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', logHandle.fd, logHandle.fd],
       env: resolveJobEnv(envSetting, workspaceRoot)
     });
 
     const run: ActiveRun = {
       child,
-      logStream: stream,
-      bytesWritten: 0,
-      truncated: false,
+      logHandle,
+      logPath,
+      tailer: new FileTailer(logPath, chunk => this.feedChunk(run, chunk)),
+      parseBytesFed: 0,
+      parseTruncated: false,
+      maxParseBytes: maxBytes,
       killRequested: false,
       cwdAbs,
       parseState: newParseState(),
@@ -394,25 +488,23 @@ export class JobRunner implements vscode.Disposable {
       startTime,
       logPath,
       pid: child.pid,
+      pidStartTime: child.pid ? readProcStartTime(child.pid) : undefined,
       errorCount: 0,
       warningCount: 0,
       laneLabel: label,
       resolvedCommand
     });
     this.ensureTicking();
-
-    const onData = (chunk: Buffer) => this.appendOutput(run, chunk, maxBytes, stripAnsi);
-    child.stdout?.on('data', onData);
-    child.stderr?.on('data', onData);
+    run.tailer.start();
 
     child.on('error', err => {
-      stream.write(`\n# EDA Job Runner: failed to start (${err.message})\n`);
-      this.finish(run, 'failed', null, null);
+      void logHandle.write(`\n# EDA Job Runner: failed to start (${err.message})\n`).catch(() => undefined);
+      void this.finish(run, 'failed', null, null);
     });
 
     child.on('exit', (code, signal) => {
       const state: JobRunState = run.killRequested ? 'killed' : code === 0 ? 'passed' : 'failed';
-      this.finish(run, state, code, signal);
+      void this.finish(run, state, code, signal);
     });
 
     return this.waitForLane(laneKey);
@@ -421,7 +513,6 @@ export class JobRunner implements vscode.Disposable {
   /** Stop the primary run, or a specific lane (`laneKey`) of a job with more than one tracked run. */
   async stop(jobId: string, laneKey: string = jobId): Promise<void> {
     const run = this.activeRuns.get(laneKey);
-    const graceMs = this.getGraceMs();
 
     if (run) {
       if (!run.child.pid) {
@@ -431,12 +522,7 @@ export class JobRunner implements vscode.Disposable {
       // so signalling -pid reaches the whole make/shell/simulator tree, not just
       // the immediate child. This is what makes stop() actually free the license.
       run.killRequested = true;
-      safeKill(run.child.pid, 'SIGTERM');
-      run.killTimer = setTimeout(() => {
-        if (this.activeRuns.has(laneKey) && run.child.pid) {
-          safeKill(run.child.pid, 'SIGKILL');
-        }
-      }, graceMs);
+      this.advanceKillSchedule(run, run.child.pid, this.buildKillSchedule(), 0);
       return;
     }
 
@@ -454,13 +540,65 @@ export class JobRunner implements vscode.Disposable {
       return;
     }
     const pid = status.pid;
-    safeKill(pid, 'SIGTERM');
-    await delay(graceMs);
-    if (isPidAlive(pid)) {
-      safeKill(pid, 'SIGKILL');
-      await delay(300);
+    if (!isPidAliveWithIdentity(pid, status.pidStartTime)) {
+      // The process already exited (or the OS recycled this pid for something
+      // else) since we last checked — nothing to signal. Signalling a bare,
+      // unverified pid here would risk killing an unrelated process.
+      this.setStatus(jobId, { ...status, state: 'idle', pid: undefined, pidStartTime: undefined, detached: undefined });
+      return;
     }
+    await this.runDetachedKillSchedule(pid, status.pidStartTime, this.buildKillSchedule());
     this.setStatus(jobId, { ...status, state: 'killed', endTime: Date.now(), detached: undefined });
+  }
+
+  /** The `killSignals` setting (falling back to `killGracePeriodSeconds` per unset stage) as a concrete schedule. See killPlan.ts. */
+  private buildKillSchedule(): KillStage[] {
+    const config = vscode.workspace.getConfiguration('eda-job-runner', this.workspaceFolder.uri);
+    return computeKillSchedule({
+      signals: config.get<RawKillSignalEntry[]>('killSignals'),
+      fallbackGraceMs: this.getGraceMs()
+    });
+  }
+
+  /**
+   * Live-run escalation: send `schedule[index]`'s signal now; if it's not the
+   * final stage, arrange to advance to the next one after its grace period,
+   * unless the run has genuinely exited by then (`finish()` both clears
+   * `run.killTimer` synchronously on the real 'exit' event AND this always
+   * re-checks `activeRuns.has(laneKey)` before signalling, belt-and-suspenders
+   * against a stray late signal).
+   */
+  private advanceKillSchedule(run: ActiveRun, pid: number, schedule: KillStage[], index: number): void {
+    if (!this.activeRuns.has(run.laneKey)) {
+      return;
+    }
+    safeKill(pid, schedule[index].signal);
+    const nextIndex = index + 1;
+    if (nextIndex >= schedule.length) {
+      run.killTimer = undefined;
+      return;
+    }
+    run.killTimer = setTimeout(() => this.advanceKillSchedule(run, pid, schedule, nextIndex), schedule[index].graceMs);
+  }
+
+  /**
+   * Detached-reload escalation: same schedule, but driven by polling
+   * `isPidAliveWithIdentity` between stages (an async sleep, not a timer)
+   * since there's no live ChildProcess/exit event to race against here. Ends
+   * with the same 300ms settle-and-verify window the pre-schedule code used
+   * after its final SIGKILL.
+   */
+  private async runDetachedKillSchedule(pid: number, expectedStartTime: number | undefined, schedule: KillStage[]): Promise<void> {
+    for (let i = 0; i < schedule.length; i++) {
+      if (!isPidAliveWithIdentity(pid, expectedStartTime)) {
+        return;
+      }
+      safeKill(pid, schedule[i].signal);
+      if (i < schedule.length - 1) {
+        await delay(schedule[i].graceMs);
+      }
+    }
+    await delay(300);
   }
 
   /** Stop the job's currently-running lane (its own repeat-count batch runs one lane at a time, so there's at most one). */
@@ -471,32 +609,37 @@ export class JobRunner implements vscode.Disposable {
     await Promise.all(laneKeys.map(laneKey => this.stop(jobId, laneKey)));
   }
 
-  private appendOutput(run: ActiveRun, chunk: Buffer, maxBytes: number, stripAnsi: boolean): void {
-    const stripped = chunk.toString('utf8').replace(ANSI_PATTERN, '');
-
-    // Feed lines (on ANSI-stripped text so escape codes can't break the
-    // regexes) to the structured issue parser and/or the fail/pass pattern
-    // scan, even after the log file itself has been truncated, so counts and
-    // pattern matches stay accurate for arbitrarily large runs. The pattern
+  /**
+   * Called with each new chunk a run's FileTailer reads off its log file --
+   * the only path output reaches the parser now, whether the job is live or
+   * reattached after a reload (see runLane's spawn comment). `logMaxSizeMB`
+   * used to cap what got written to the log file itself; now the OS writes
+   * that file directly (the whole point of this redesign), so it instead
+   * caps how much gets fed into in-memory parsing/counting per run -- the
+   * log file keeps growing and recording everything regardless.
+   */
+  private feedChunk(run: ActiveRun, chunk: string): void {
+    if (run.parseTruncated) {
+      return;
+    }
+    // ANSI-stripped so escape codes can't break the regexes. The pattern
     // scan is a separate, lighter mechanism than the structured parser and
     // runs even when the job opted out of "Scan output" (parseProblems).
+    const stripped = chunk.replace(ANSI_PATTERN, '');
     if (run.parseProblems || run.failRegex || run.passRegex) {
       this.feedLines(run, stripped);
     }
-
-    if (run.truncated) {
-      return;
+    run.parseBytesFed += Buffer.byteLength(stripped, 'utf8');
+    if (run.parseBytesFed > run.maxParseBytes) {
+      run.parseTruncated = true;
+      void run.logHandle
+        .write(
+          `\n# EDA Job Runner: error/warning parsing capped at ${Math.round(run.maxParseBytes / MB)} MB of ` +
+            "this run's output. The job keeps running and its full output keeps being recorded below -- only " +
+            'further error/warning counting and pattern matching stop.\n'
+        )
+        .catch(() => undefined);
     }
-    const data = stripAnsi ? Buffer.from(stripped) : chunk;
-    run.bytesWritten += data.length;
-    if (run.bytesWritten > maxBytes) {
-      run.truncated = true;
-      run.logStream.write(
-        `\n# EDA Job Runner: log capture truncated at ${Math.round(maxBytes / MB)} MB. The job is still running.\n`
-      );
-      return;
-    }
-    run.logStream.write(data);
   }
 
   /**
@@ -556,16 +699,29 @@ export class JobRunner implements vscode.Disposable {
     return refs;
   }
 
-  private finish(run: ActiveRun, state: JobRunState, exitCode: number | null, signal: NodeJS.Signals | null): void {
+  private async finish(run: ActiveRun, state: JobRunState, exitCode: number | null, signal: NodeJS.Signals | null): Promise<void> {
     if (run.finished) {
       // Node can fire both 'error' and 'exit' for the same child in some
-      // failure modes; only the first should actually finalize this run.
+      // failure modes; only the first should actually finalize this run. This
+      // guard (and clearing killTimer/removing the activeRuns entry) all
+      // happen before the first `await` below, so it's still race-free now
+      // that finish() is async.
       return;
     }
     run.finished = true;
     if (run.killTimer) {
       clearTimeout(run.killTimer);
     }
+    this.activeRuns.delete(run.laneKey);
+
+    // The child wrote straight to the log file (no pipe in between), so its
+    // output is already durable on disk by the time 'exit' fires -- but our
+    // own FileTailer only sees it once it next polls. One more synchronous
+    // poll here guarantees the final counts/lineCarry reflect the whole run
+    // before we compute its final state below.
+    await run.tailer.pollOnce();
+    run.tailer.stop();
+
     const jobId = run.jobId;
     const laneKey = run.laneKey;
     const previous = run.mirrorPrimary ? this.statuses.get(jobId) : this.laneGroups.get(jobId)?.get(laneKey);
@@ -630,13 +786,14 @@ export class JobRunner implements vscode.Disposable {
         : run.matchedPass
           ? ' [passPattern matched]'
           : '';
-    run.logStream.write(
-      `\n# EDA Job Runner: ${finalState} (exit ${exitCode ?? 'n/a'}${signal ? `, signal ${signal}` : ''}` +
-        `${errorCount || warningCount ? `, ${errorCount} error(s) ${warningCount} warning(s) parsed` : ''})${patternNote} ` +
-        `at ${new Date(endTime).toISOString()}\n`
-    );
-    run.logStream.end();
-    this.activeRuns.delete(laneKey);
+    await run.logHandle
+      .write(
+        `\n# EDA Job Runner: ${finalState} (exit ${exitCode ?? 'n/a'}${signal ? `, signal ${signal}` : ''}` +
+          `${errorCount || warningCount ? `, ${errorCount} error(s) ${warningCount} warning(s) parsed` : ''})${patternNote} ` +
+          `at ${new Date(endTime).toISOString()}\n`
+      )
+      .catch(() => undefined);
+    await run.logHandle.close().catch(() => undefined);
 
     this.setLaneStatus(run, {
       state: finalState,
@@ -652,6 +809,207 @@ export class JobRunner implements vscode.Disposable {
     });
 
     this.resolveLaneCompletion(laneKey, finalState);
+  }
+
+  /**
+   * Called once at activation, after the workspace's job definitions have
+   * finished loading (JobStore loads asynchronously and isn't wired into
+   * this class's constructor, so a job's parseProblems/failPattern/
+   * passPattern aren't available any earlier than this). For every job the
+   * constructor above left "running (detached)" with a still-alive,
+   * identity-verified pid, resumes live tailing/counts/diagnostics and
+   * starts polling for its actual completion -- see reattach.ts for how a
+   * final state is inferred without a real exit code.
+   */
+  beginReattachment(getJob: (jobId: string) => JobDefinition | undefined): void {
+    for (const [jobId, status] of this.statuses) {
+      if (status.state !== 'running' || !status.detached || !status.pid || !status.logPath) {
+        continue;
+      }
+      const job = getJob(jobId);
+      if (!job) {
+        // Job definition deleted since this run started -- Stop still works
+        // via the raw pid (see stop()'s detached branch), just no live
+        // re-tailing without a job to read parseProblems/patterns from.
+        continue;
+      }
+      this.startReattachment(job, status.pid, status.pidStartTime, status.logPath);
+    }
+  }
+
+  private startReattachment(job: JobDefinition, pid: number, pidStartTime: number | undefined, logPath: string): void {
+    const config = vscode.workspace.getConfiguration('eda-job-runner', this.workspaceFolder.uri);
+    const globalPostSetupCwd = config.get<string>('postSetupCwd', '');
+    const maxParseBytes = Math.max(1, config.get<number>('logMaxSizeMB', 200)) * MB;
+
+    this.diagnostics.clearJob(job.id);
+    const run: ReattachRun = {
+      jobId: job.id,
+      logPath,
+      cwdAbs: this.resolveCwdAbs(job, globalPostSetupCwd),
+      tailer: new FileTailer(logPath, chunk => this.feedReattachChunk(run, chunk)),
+      parseState: newParseState(),
+      lineCarry: '',
+      parseProblems: job.parseProblems !== false,
+      failRegex: compilePattern(job.failPattern),
+      passRegex: compilePattern(job.passPattern),
+      matchedFail: false,
+      matchedPass: false,
+      parseBytesFed: 0,
+      parseTruncated: false,
+      maxParseBytes,
+      pid,
+      pidStartTime,
+      finalizing: false
+    };
+    this.reattachedRuns.set(job.id, run);
+
+    const status = this.statuses.get(job.id);
+    if (status) {
+      // Rebuilding from byte 0 (FileTailer's default start point) since
+      // there's no persisted ParseState to resume from -- errorCount/
+      // warningCount/Problems-panel issues are cumulative over the whole
+      // run, not just what's written after this reload.
+      this.setStatus(job.id, { ...status, reattached: true, errorCount: 0, warningCount: 0 });
+    }
+    run.tailer.start();
+    run.pollTimer = setInterval(() => void this.pollReattachment(run), 1000);
+    this.ensureTicking();
+  }
+
+  private feedReattachChunk(run: ReattachRun, chunk: string): void {
+    if (run.parseTruncated) {
+      return;
+    }
+    const stripped = chunk.replace(ANSI_PATTERN, '');
+    if (run.parseProblems || run.failRegex || run.passRegex) {
+      this.feedReattachLines(run, stripped);
+    }
+    run.parseBytesFed += Buffer.byteLength(stripped, 'utf8');
+    if (run.parseBytesFed > run.maxParseBytes) {
+      run.parseTruncated = true;
+    }
+  }
+
+  private feedReattachLines(run: ReattachRun, strippedText: string): void {
+    const lines = (run.lineCarry + strippedText).split('\n');
+    run.lineCarry = lines.pop() ?? '';
+    for (const line of lines) {
+      if (run.parseProblems) {
+        try {
+          parseLine(line, run.parseState);
+        } catch {
+          run.parseProblems = false;
+        }
+      }
+      if (run.failRegex && !run.matchedFail && run.failRegex.test(line)) {
+        run.matchedFail = true;
+      }
+      if (run.passRegex && !run.matchedPass && run.passRegex.test(line)) {
+        run.matchedPass = true;
+      }
+    }
+    const status = this.statuses.get(run.jobId);
+    if (status) {
+      status.errorCount = run.parseState.errorCount;
+      status.warningCount = run.parseState.warningCount;
+    }
+    if (run.parseProblems) {
+      // No single finish() call exists to do this once at the end for a
+      // reattached run, so diagnostics are pushed incrementally as lines
+      // come in instead -- setJobIssues replaces the whole set each time,
+      // so this is just "keep it current," not an ever-growing list.
+      this.diagnostics.setJobIssues(run.jobId, run.cwdAbs, run.parseState.issues);
+    }
+  }
+
+  /** Poll a reattached job's identity-verified pid liveness; once it disappears, finalize its state and stop tracking it. */
+  private async pollReattachment(run: ReattachRun): Promise<void> {
+    if (run.finalizing || isPidAliveWithIdentity(run.pid, run.pidStartTime)) {
+      return;
+    }
+    run.finalizing = true;
+    if (run.pollTimer) {
+      clearInterval(run.pollTimer);
+      run.pollTimer = undefined;
+    }
+
+    // Same reasoning as finish(): the process's own writes are already
+    // durable on disk by the time its pid disappears, but our tailer only
+    // sees them on its next poll -- force one more here first.
+    await run.tailer.pollOnce();
+    run.tailer.stop();
+
+    if (run.lineCarry.length > 0) {
+      if (run.parseProblems) {
+        try {
+          parseLine(run.lineCarry, run.parseState);
+        } catch {
+          run.parseProblems = false;
+        }
+      }
+      if (run.failRegex && !run.matchedFail && run.failRegex.test(run.lineCarry)) {
+        run.matchedFail = true;
+      }
+      if (run.passRegex && !run.matchedPass && run.passRegex.test(run.lineCarry)) {
+        run.matchedPass = true;
+      }
+      run.lineCarry = '';
+    }
+    if (run.parseProblems) {
+      this.diagnostics.setJobIssues(run.jobId, run.cwdAbs, run.parseState.issues);
+    }
+
+    const failOnLogErrors = vscode.workspace
+      .getConfiguration('eda-job-runner', this.workspaceFolder.uri)
+      .get<boolean>('failOnLogErrors', true);
+    const { tail } = await this.logManager.readHeadTail(run.logPath);
+    const existingTrailerState = asJobRunState(parseLogTrailer(tail).state);
+    const finalState =
+      decideReattachState({
+        pidAlive: false,
+        existingTrailerState,
+        errorCount: run.parseState.errorCount,
+        failOnLogErrors,
+        parseProblems: run.parseProblems,
+        hasFailPattern: !!run.failRegex,
+        hasPassPattern: !!run.passRegex,
+        matchedFail: run.matchedFail,
+        matchedPass: run.matchedPass
+      }) ?? 'failed';
+
+    // No real exit code is ever available for a reattached process (there
+    // was never a live ChildProcess/exit event for it in this session) --
+    // write our own completion trailer, in the same format finish() uses, so
+    // the log/Log Viewer look consistent regardless of which path finalized
+    // a given run. Skipped if a trailer already existed (the defensive
+    // "already finalized somehow" case decideReattachState also handles).
+    if (!existingTrailerState) {
+      const endTime = Date.now();
+      await fs.promises
+        .appendFile(
+          run.logPath,
+          `\n# EDA Job Runner: ${finalState} (exit n/a` +
+            `${run.parseState.errorCount || run.parseState.warningCount ? `, ${run.parseState.errorCount} error(s) ${run.parseState.warningCount} warning(s) parsed` : ''})` +
+            ' [reattached: resumed after a window reload, no real exit code available] ' +
+            `at ${new Date(endTime).toISOString()}\n`
+        )
+        .catch(() => undefined);
+    }
+
+    this.reattachedRuns.delete(run.jobId);
+    const status = this.statuses.get(run.jobId);
+    this.setStatus(run.jobId, {
+      ...(status ?? { state: 'idle' }),
+      state: finalState,
+      endTime: Date.now(),
+      errorCount: run.parseState.errorCount,
+      warningCount: run.parseState.warningCount,
+      pid: undefined,
+      pidStartTime: undefined,
+      detached: undefined,
+      reattached: undefined
+    });
   }
 
   /** Route a status update to the persisted primary slot and/or this job's lane group, as applicable. */
@@ -753,9 +1111,17 @@ export class JobRunner implements vscode.Disposable {
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
     }
+    for (const run of this.reattachedRuns.values()) {
+      run.tailer.stop();
+      if (run.pollTimer) {
+        clearInterval(run.pollTimer);
+      }
+    }
     this._onDidChangeStatus.dispose();
     // Running jobs are intentionally left detached and running — closing the
-    // sidebar or window shouldn't kill an overnight regression.
+    // sidebar or window shouldn't kill an overnight regression. A job we were
+    // re-tailing just goes back to "running (detached)" for whatever session
+    // reattaches to it next (beginReattachment doesn't care how it got there).
   }
 }
 
@@ -804,6 +1170,39 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
+/** The impure /proc read backing parseStartTimeTicks (see procStat.ts). Undefined on any read/parse failure. */
+function readProcStartTime(pid: number): number | undefined {
+  try {
+    return parseStartTimeTicks(fs.readFileSync(`/proc/${pid}/stat`, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Like isPidAlive, but also confirms `pid` still refers to the same process
+ * that was last recorded there, using its /proc start time — a bare
+ * `/proc/<pid>` existence check can't tell a still-running job apart from an
+ * unrelated process the OS later recycled that pid for. `expectedStartTime`
+ * is undefined for a status persisted before this check existed; in that
+ * case we fall back to existence-only rather than treating a legacy status
+ * as always dead.
+ */
+function isPidAliveWithIdentity(pid: number, expectedStartTime?: number): boolean {
+  if (expectedStartTime === undefined) {
+    return isPidAlive(pid);
+  }
+  const currentStartTime = readProcStartTime(pid);
+  return currentStartTime !== undefined && currentStartTime === expectedStartTime;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+const REATTACHABLE_STATES: ReadonlySet<string> = new Set<JobRunState>(['passed', 'failed', 'killed']);
+
+/** Narrows logIndex.ts's plain-string trailer state to JobRunState -- undefined for a missing/unrecognized trailer. */
+function asJobRunState(state: string | undefined): JobRunState | undefined {
+  return state !== undefined && REATTACHABLE_STATES.has(state) ? (state as JobRunState) : undefined;
 }

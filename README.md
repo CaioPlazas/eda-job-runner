@@ -24,7 +24,15 @@ to install it.
   folders, drag to reorder, mark one as the workspace default (F5 runs it).
 - **Kills cleanly.** Every job runs in its own process group, so Stop
   actually frees the EDA license instead of leaving an orphaned simulator
-  behind.
+  behind. The signal sequence is configurable (`killSignals`) and defaults
+  to SIGINT before SIGTERM before SIGKILL, since many EDA tools release
+  their license cleanly on ctrl+c but not on SIGTERM.
+- **Survives closing VS Code by mistake.** A running job's output keeps
+  being captured to its log file at the OS level, independent of the
+  extension — reopening the workspace resumes live tailing, error/warning
+  counts, and Problems-panel diagnostics automatically, and correctly
+  records pass/fail once it finishes, even though there's no way to get a
+  real exit code back for a job VS Code wasn't open to see exit.
 - **Never runs itself twice.** A job can't run concurrently with itself —
   its own **Repeat count** setting is the only way to run it again
   (always sequentially). Different jobs can still run side by side if you
@@ -82,8 +90,9 @@ by hand. Registered tools for Tool Setup live in their own file,
 | `shellArgs` | auto | Override the shell's argument vector |
 | `env` | `{}` | Extra environment variables for every job |
 | `postSetupCwd` | `""` | Base directory a job's `cwd` resolves against, instead of the workspace root |
-| `killGracePeriodSeconds` | `5` | Wait time after SIGTERM before SIGKILL |
-| `logMaxSizeMB` | `200` | Per-run log capture cap |
+| `killSignals` | SIGINT → SIGTERM → SIGKILL | Ordered kill signal escalation, each with its own grace period |
+| `killGracePeriodSeconds` | `5` | Fallback grace period for a `killSignals` stage that doesn't set its own |
+| `logMaxSizeMB` | `200` | Cap on how much of a run's output is parsed for error/warning counts (the log file itself isn't size-limited — see `logRetentionCount`) |
 | `logRetentionCount` | `20` | Past runs kept per job |
 | `failOnLogErrors` | `true` | Fail a job on log errors, even if it exited 0 |
 | `experimentalMultipleRuns` | `false` | Let *different* jobs run at once |
@@ -106,8 +115,14 @@ Two things trip people up with `bsub`/`qsub`-style jobs:
 
 ## Known rough edges
 
-- If VS Code reloads mid-run, the job shows as "running (detached)" —
-  Stop still works, but live output capture is gone until it finishes.
+- If VS Code reloads or closes mid-run, the job briefly shows as "running
+  (detached)" until reattachment kicks back in (near-instant in practice),
+  then "running (resumed)" — live capture, counts, and Problems resume
+  automatically. A job that finishes while VS Code is closed can't produce
+  a real exit code (nothing was open to see it exit), so its pass/fail is
+  inferred from its own output instead — an unproven run defaults to
+  failed rather than being credited as a pass, unless a **Pass pattern**
+  matched.
 - Windows: a shell can be pointed at via `shellArgs`, but Stop and the
   setup-script chain aren't supported there. Linux/macOS (including
   Remote-SSH) is the target.
