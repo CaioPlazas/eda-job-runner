@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
-import { JobDefinition, JobsFile, JobsFileSetup, JobTemplate, emptyJobsFile } from './types';
+import { GlobalParam, JobDefinition, JobsFile, JobsFileSetup, JobTemplate, emptyJobsFile } from './types';
 import { computeReorderedJobs } from './jobOrder';
 import { computeReorderedFolders } from './folderOrder';
 
@@ -196,6 +196,24 @@ export class JobStore implements vscode.Disposable {
     await this.persist();
   }
 
+  getParams(): GlobalParam[] {
+    return this.data.params ?? [];
+  }
+
+  /** Replaces the whole list (the Parameters panel edits/saves the full set at once); trims and drops blank names. */
+  async setParams(params: GlobalParam[]): Promise<void> {
+    const byName = new Map<string, GlobalParam>();
+    for (const p of params) {
+      const name = p.name.trim();
+      if (!name) {
+        continue;
+      }
+      byName.set(name, { name, value: p.value });
+    }
+    this.data.params = byName.size > 0 ? [...byName.values()] : undefined;
+    await this.persist();
+  }
+
   /**
    * Replace the workspace-level `setup` block (sourced script + pre-commands)
    * and persist. Passing an empty/blank setup drops the key entirely so the
@@ -251,6 +269,7 @@ export class JobStore implements vscode.Disposable {
     job.toolVariantLabel = updates.toolVariantLabel;
     job.listInsertOverrides = updates.listInsertOverrides;
     job.customArgs = updates.customArgs;
+    job.paramOverrides = updates.paramOverrides;
     if (updates.folder) {
       this.ensureFolder(updates.folder);
       job.folder = updates.folder;
@@ -288,6 +307,7 @@ export class JobStore implements vscode.Disposable {
       toolVariantLabel: job.toolVariantLabel,
       listInsertOverrides: job.listInsertOverrides,
       customArgs: job.customArgs,
+      paramOverrides: job.paramOverrides,
       folder: job.folder
     });
   }
@@ -365,6 +385,10 @@ function normalize(parsed: Partial<JobsFile> | undefined): JobsFile {
       if (customArgs) {
         job.customArgs = customArgs;
       }
+      const paramOverrides = normalizeStringRecord(j.paramOverrides);
+      if (paramOverrides) {
+        job.paramOverrides = paramOverrides;
+      }
       if (typeof j.folder === 'string' && j.folder.trim().length > 0) {
         job.folder = j.folder.trim();
       }
@@ -380,7 +404,29 @@ function normalize(parsed: Partial<JobsFile> | undefined): JobsFile {
     ? [...new Set(parsed.folders.filter((f): f is string => typeof f === 'string' && f.trim().length > 0))]
     : undefined;
   const templates = normalizeTemplates(parsed.templates);
-  return { version: 1, setup: parsed.setup, folders, templates, jobs };
+  const params = normalizeParams(parsed.params);
+  return { version: 1, setup: parsed.setup, folders, templates, params, jobs };
+}
+
+/** Keep only well-formed {name, value} entries with a non-empty name, deduped by name (last one wins); undefined if none survive. */
+function normalizeParams(raw: unknown): GlobalParam[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const byName = new Map<string, GlobalParam>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const rec = item as Record<string, unknown>;
+    const name = typeof rec.name === 'string' ? rec.name.trim() : '';
+    if (!name) {
+      continue;
+    }
+    const value = typeof rec.value === 'string' ? rec.value : '';
+    byName.set(name, { name, value });
+  }
+  return byName.size > 0 ? [...byName.values()] : undefined;
 }
 
 /** Keep only string→(non-empty)string entries from a hand-editable object; undefined if none survive. */
