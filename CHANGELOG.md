@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.24.0 — Docs only: scoped out the next two backlog items
+
+No code changes. `PLAN.md`'s two remaining Phase 4 items — license-friendly
+kill refinements, and full reattachment of a job after a window reload —
+are now grounded in the current code with a concrete sub-task list and the
+open questions each needs answered before implementation starts.
+
 ## 0.23.0 — Per-job parameter overrides, right in the Configure form
 
 Follow-up to v0.22.0's Parameters panel. A job's Configure form now shows
