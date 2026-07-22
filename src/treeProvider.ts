@@ -144,15 +144,28 @@ export class JobTreeProvider implements vscode.TreeDataProvider<EdaTreeNode> {
 }
 
 /**
- * Drag-and-drop reordering of jobs in the sidebar. A whole job is draggable --
- * whether it renders as a plain row (`JobTreeItem`) or, once it has more than
- * one tracked run, as an expandable group (`JobGroupTreeItem`). Folders stay a
- * single flat level (no folder reordering) and a run-lane inside an expanded
- * group isn't an independent job, so neither is draggable. Dropping on a
- * folder header appends to that folder; dropping on a job/job-group inserts
- * before it, in that item's folder; dropping anywhere else (the empty area
- * below the tree) moves it to the root/ungrouped list.
+ * Drag-and-drop reordering in the sidebar, for both jobs and folders. A whole
+ * job is draggable -- whether it renders as a plain row (`JobTreeItem`) or,
+ * once it has more than one tracked run, as an expandable group
+ * (`JobGroupTreeItem`) -- and so is a `FolderTreeItem` itself, to reorder
+ * folders relative to each other. A run-lane inside an expanded group isn't
+ * an independent job, so it isn't draggable. The single shared MIME payload
+ * carries a small `{kind, value}` tag so a drop handler can tell a dragged
+ * job apart from a dragged folder.
+ *
+ * Job drop targets: a folder header appends the job to that folder; a
+ * job/job-group inserts before it, in that item's folder; anywhere else (the
+ * empty area below the tree) moves it to the root/ungrouped list.
+ *
+ * Folder drop targets: another folder inserts the dragged folder before it;
+ * anywhere else appends it to the end of the folder list. Dropping a folder
+ * on a job/job-group is ignored (folders only reorder among themselves).
  */
+interface DragPayload {
+  kind: 'job' | 'folder';
+  value: string;
+}
+
 export class EdaTreeDragAndDropController implements vscode.TreeDragAndDropController<EdaTreeNode> {
   readonly dropMimeTypes = ['application/vnd.code.tree.edajobrunnerview'];
   readonly dragMimeTypes = ['application/vnd.code.tree.edajobrunnerview'];
@@ -160,14 +173,21 @@ export class EdaTreeDragAndDropController implements vscode.TreeDragAndDropContr
   constructor(private readonly jobStore: JobStore) {}
 
   handleDrag(source: readonly EdaTreeNode[], dataTransfer: vscode.DataTransfer): void {
-    const node = source.find(
+    const folderNode = source.find((n): n is FolderTreeItem => n instanceof FolderTreeItem);
+    if (folderNode) {
+      const payload: DragPayload = { kind: 'folder', value: folderNode.folderName };
+      dataTransfer.set('application/vnd.code.tree.edajobrunnerview', new vscode.DataTransferItem(JSON.stringify(payload)));
+      return;
+    }
+    const jobNode = source.find(
       (n): n is JobTreeItem | JobGroupTreeItem =>
         (n instanceof JobTreeItem && !n.isLane) || n instanceof JobGroupTreeItem
     );
-    if (!node) {
+    if (!jobNode) {
       return;
     }
-    dataTransfer.set('application/vnd.code.tree.edajobrunnerview', new vscode.DataTransferItem(node.job.id));
+    const payload: DragPayload = { kind: 'job', value: jobNode.job.id };
+    dataTransfer.set('application/vnd.code.tree.edajobrunnerview', new vscode.DataTransferItem(JSON.stringify(payload)));
   }
 
   async handleDrop(target: EdaTreeNode | undefined, dataTransfer: vscode.DataTransfer): Promise<void> {
@@ -175,8 +195,27 @@ export class EdaTreeDragAndDropController implements vscode.TreeDragAndDropContr
     if (!transferItem) {
       return;
     }
-    const draggedId = transferItem.value as string;
+    let payload: DragPayload;
+    try {
+      payload = JSON.parse(transferItem.value as string) as DragPayload;
+    } catch {
+      return;
+    }
 
+    if (payload.kind === 'folder') {
+      if (target instanceof FolderTreeItem) {
+        if (target.folderName === payload.value) {
+          return;
+        }
+        await this.jobStore.reorderFolder(payload.value, target.folderName);
+      } else if (!target) {
+        await this.jobStore.reorderFolder(payload.value, undefined);
+      }
+      // Dropping a dragged folder on a job/group is a no-op -- folders only reorder among themselves.
+      return;
+    }
+
+    const draggedId = payload.value;
     if (target instanceof FolderTreeItem) {
       await this.jobStore.reorderJob(draggedId, undefined, target.folderName);
     } else if (target instanceof JobTreeItem && !target.isLane) {

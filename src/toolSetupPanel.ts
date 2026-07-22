@@ -67,6 +67,13 @@ interface ToggleFavoriteMessage {
   label: string;
   flagsKey: string;
 }
+interface SetOptionValueSourceMessage {
+  type: 'setOptionValueSource';
+  id: string;
+  label: string;
+  flagsKey: string;
+  listName: string;
+}
 interface AddListMessage {
   type: 'addList';
   id: string;
@@ -105,6 +112,7 @@ type WebviewMessage =
   | ConfirmAddVariantMessage
   | RemoveVariantMessage
   | ToggleFavoriteMessage
+  | SetOptionValueSourceMessage
   | AddListMessage
   | RefreshListMessage
   | RemoveListMessage
@@ -346,6 +354,27 @@ export class ToolSetupPanel {
         return;
       }
 
+      case 'setOptionValueSource': {
+        const tool = this.toolStore.getTool(msg.id);
+        if (!tool) {
+          return;
+        }
+        const idx = tool.variants.findIndex(v => v.label === msg.label);
+        if (idx === -1) {
+          return;
+        }
+        const variants = tool.variants.slice();
+        variants[idx] = {
+          ...variants[idx],
+          options: variants[idx].options.map(o =>
+            o.flags.join('|') === msg.flagsKey ? { ...o, valueListName: msg.listName || undefined } : o
+          )
+        };
+        await this.toolStore.updateTool(msg.id, { variants });
+        this.render();
+        return;
+      }
+
       case 'addList': {
         const tool = this.toolStore.getTool(msg.id);
         const name = msg.name.trim();
@@ -441,42 +470,59 @@ function renderHtml(
           )
           .join('')}</table>`;
 
-  const renderOptionRowsEditable = (toolId: string, variantLabel: string, options: ToolOption[]): string => {
+  const renderOptionRowsEditable = (tool: ToolDefinition, variantLabel: string, options: ToolOption[]): string => {
     if (options.length === 0) {
       return '<div class="hint">No options detected.</div>';
     }
+    const lists = tool.lists ?? [];
     const sorted = [...options].sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite));
-    return `<table class="opts">${sorted
+    return `<input type="text" class="optFilterTool" placeholder="Filter flags…" />
+    <table class="opts">${sorted
       .map(o => {
         const key = o.flags.join('|');
+        const valueSourceCell =
+          o.metavar && lists.length > 0
+            ? `<td><select class="valueSourceSelect" data-vs-id="${esc(tool.id)}" data-vs-label="${esc(
+                variantLabel
+              )}" data-vs-key="${esc(key)}" title="Where this flag's value comes from">
+                <option value="">free text</option>
+                ${lists
+                  .map(
+                    l =>
+                      `<option value="${esc(l.name)}" ${o.valueListName === l.name ? 'selected' : ''}>${esc(l.name)}</option>`
+                  )
+                  .join('')}
+              </select></td>`
+            : '<td></td>';
         return `<tr>
-          <td><button class="favBtn ${o.favorite ? 'favOn' : ''}" data-fav-id="${esc(toolId)}" data-fav-label="${esc(
+          <td><button class="favBtn ${o.favorite ? 'favOn' : ''}" data-fav-id="${esc(tool.id)}" data-fav-label="${esc(
           variantLabel
         )}" data-fav-key="${esc(key)}" title="${o.favorite ? 'Unfavorite' : 'Favorite'}" type="button">${
           o.favorite ? '★' : '☆'
         }</button></td>
           <td>${esc(o.flags.join(', '))}${metavarHtml(o.metavar)}</td>
           <td class="hint">${esc(o.description ?? '')}</td>
+          ${valueSourceCell}
         </tr>`;
       })
       .join('')}</table>`;
   };
 
-  const renderVariant = (toolId: string, v: ToolVariant): string => {
+  const renderVariant = (tool: ToolDefinition, v: ToolVariant): string => {
     const label = v.label || '(top-level)';
     return `<details class="variant" open>
       <summary>${esc(label)} — ${v.options.length} option${v.options.length === 1 ? '' : 's'}${
       v.scanError ? ' <span class="err">⚠ scan issue</span>' : ''
     }
-        <button class="secondary small" data-rescan-variant-id="${esc(toolId)}" data-rescan-variant-label="${esc(v.label)}" type="button">Rescan</button>
+        <button class="secondary small" data-rescan-variant-id="${esc(tool.id)}" data-rescan-variant-label="${esc(v.label)}" type="button">Rescan</button>
         ${
           v.label !== ''
-            ? `<button class="secondary small" data-remove-variant-id="${esc(toolId)}" data-remove-variant-label="${esc(v.label)}" type="button">Remove sub-tool</button>`
+            ? `<button class="secondary small" data-remove-variant-id="${esc(tool.id)}" data-remove-variant-label="${esc(v.label)}" type="button">Remove sub-tool</button>`
             : ''
         }
       </summary>
       ${v.scanError ? `<div class="err">${esc(v.scanError)}</div>` : ''}
-      ${renderOptionRowsEditable(toolId, v.label, v.options)}
+      ${renderOptionRowsEditable(tool, v.label, v.options)}
       <details><summary class="rawSummary">raw help output</summary><pre>${esc(v.rawHelp ?? '')}</pre></details>
     </details>`;
   };
@@ -485,7 +531,7 @@ function renderHtml(
     <div class="variantRow" style="margin-top:12px;">
       <input type="text" placeholder="label (e.g. regression)" class="newVariantLabel" style="flex:1;" />
       <input type="text" placeholder="selector args (e.g. --regression)" class="newVariantArgs" style="flex:1;" />
-      <button class="primary small" data-confirm-addvariant="${esc(toolId)}" type="button">Scan &amp; Add</button>
+      <button class="primary small" data-confirm-addvariant="${esc(toolId)}" type="button">Add</button>
       <button class="secondary small" id="cancelAddVariant" type="button">Cancel</button>
     </div>`;
 
@@ -496,7 +542,7 @@ function renderHtml(
       : `${l.values.length} value${l.values.length === 1 ? '' : 's'}`;
     return `<div class="listItem">
       <div class="listHeader">
-        <b>${esc(l.name)}</b> <span class="hint">${src}${l.pattern ? ` · pattern <code>${esc(l.pattern)}</code>` : ''} · inserts <code>${esc(l.insertTemplate || '${value}')}</code> · ${status}</span>
+        <b>${esc(l.name)}</b> <span class="hint">${src}${l.pattern ? ` · pattern <code>${esc(l.pattern)}</code>` : ''} · ${status}</span>
         <button class="secondary small" data-refresh-list-id="${esc(toolId)}" data-refresh-list-name="${esc(l.name)}" type="button">↻ Refresh</button>
         <button class="secondary small" data-remove-list-id="${esc(toolId)}" data-remove-list-name="${esc(l.name)}" type="button">Remove</button>
       </div>
@@ -506,7 +552,16 @@ function renderHtml(
 
   const renderLists = (tool: ToolDefinition): string => `
     <div class="lists">
-      <div class="listsHeading">Value lists <span class="hint">(e.g. a test list — shown as a dropdown in a job's builder)</span></div>
+      <div class="listsHeading">Value lists</div>
+      <div class="hint">
+        Discovered values for a dropdown. <b>Attach one to a flag</b> using that
+        flag's "value source" column above (in a variant's option table) to
+        make it that flag's dropdown — the usual case. Leave a list unattached
+        for a value with no real CLI flag to attach to (e.g. a plusarg like
+        <code>+UVM_TESTNAME=</code>) — an unattached list keeps its own row
+        below, with an insert template controlling exactly how a picked value
+        is written into the Command.
+      </div>
       ${(tool.lists ?? []).map(l => renderList(tool.id, l)).join('')}
       <div class="listRow">
         <input type="text" placeholder="name (e.g. Test)" class="newListName" style="flex:1;" />
@@ -516,8 +571,8 @@ function renderHtml(
         </select>
         <input type="text" placeholder="source (command to run, or file path)" class="newListSource" style="flex:2;" />
         <input type="text" placeholder="pattern (optional regex)" class="newListPattern" style="flex:1;" />
-        <input type="text" placeholder="insert template (default \${value})" class="newListTemplate" style="flex:1;" />
-        <button class="primary small" data-add-list="${esc(tool.id)}" type="button">Read &amp; Add</button>
+        <input type="text" placeholder="insert template, for an unattached list (default \${value})" class="newListTemplate" style="flex:1;" />
+        <button class="primary small" data-add-list="${esc(tool.id)}" type="button">Add</button>
       </div>
     </div>`;
 
@@ -543,7 +598,7 @@ function renderHtml(
         <button class="secondary small" data-rescan-tool="${esc(tool.id)}" type="button">Rescan All</button>
         <button class="secondary small" data-remove-tool="${esc(tool.id)}" type="button">Remove</button>
       </div>
-      ${tool.variants.map(v => renderVariant(tool.id, v)).join('')}
+      ${tool.variants.map(v => renderVariant(tool, v)).join('')}
       ${
         addingVariantForToolId === tool.id
           ? renderAddVariantForm(tool.id)
@@ -581,7 +636,7 @@ function renderHtml(
         <code>regression</code> (positional) or <code>--regression</code> (flag) — whatever the tool itself expects.
       </div>
       <div class="actions">
-        <button class="primary" id="confirmAdd">Scan &amp; Add</button>
+        <button class="primary" id="confirmAdd">Add</button>
         <button class="secondary" id="cancelAdd">Cancel</button>
       </div>
     </div>`
@@ -609,7 +664,8 @@ function renderHtml(
     font-family: var(--vscode-font-family);
     color: var(--vscode-foreground);
     padding: 24px;
-    max-width: 760px;
+    max-width: min(1200px, 100%);
+    width: 100%;
   }
   h2 { margin-top: 0; }
   h3 { margin-bottom: 8px; }
@@ -618,7 +674,7 @@ function renderHtml(
     width: 100%;
     box-sizing: border-box;
     margin-top: 6px;
-    padding: 7px 9px;
+    padding: 9px 12px;
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, transparent);
@@ -656,8 +712,10 @@ function renderHtml(
   .variant { margin-top: 10px; border-top: 1px solid var(--vscode-input-border, rgba(127,127,127,0.2)); padding-top: 8px; }
   .variant summary { cursor: pointer; }
   .rawSummary { cursor: pointer; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
+  .optFilterTool { margin-top: 8px; }
   table.opts { border-collapse: collapse; margin-top: 8px; width: 100%; }
   table.opts td { padding: 2px 10px 2px 0; vertical-align: top; font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
+  table.opts select.valueSourceSelect { width: auto; margin-top: 0; padding: 2px 6px; font-size: 0.85em; }
   .favBtn {
     background: none; border: none; cursor: pointer; padding: 0 4px 0 0; font-size: 1em;
     color: var(--vscode-descriptionForeground);
@@ -683,6 +741,18 @@ function renderHtml(
   .listRow { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
   .listRow input, .listRow select { margin-top: 0; }
   .listRow select { width: auto; padding: 6px 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; }
+  .busyOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.35);
+    color: #fff;
+    font-size: 1.1em;
+    font-family: var(--vscode-font-family);
+  }
 </style>
 </head>
 <body>
@@ -705,6 +775,37 @@ function renderHtml(
     const vscode = acquireVsCodeApi();
     const $ = id => document.getElementById(id);
 
+    // Preserve scroll position across a render() -- a full panel.webview.html
+    // reassignment (every state change here does one) reloads the document,
+    // which would otherwise reset scroll to the top on e.g. a favorite toggle.
+    // The webview's own state object (unlike the DOM/JS) survives that reassignment.
+    (function restoreScroll() {
+      const s = vscode.getState();
+      if (s && typeof s.scrollY === 'number') {
+        window.scrollTo(0, s.scrollY);
+      }
+    })();
+    let scrollSaveQueued = false;
+    window.addEventListener('scroll', () => {
+      if (scrollSaveQueued) { return; }
+      scrollSaveQueued = true;
+      requestAnimationFrame(() => {
+        vscode.setState(Object.assign({}, vscode.getState(), { scrollY: window.scrollY }));
+        scrollSaveQueued = false;
+      });
+    });
+
+    // A visible "Scanning…" overlay for the handful of actions that spawn a
+    // real process (scan/rescan/list-discovery) and wait on the extension
+    // host. No teardown needed -- render() always replaces the whole
+    // document once the awaited work finishes, taking the overlay with it.
+    function showBusy(msg) {
+      const overlay = document.createElement('div');
+      overlay.className = 'busyOverlay';
+      overlay.textContent = msg || 'Scanning…';
+      document.body.appendChild(overlay);
+    }
+
     function wire(selector, handler) {
       document.querySelectorAll(selector).forEach(btn => {
         btn.addEventListener('click', e => {
@@ -715,17 +816,21 @@ function renderHtml(
       });
     }
 
-    wire('[data-rescan-tool]', btn => vscode.postMessage({ type: 'rescanTool', id: btn.getAttribute('data-rescan-tool') }));
+    wire('[data-rescan-tool]', btn => {
+      showBusy();
+      vscode.postMessage({ type: 'rescanTool', id: btn.getAttribute('data-rescan-tool') });
+    });
     wire('[data-remove-tool]', btn => vscode.postMessage({ type: 'removeTool', id: btn.getAttribute('data-remove-tool') }));
     wire('[data-edit-tool]', btn => vscode.postMessage({ type: 'startEdit', id: btn.getAttribute('data-edit-tool') }));
     wire('[data-start-addvariant]', btn => vscode.postMessage({ type: 'startAddVariant', id: btn.getAttribute('data-start-addvariant') }));
-    wire('[data-rescan-variant-id]', btn =>
+    wire('[data-rescan-variant-id]', btn => {
+      showBusy();
       vscode.postMessage({
         type: 'rescanVariant',
         id: btn.getAttribute('data-rescan-variant-id'),
         label: btn.getAttribute('data-rescan-variant-label')
-      })
-    );
+      });
+    });
     wire('[data-remove-variant-id]', btn =>
       vscode.postMessage({
         type: 'removeVariant',
@@ -741,8 +846,31 @@ function renderHtml(
         flagsKey: btn.getAttribute('data-fav-key')
       })
     );
+    document.querySelectorAll('.valueSourceSelect').forEach(sel => {
+      sel.addEventListener('change', () => {
+        vscode.postMessage({
+          type: 'setOptionValueSource',
+          id: sel.getAttribute('data-vs-id'),
+          label: sel.getAttribute('data-vs-label'),
+          flagsKey: sel.getAttribute('data-vs-key'),
+          listName: sel.value
+        });
+      });
+    });
+    document.querySelectorAll('.optFilterTool').forEach(input => {
+      input.addEventListener('input', () => {
+        const q = input.value.trim().toLowerCase();
+        const scope = input.closest('.variant');
+        if (!scope) { return; }
+        scope.querySelectorAll('table.opts tr').forEach(tr => {
+          const text = tr.textContent.toLowerCase();
+          tr.style.display = !q || text.includes(q) ? '' : 'none';
+        });
+      });
+    });
     wire('[data-add-list]', btn => {
       const wrap = btn.closest('.listRow');
+      showBusy();
       vscode.postMessage({
         type: 'addList',
         id: btn.getAttribute('data-add-list'),
@@ -753,13 +881,14 @@ function renderHtml(
         insertTemplate: wrap.querySelector('.newListTemplate').value
       });
     });
-    wire('[data-refresh-list-id]', btn =>
+    wire('[data-refresh-list-id]', btn => {
+      showBusy();
       vscode.postMessage({
         type: 'refreshList',
         id: btn.getAttribute('data-refresh-list-id'),
         name: btn.getAttribute('data-refresh-list-name')
-      })
-    );
+      });
+    });
     wire('[data-remove-list-id]', btn =>
       vscode.postMessage({
         type: 'removeList',
@@ -769,6 +898,7 @@ function renderHtml(
     );
     wire('[data-save-edit]', btn => {
       const wrap = btn.closest('.tool');
+      showBusy();
       vscode.postMessage({
         type: 'saveEdit',
         id: btn.getAttribute('data-save-edit'),
@@ -778,6 +908,7 @@ function renderHtml(
     });
     wire('[data-confirm-addvariant]', btn => {
       const wrap = btn.closest('.tool');
+      showBusy();
       vscode.postMessage({
         type: 'confirmAddVariant',
         id: btn.getAttribute('data-confirm-addvariant'),
@@ -794,6 +925,7 @@ function renderHtml(
 
     if ($('scanNew')) {
       $('scanNew').addEventListener('click', () => {
+        showBusy();
         vscode.postMessage({ type: 'scanNew', command: $('newCommand').value, helpArg: $('newHelpArg').value });
       });
       $('newCommand').focus();
@@ -825,6 +957,7 @@ function renderHtml(
             variants.push({ label, selectArgs });
           }
         });
+        showBusy();
         vscode.postMessage({ type: 'confirmAdd', variants });
       });
     }

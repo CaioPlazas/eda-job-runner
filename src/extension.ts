@@ -20,7 +20,7 @@ import {
   JobTreeProvider,
   formatDuration
 } from './treeProvider';
-import { JobDefinition } from './types';
+import { JobDefinition, JobTemplate } from './types';
 import { ToolStore } from './toolStore';
 import { ToolSetupPanel } from './toolSetupPanel';
 import { scanTool, scanLists } from './toolIntrospect';
@@ -65,7 +65,6 @@ export function activate(context: vscode.ExtensionContext): void {
     // The legacy one-job-at-a-time gate (hides/disables other Run buttons)
     // only actually applies when multiple runs aren't opted into.
     void vscode.commands.executeCommand('setContext', 'edaJobRunner.anyJobRunning', anyRunning && !multiRunsEnabled);
-    void vscode.commands.executeCommand('setContext', 'edaJobRunner.multiRunsEnabled', multiRunsEnabled);
     // Gates the F5 keybinding: F5 only runs the default EDA job when this
     // workspace actually has one set, so debugging is unaffected otherwise.
     void vscode.commands.executeCommand('setContext', 'edaJobRunner.hasDefaultJob', !!jobStore.getDefaultJob());
@@ -88,11 +87,12 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('eda-job-runner.addJob', () => JobConfigPanel.createOrShow(jobStore, toolStore.getTools())),
+    vscode.commands.registerCommand('eda-job-runner.addJob', () => addJob(jobStore, toolStore)),
     vscode.commands.registerCommand('eda-job-runner.configureJob', (item: EdaTreeElement) =>
       item ? JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), item.job) : undefined
     ),
     vscode.commands.registerCommand('eda-job-runner.deleteJob', (item: EdaTreeElement) => deleteJob(jobStore, item)),
+    vscode.commands.registerCommand('eda-job-runner.saveJobAsTemplate', (item: EdaTreeElement) => saveJobAsTemplate(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.duplicateJob', (item: EdaTreeElement) =>
       jobStore.duplicateJob(item.job.id)
     ),
@@ -105,6 +105,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand('eda-job-runner.renameFolder', (item: FolderTreeItem) => renameFolder(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.deleteFolder', (item: FolderTreeItem) => deleteFolder(jobStore, item)),
+    vscode.commands.registerCommand('eda-job-runner.runFolder', (item: FolderTreeItem) => runFolder(jobStore, jobRunner, item)),
     vscode.commands.registerCommand('eda-job-runner.moveJobToFolder', (item: EdaTreeElement) => moveJobToFolder(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.runDefaultJob', () => {
       const def = jobStore.getDefaultJob();
@@ -116,10 +117,11 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       return jobRunner.run(def);
     }),
-    // Works uniformly for a plain job, an already-running job (starts a
-    // concurrent extra instance, when experimentalMultipleRuns is on), and a
-    // job-group header (adds another lane/batch) — jobRunner.run() figures
-    // out lane allocation on its own.
+    // Works uniformly for a plain job and a job-group header (starts a fresh
+    // repeat-count batch once the previous one has finished) — jobRunner.run()
+    // no-ops with an "already running" message if this exact job is still
+    // mid-run, regardless of experimentalMultipleRuns (that setting only ever
+    // gates two *different* jobs running side by side).
     vscode.commands.registerCommand('eda-job-runner.runJob', (item: JobTreeItem | JobGroupTreeItem) =>
       jobRunner.run(item.job)
     ),
@@ -197,6 +199,51 @@ async function deleteJob(jobStore: JobStore, item: EdaTreeElement): Promise<void
   }
 }
 
+async function addJob(jobStore: JobStore, toolStore: ToolStore): Promise<void> {
+  const templates = jobStore.getTemplates();
+  if (templates.length === 0) {
+    JobConfigPanel.createOrShow(jobStore, toolStore.getTools());
+    return;
+  }
+  const BLANK = 'Blank job';
+  const choice = await vscode.window.showQuickPick([BLANK, ...templates.map(t => t.name)], {
+    title: 'New job',
+    placeHolder: 'Start from a template, or a blank job'
+  });
+  if (!choice) {
+    return;
+  }
+  const template = choice === BLANK ? undefined : templates.find(t => t.name === choice);
+  JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), undefined, undefined, template);
+}
+
+async function saveJobAsTemplate(jobStore: JobStore, item: EdaTreeElement): Promise<void> {
+  if (!item) {
+    return;
+  }
+  const name = await vscode.window.showInputBox({
+    prompt: 'Template name',
+    value: item.job.name,
+    validateInput: v => (v.trim() ? undefined : 'Name is required')
+  });
+  if (!name || !name.trim()) {
+    return;
+  }
+  const job = item.job;
+  const template: JobTemplate = {
+    name: name.trim(),
+    namePattern: job.name,
+    command: job.command,
+    cwd: job.cwd,
+    toolId: job.toolId,
+    toolVariantLabel: job.toolVariantLabel,
+    parseProblems: job.parseProblems,
+    folder: job.folder
+  };
+  await jobStore.addTemplate(template);
+  void vscode.window.showInformationMessage(`Saved template "${template.name}".`);
+}
+
 async function addFolder(jobStore: JobStore): Promise<void> {
   const name = await vscode.window.showInputBox({ prompt: 'New folder name', placeHolder: 'e.g. Compile' });
   if (name && name.trim()) {
@@ -218,13 +265,38 @@ async function deleteFolder(jobStore: JobStore, item: FolderTreeItem): Promise<v
   if (!item) {
     return;
   }
+  const jobCount = jobStore.getJobs().filter(j => j.folder === item.folderName).length;
+  if (jobCount === 0) {
+    const confirm = await vscode.window.showWarningMessage(`Delete folder "${item.folderName}"?`, { modal: true }, 'Delete');
+    if (confirm === 'Delete') {
+      await jobStore.deleteFolder(item.folderName, true);
+    }
+    return;
+  }
   const confirm = await vscode.window.showWarningMessage(
-    `Delete folder "${item.folderName}"? Its jobs are not deleted -- they move back to the top level.`,
+    `Delete folder "${item.folderName}" and permanently delete the ${jobCount} job${jobCount === 1 ? '' : 's'} inside it? This cannot be undone.`,
     { modal: true },
-    'Delete'
+    'Delete folder & jobs'
   );
-  if (confirm === 'Delete') {
-    await jobStore.deleteFolder(item.folderName);
+  if (confirm === 'Delete folder & jobs') {
+    await jobStore.deleteFolder(item.folderName, true);
+  }
+}
+
+/**
+ * Runs every job in a folder one after another -- jobRunner.run() only
+ * resolves once its job (or whole repeat-count batch) is completely
+ * finished, so this plain sequential loop naturally never overlaps two
+ * jobs, independent of experimentalMultipleRuns. A cancelled `${param:...}`
+ * prompt just skips that one job; the loop continues.
+ */
+async function runFolder(jobStore: JobStore, jobRunner: JobRunner, item: FolderTreeItem): Promise<void> {
+  if (!item) {
+    return;
+  }
+  const jobs = jobStore.getJobs().filter(j => j.folder === item.folderName);
+  for (const job of jobs) {
+    await jobRunner.run(job);
   }
 }
 

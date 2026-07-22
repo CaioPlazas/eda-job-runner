@@ -7,9 +7,13 @@ esbuild.js
 **/*.map
 **/.eslintrc.json
 node_modules/**
+PLAN.md
+STATUS.md
 # Repo-only content — not part of the shipped extension
 examples/**
 sample-projects/**
 test-fixtures/**
 docs/**
 scripts/**
+.github/**
+.claude/**
