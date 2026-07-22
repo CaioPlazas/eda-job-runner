@@ -385,7 +385,7 @@ function normalize(parsed: Partial<JobsFile> | undefined): JobsFile {
       if (customArgs) {
         job.customArgs = customArgs;
       }
-      const paramOverrides = normalizeStringRecord(j.paramOverrides);
+      const paramOverrides = normalizeParamOverrides(j.paramOverrides);
       if (paramOverrides) {
         job.paramOverrides = paramOverrides;
       }
@@ -438,6 +438,26 @@ function normalizeStringRecord(raw: unknown): Record<string, string> | undefined
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (key.trim().length > 0 && typeof value === 'string' && value.trim().length > 0) {
       out[key] = value;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Like `normalizeStringRecord`, but keeps an explicit empty-string value --
+ * unlike `listInsertOverrides` (where blank genuinely means "no override"),
+ * `paramVars.ts`'s `effectiveVarValue` treats an empty-string override as a
+ * real, intentional override (distinct from "no override", which falls back
+ * to the global default), so it must survive a save/reload round-trip.
+ */
+function normalizeParamOverrides(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return undefined;
+  }
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key.trim().length > 0 && typeof value === 'string') {
+      out[key.trim()] = value;
     }
   }
   return Object.keys(out).length > 0 ? out : undefined;

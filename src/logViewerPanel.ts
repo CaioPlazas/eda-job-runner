@@ -32,6 +32,7 @@ interface LogRow {
   filename: string;
   laneLabel?: string;
   seed?: string;
+  command?: string;
   started?: string;
   state?: string;
   exitCode?: string;
@@ -76,7 +77,15 @@ export class LogViewerPanel {
     this.panel = panel;
     this.panel.webview.html = renderHtml(panel.webview);
     this.disposables.push(
-      this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
+      this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => {
+        // A rejected promise here (e.g. an I/O error mid-scan) would
+        // otherwise be an unhandled rejection VS Code's event emitter never
+        // surfaces -- the panel just silently stops responding to that
+        // message with no indication why.
+        this.onMessage(msg).catch(err => {
+          void vscode.window.showErrorMessage(`EDA Job Runner: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }),
       this.panel.onDidDispose(() => this.cleanup())
     );
     void this.sendRows();
@@ -135,6 +144,7 @@ export class LogViewerPanel {
       filename,
       laneLabel: header.laneLabel,
       seed: header.seed,
+      command: header.command,
       started: header.started ?? fromName.timestamp,
       state: trailer.state,
       exitCode: trailer.exitCode,
@@ -144,37 +154,46 @@ export class LogViewerPanel {
   }
 
   private async openLog(logPath: string): Promise<void> {
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(logPath));
-    await vscode.window.showTextDocument(doc, { preview: false });
+    try {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(logPath));
+      await vscode.window.showTextDocument(doc, { preview: false });
+    } catch {
+      // Most likely pruned by log retention between the last row list and this click.
+      void vscode.window.showInformationMessage('EDA Job Runner: that log no longer exists — try refreshing.');
+    }
   }
 
   private async search(query: string, logPaths: string[]): Promise<void> {
     const q = query.trim();
     if (!q) {
-      void this.panel.webview.postMessage({ type: 'searchResult', matched: null, truncated: false });
+      void this.panel.webview.postMessage({ type: 'searchResult', matched: null, truncated: false, contentCapped: false });
       return;
     }
     const scanned = logPaths.slice(0, SEARCH_FILE_LIMIT);
     const truncated = logPaths.length > scanned.length;
     const matched: string[] = [];
+    let contentCapped = false;
     for (let i = 0; i < scanned.length; i += READ_CONCURRENCY) {
       const batch = scanned.slice(i, i + READ_CONCURRENCY);
       const results = await Promise.all(batch.map(p => this.searchOne(p, q)));
-      results.forEach((ok, idx) => {
-        if (ok) {
+      results.forEach((result, idx) => {
+        if (result.matched) {
           matched.push(batch[idx]);
+        }
+        if (result.capped) {
+          contentCapped = true;
         }
       });
     }
-    void this.panel.webview.postMessage({ type: 'searchResult', matched, truncated });
+    void this.panel.webview.postMessage({ type: 'searchResult', matched, truncated, contentCapped });
   }
 
-  private async searchOne(logPath: string, query: string): Promise<boolean> {
+  private async searchOne(logPath: string, query: string): Promise<{ matched: boolean; capped: boolean }> {
     let handle: fs.promises.FileHandle;
     try {
       handle = await fs.promises.open(logPath, 'r');
     } catch {
-      return false;
+      return { matched: false, capped: false };
     }
     try {
       const size = (await handle.stat()).size;
@@ -183,9 +202,9 @@ export class LogViewerPanel {
       if (len > 0) {
         await handle.read(buf, 0, len, 0);
       }
-      return searchMatches(buf.toString('utf8'), query);
+      return { matched: searchMatches(buf.toString('utf8'), query), capped: size > SEARCH_FILE_CAP };
     } catch {
-      return false;
+      return { matched: false, capped: false };
     } finally {
       await handle.close();
     }
@@ -279,7 +298,6 @@ function renderHtml(webview: vscode.Webview): string {
   th { font-weight: 600; color: var(--vscode-descriptionForeground); font-size: 0.85em; }
   tbody tr { cursor: pointer; }
   tbody tr:hover { background: var(--vscode-list-hoverBackground); }
-  td.cmd { white-space: normal; word-break: break-all; font-family: var(--vscode-editor-font-family); font-size: 0.85em; color: var(--vscode-descriptionForeground); }
   .badge { padding: 2px 8px; border-radius: 10px; font-size: 0.82em; font-weight: 600; }
   .badge-passed { background: rgba(137,209,133,0.2); color: var(--vscode-terminal-ansiGreen, #89d185); }
   .badge-failed { background: rgba(224,108,117,0.2); color: var(--vscode-terminal-ansiRed, #e06c75); }
@@ -356,6 +374,7 @@ function renderHtml(webview: vscode.Webview): string {
     let ROWS = [];
     let SEARCH_MATCHED = null; // null = no active search; else a Set of matching logPaths
     let SEARCH_TRUNCATED = false;
+    let SEARCH_CONTENT_CAPPED = false;
 
     function statusOf(row) {
       return row.state === 'passed' || row.state === 'failed' || row.state === 'killed' ? row.state : 'unknown';
@@ -416,7 +435,8 @@ function renderHtml(webview: vscode.Webview): string {
     function rowHtml(row) {
       const status = statusOf(row);
       const label = status === 'unknown' ? 'running/unknown' : status;
-      return '<tr data-log="' + esc(row.logPath) + '">' +
+      const title = row.command ? ' title="' + esc(row.command) + '"' : '';
+      return '<tr data-log="' + esc(row.logPath) + '"' + title + '>' +
         '<td>' + esc(fmtDate(row.started)) + '</td>' +
         '<td>' + esc(row.jobName) + '</td>' +
         '<td>' + esc(row.folder || '–') + '</td>' +
@@ -492,6 +512,11 @@ function renderHtml(webview: vscode.Webview): string {
     });
 
     $('refresh').addEventListener('click', () => {
+      // A stale SEARCH_MATCHED (a Set of logPaths from before the refresh)
+      // would otherwise silently hide every newly-appeared run -- its
+      // logPath was never actually searched, so it can't be in the set.
+      SEARCH_MATCHED = null;
+      updateSearchStatus();
       $('loadingState').style.display = '';
       vscode.postMessage({ type: 'refresh' });
     });
@@ -499,7 +524,10 @@ function renderHtml(webview: vscode.Webview): string {
     function updateSearchStatus() {
       const el = $('searchStatus');
       if (SEARCH_MATCHED === null) { el.textContent = ''; return; }
-      el.textContent = SEARCH_MATCHED.size + ' match' + (SEARCH_MATCHED.size === 1 ? '' : 'es') + (SEARCH_TRUNCATED ? ' (search stopped early — narrow the filters first for a full scan)' : '');
+      let note = '';
+      if (SEARCH_TRUNCATED) { note += ' (search stopped early — narrow the filters first for a full scan)'; }
+      if (SEARCH_CONTENT_CAPPED) { note += ' (only the first 5MB of some large log(s) was searched)'; }
+      el.textContent = SEARCH_MATCHED.size + ' match' + (SEARCH_MATCHED.size === 1 ? '' : 'es') + note;
     }
 
     function runSearch() {
@@ -541,6 +569,7 @@ function renderHtml(webview: vscode.Webview): string {
           SEARCH_MATCHED = new Set(m.matched);
         }
         SEARCH_TRUNCATED = !!m.truncated;
+        SEARCH_CONTENT_CAPPED = !!m.contentCapped;
         updateSearchStatus();
         render();
       }

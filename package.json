@@ -2,7 +2,7 @@
   "name": "eda-job-runner",
   "displayName": "EDA Job Runner",
   "description": "Tool-agnostic sidebar for running and tracking EDA compile/simulation jobs (Xcelium, Questa, or any custom script) without leaving VS Code.",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "publisher": "CaioPlazas",
   "license": "GPL-3.0",
   "icon": "media/icon.png",

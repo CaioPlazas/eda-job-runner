@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.26.0 — Bug fixes from a focused code review
+
+A round of independent review over everything from the last several
+releases (Tool Setup folder decoupling, the Command/Tool-builder rewrite,
+Parameters, the Log Viewer) turned up real bugs, now fixed:
+
+- An "override parameter" row left intentionally blank was silently
+  dropped on save instead of overriding to an empty value.
+- Reopening a job that used a `${var:NAME}` parameter reference inside a
+  fixed-choices dropdown field could silently lose that value the next
+  time the builder rebuilt the command.
+- Selecting a Tool or Sub-tool while the builder was expanded didn't
+  immediately update the Command field.
+- The Log Viewer could get stuck on "Loading…" forever if a single log
+  file had an I/O error while the table was being built.
+- A very long resolved command could push a run's recorded seed/cwd/start
+  time past the Log Viewer's read window, silently dropping them from the
+  table.
+- Refreshing the Log Viewer while a search was active could hide newly
+  appeared runs that had never actually been searched.
+- Clicking a log that had since been pruned, or any other Log Viewer
+  error, now shows a message instead of silently doing nothing.
+
 ## 0.25.0 — Log Viewer
 
 A new "Log Viewer" icon (next to Shell & Environment / Tool Setup /
