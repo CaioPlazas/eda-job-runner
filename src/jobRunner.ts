@@ -34,10 +34,10 @@ export interface JobRunStatus {
    */
   detached?: boolean;
   /**
-   * Set when this status is one of several tracked runs for its job — a
-   * sequential repeat-count iteration ("3/10") or a concurrent extra
-   * instance ("#2"). Undefined for a normal single run. Drives the tree's
-   * expandable group view (see JobRunner.getLanes).
+   * Set when this status is one of several tracked runs for its job — one
+   * iteration of a sequential repeat-count batch ("3/10"). Undefined for a
+   * normal single run. Drives the tree's expandable group view (see
+   * JobRunner.getLanes).
    */
   laneLabel?: string;
   /**
@@ -64,7 +64,7 @@ interface ActiveRun {
   /** Per-job safeguard: when false, skip all output parsing/diagnostics. */
   parseProblems: boolean;
   jobId: string;
-  /** Key into `activeRuns`/`laneGroups`: `job.id` for the primary lane, synthetic otherwise. */
+  /** Key into `activeRuns`/`laneGroups`: `job.id` for the primary lane, `job.id::runN` for a repeat-count batch iteration. */
   laneKey: string;
   /** Whether this lane's status is mirrored into the persisted primary `statuses` slot. */
   mirrorPrimary: boolean;
@@ -98,15 +98,15 @@ export class JobRunner implements vscode.Disposable {
   private readonly statuses: Map<string, JobRunStatus>;
   private readonly activeRuns = new Map<string, ActiveRun>();
   /**
-   * Extra/lane-group tracking for jobs that have run more than once
-   * concurrently or as a sequential repeat-count batch. Not persisted —
-   * live-session only, same tradeoff as the "detached across reload"
-   * primary-slot handling below, just not carried across a window reload.
-   * A job with no entry here (the common case) renders as a single flat
-   * row using `statuses`, exactly as before this feature existed.
+   * Lane-group tracking for a job that has run as a sequential repeat-count
+   * batch (a job can never run concurrently with itself — see `run()`). Not
+   * persisted — live-session only, same tradeoff as the "detached across
+   * reload" primary-slot handling below, just not carried across a window
+   * reload. A job with no entry here (the common case, runCount 1) renders
+   * as a single flat row using `statuses`, exactly as before this feature
+   * existed.
    */
   private readonly laneGroups = new Map<string, Map<string, JobRunStatus>>();
-  private laneSeq = 0;
   private readonly laneCompletionResolvers = new Map<string, (state: JobRunState) => void>();
   private readonly laneCompletionPromises = new Map<string, Promise<JobRunState>>();
   /** Jobs with a sequential repeat-count batch currently in flight — guards against a second concurrent batch for the same job stomping the first one's lane-group map (see runBatch). */
@@ -158,11 +158,10 @@ export class JobRunner implements vscode.Disposable {
 
   /**
    * All tracked run entries for a job beyond the simple single-run case —
-   * empty for the overwhelming common case (a job that has only ever run
-   * one instance at a time), non-empty once it's had a sequential
-   * repeat-count batch or a concurrent extra instance. The tree uses this to
-   * decide whether to render a job as a flat row (empty) or an expandable
-   * group (non-empty).
+   * empty for the overwhelming common case (runCount 1), non-empty once it's
+   * had a sequential repeat-count batch. The tree uses this to decide
+   * whether to render a job as a flat row (empty) or an expandable group
+   * (non-empty).
    */
   getLanes(jobId: string): { laneKey: string; status: JobRunStatus }[] {
     const group = this.laneGroups.get(jobId);
@@ -176,37 +175,31 @@ export class JobRunner implements vscode.Disposable {
    * meant to reproduce one specific prior run (e.g. a failure) exactly.
    */
   async run(job: JobDefinition, options?: { forcedCommand?: string }): Promise<void> {
+    // A job can never run concurrently with itself — its own sequential Repeat
+    // Count (runBatch) is the only way it ever has more than one tracked run,
+    // and that's still just one lane in flight at a time. This guard is
+    // unconditional on experimentalMultipleRuns, which only ever gates
+    // *different* jobs running side by side. `promptingJobs` covers a run
+    // still sitting in its `${param:...}` prompt (no activeRuns entry yet),
+    // so a fast double-click can't slip through the window before a lane
+    // exists.
+    if (this.activeRuns.has(job.id) || this.promptingJobs.has(job.id) || this.activeBatchJobs.has(job.id)) {
+      void vscode.window.showInformationMessage(`"${job.name}" is already running.`);
+      return;
+    }
+
     const config = vscode.workspace.getConfiguration('eda-job-runner', this.workspaceFolder.uri);
     const multiEnabled = config.get<boolean>('experimentalMultipleRuns', false);
-
-    // `activeRuns` alone doesn't cover a run still sitting in its `${param:...}`
-    // prompt (no lane allocated yet), so a fast double-click could start two
-    // runs with multi-run off — `promptingJobs` closes that window.
-    if (!multiEnabled) {
-      if (this.activeRuns.has(job.id) || this.promptingJobs.has(job.id)) {
-        void vscode.window.showInformationMessage(`"${job.name}" is already running.`);
-        return;
-      }
-      if (this.activeRuns.size > 0 || this.promptingJobs.size > 0) {
-        void vscode.window.showWarningMessage(
-          'Only one job can run at a time for now — stop the current job first, or turn on ' +
-            '"Experimental: multiple jobs" in settings.'
-        );
-        return;
-      }
-    } else if (this.promptingJobs.has(job.id)) {
-      // Even with multi-run on, don't stack a second prompt for the *same* job
-      // from a double-click — one Run click, one prompt.
+    if (!multiEnabled && (this.activeRuns.size > 0 || this.promptingJobs.size > 0)) {
+      void vscode.window.showWarningMessage(
+        'Only one job can run at a time for now — stop the current job first, or turn on ' +
+          '"Experimental: multiple jobs" in settings.'
+      );
       return;
     }
 
     if (options?.forcedCommand !== undefined) {
-      if (this.activeRuns.has(job.id)) {
-        const { laneKey, label } = this.allocateExtraLane(job.id);
-        await this.runLane(job, laneKey, label, false, options.forcedCommand);
-      } else {
-        await this.runLane(job, job.id, undefined, true, options.forcedCommand);
-      }
+      await this.runLane(job, job.id, undefined, true, options.forcedCommand);
       return;
     }
 
@@ -232,10 +225,6 @@ export class JobRunner implements vscode.Disposable {
 
     const runCount = Math.max(1, Math.min(1000, Math.round(job.runCount ?? 1)));
     if (runCount > 1) {
-      if (this.activeBatchJobs.has(job.id)) {
-        void vscode.window.showInformationMessage(`"${job.name}" already has a repeat-count batch running.`);
-        return;
-      }
       this.activeBatchJobs.add(job.id);
       try {
         await this.runBatch(job, runCount, template);
@@ -245,12 +234,7 @@ export class JobRunner implements vscode.Disposable {
       return;
     }
 
-    if (this.activeRuns.has(job.id)) {
-      const { laneKey, label } = this.allocateExtraLane(job.id);
-      await this.runLane(job, laneKey, label, false, template);
-    } else {
-      await this.runLane(job, job.id, undefined, true, template);
-    }
+    await this.runLane(job, job.id, undefined, true, template);
   }
 
   /**
@@ -294,19 +278,6 @@ export class JobRunner implements vscode.Disposable {
     }
   }
 
-  private allocateExtraLane(jobId: string): { laneKey: string; label: string } {
-    if (!this.laneGroups.has(jobId)) {
-      const group = new Map<string, JobRunStatus>();
-      const primary = this.statuses.get(jobId);
-      if (primary) {
-        group.set(jobId, primary);
-      }
-      this.laneGroups.set(jobId, group);
-    }
-    const n = ++this.laneSeq;
-    return { laneKey: `${jobId}#${n}`, label: `#${n}` };
-  }
-
   /**
    * `template` is the job's command with `${param:...}` already resolved (or
    * a "Re-run Last" replay's already-fully-resolved command, which has no
@@ -345,10 +316,10 @@ export class JobRunner implements vscode.Disposable {
     const cwdAbs = path.resolve(baseDir, job.cwd || '.');
     const shellCommand = buildShellCommand(this.getSetup(), resolvedCommand, workspaceRoot);
 
-    // Fresh run: drop the previous run's Problems-panel entries for this job.
-    // Only the primary/mirrored lane owns the Problems panel — a concurrent
-    // extra instance of the same job doesn't touch it, so it can't clobber
-    // diagnostics from the lane the user is actually watching.
+    // Fresh run: drop the previous run's Problems-panel entries for this job
+    // (every lane is mirrorPrimary=true now that a job can't run concurrently
+    // with itself, so this always fires — including each repeat-count
+    // iteration, which is exactly what should reset diagnostics per run).
     if (mirrorPrimary) {
       this.diagnostics.clearJob(job.id);
     }
@@ -473,7 +444,7 @@ export class JobRunner implements vscode.Disposable {
     this.setStatus(jobId, { ...status, state: 'killed', endTime: Date.now(), detached: undefined });
   }
 
-  /** Stop every currently-running lane of a job (concurrent extras and/or the primary). */
+  /** Stop the job's currently-running lane (its own repeat-count batch runs one lane at a time, so there's at most one). */
   async stopAllRuns(jobId: string): Promise<void> {
     const laneKeys = [...this.activeRuns.entries()]
       .filter(([, run]) => run.jobId === jobId)

@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.15.0–0.19.0 — Colleague feedback (18 fixes)
+
+A round of feedback from colleagues who tried the extension, fixed and
+shipped in five small releases:
+
+- **Bigger, responsive Configure/Tool Setup/Shell windows**; static hint
+  text moved behind a (?) hover icon instead of cluttering the form.
+- **Save no longer closes the tab**, with an optional auto-save setting;
+  a "Scanning…" overlay during tool scans; no more scroll-jump on a
+  favorite toggle.
+- **"Scan & Add" renamed to "Add"**; a search/filter box over long option
+  lists in both the job builder and Tool Setup.
+- **Value lists can attach to a specific flag** as its dropdown value
+  source, instead of always floating as a separate, easy-to-miss control.
+- **Reusable job templates** — save any job as a template, start a new one
+  from it.
+- **A job can never run concurrently with itself** — only its own
+  sequential Repeat Count can run it again; this also makes a new **Run
+  Folder** button (runs every job in a folder one after another) safe
+  regardless of the experimental multi-job setting.
+- **The builder now prefers a flag's short form** (`-x` over `--xylophone`)
+  when both exist; a "+" button adds custom, undiscovered arguments; three
+  rarely-changed fields moved into Advanced settings.
+- **Folders can be dragged to reorder**, same as jobs; deleting a
+  non-empty folder now warns exactly how many jobs go with it, instead of
+  silently ungrouping them.
+- Confirmed (no code change needed): UVM_FATAL, DSim, and Verilator fatal
+  errors were already all treated as failures.
+
+See [PLAN.md](PLAN.md) Phase 5 for the full item-by-item breakdown.
+
 ## 0.14.0 — Initial public release (pre-release channel)
 
 First public release of EDA Job Runner, a tool-agnostic sidebar for running

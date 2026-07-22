@@ -319,7 +319,8 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
     font-family: var(--vscode-font-family);
     color: var(--vscode-foreground);
     padding: 24px;
-    max-width: 680px;
+    max-width: min(1200px, 100%);
+    width: 100%;
   }
   h2 { margin-top: 0; }
   label { display: block; margin-top: 18px; font-weight: 600; }
@@ -327,7 +328,7 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
     width: 100%;
     box-sizing: border-box;
     margin-top: 6px;
-    padding: 7px 9px;
+    padding: 9px 12px;
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, transparent);

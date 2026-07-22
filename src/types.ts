@@ -86,6 +86,31 @@ export interface JobDefinition {
    * nested tree.
    */
   folder?: string;
+  /**
+   * User-typed arguments not discovered from any tool scan -- an escape
+   * hatch in the Configure form's builder for a flag/value pair the tool
+   * doesn't advertise via --help. Appended to the built command after the
+   * discovered options/lists, in order. `value` is optional (a bare flag).
+   */
+  customArgs?: { arg: string; value?: string }[];
+}
+
+/**
+ * A saved job skeleton offered when adding a new job, so a common shape
+ * (a tool selection, a command pattern, a folder) doesn't need re-typing
+ * every time. Captured from an existing job via "Save as Template"; applied
+ * by pre-filling a brand-new Add-Job form exactly like reopening an existing
+ * job does, minus the id, so Save always creates a fresh job.
+ */
+export interface JobTemplate {
+  name: string;
+  namePattern?: string;
+  command?: string;
+  cwd?: string;
+  toolId?: string;
+  toolVariantLabel?: string;
+  parseProblems?: boolean;
+  folder?: string;
 }
 
 /** A single discovered CLI flag for a tool, e.g. `-s SEED, --seed SEED`. */
@@ -97,6 +122,15 @@ export interface ToolOption {
   description?: string;
   /** Starred in Tool Setup so it surfaces first in a job's builder, ahead of a long flag list. */
   favorite?: boolean;
+  /**
+   * Names a `ToolList` on the same tool/variant that supplies this option's
+   * selectable values. When set, a job's builder renders this option's value
+   * editor as a dropdown of that list's values instead of free text -- the
+   * picked value is inserted as the flag's own argument (flag, then value),
+   * not via a `ToolList.insertTemplate`. Set from Tool Setup's per-option
+   * "value source" control.
+   */
+  valueListName?: string;
 }
 
 /**
@@ -176,6 +210,8 @@ export interface JobsFile {
   setup?: JobsFileSetup;
   /** Ordered list of sidebar folder names. A job groups under one by name via `JobDefinition.folder`. */
   folders?: string[];
+  /** Saved job skeletons offered when adding a new job. See `JobTemplate`. */
+  templates?: JobTemplate[];
   jobs: JobDefinition[];
 }
 

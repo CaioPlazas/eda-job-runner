@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
-import { JobDefinition, JobsFile, JobsFileSetup, emptyJobsFile } from './types';
+import { JobDefinition, JobsFile, JobsFileSetup, JobTemplate, emptyJobsFile } from './types';
 import { computeReorderedJobs } from './jobOrder';
+import { computeReorderedFolders } from './folderOrder';
 
 export class JobStore implements vscode.Disposable {
   private readonly _onDidChangeJobs = new vscode.EventEmitter<void>();
@@ -109,14 +110,34 @@ export class JobStore implements vscode.Disposable {
     await this.persist();
   }
 
-  /** Ungroups every job in the folder (they are never deleted) and removes the folder itself. */
-  async deleteFolder(name: string): Promise<void> {
+  /**
+   * Removes the folder itself. When `deleteJobs` is true (the normal case --
+   * the caller is expected to have warned the user first if the folder was
+   * non-empty), every job inside it is deleted outright; when false, they're
+   * only ungrouped (moved back to the top level), never deleted.
+   */
+  async deleteFolder(name: string, deleteJobs: boolean): Promise<void> {
     this.data.folders = (this.data.folders ?? []).filter(f => f !== name);
-    for (const job of this.data.jobs) {
-      if (job.folder === name) {
-        delete job.folder;
+    if (deleteJobs) {
+      this.data.jobs = this.data.jobs.filter(j => j.folder !== name);
+    } else {
+      for (const job of this.data.jobs) {
+        if (job.folder === name) {
+          delete job.folder;
+        }
       }
     }
+    await this.persist();
+  }
+
+  /** No-op (same array reference, nothing persisted) if `name` doesn't exist. */
+  async reorderFolder(name: string, beforeName: string | undefined): Promise<void> {
+    const folders = this.data.folders ?? [];
+    const next = computeReorderedFolders(folders, name, beforeName);
+    if (next === folders) {
+      return;
+    }
+    this.data.folders = next;
     await this.persist();
   }
 
@@ -150,6 +171,28 @@ export class JobStore implements vscode.Disposable {
       this.ensureFolder(folder);
     }
     this.data.jobs = next;
+    await this.persist();
+  }
+
+  getTemplates(): JobTemplate[] {
+    return this.data.templates ?? [];
+  }
+
+  /** Replaces any existing template of the same name (edit-in-place), else appends. */
+  async addTemplate(template: JobTemplate): Promise<void> {
+    const name = template.name.trim();
+    if (!name) {
+      return;
+    }
+    const templates = (this.data.templates ?? []).filter(t => t.name !== name);
+    templates.push({ ...template, name });
+    this.data.templates = templates;
+    await this.persist();
+  }
+
+  async deleteTemplate(name: string): Promise<void> {
+    const templates = (this.data.templates ?? []).filter(t => t.name !== name);
+    this.data.templates = templates.length > 0 ? templates : undefined;
     await this.persist();
   }
 
@@ -207,6 +250,7 @@ export class JobStore implements vscode.Disposable {
     job.toolId = updates.toolId;
     job.toolVariantLabel = updates.toolVariantLabel;
     job.listInsertOverrides = updates.listInsertOverrides;
+    job.customArgs = updates.customArgs;
     if (updates.folder) {
       this.ensureFolder(updates.folder);
       job.folder = updates.folder;
@@ -243,6 +287,7 @@ export class JobStore implements vscode.Disposable {
       toolId: job.toolId,
       toolVariantLabel: job.toolVariantLabel,
       listInsertOverrides: job.listInsertOverrides,
+      customArgs: job.customArgs,
       folder: job.folder
     });
   }
@@ -316,6 +361,10 @@ function normalize(parsed: Partial<JobsFile> | undefined): JobsFile {
       if (listOverrides) {
         job.listInsertOverrides = listOverrides;
       }
+      const customArgs = normalizeCustomArgs(j.customArgs);
+      if (customArgs) {
+        job.customArgs = customArgs;
+      }
       if (typeof j.folder === 'string' && j.folder.trim().length > 0) {
         job.folder = j.folder.trim();
       }
@@ -330,7 +379,8 @@ function normalize(parsed: Partial<JobsFile> | undefined): JobsFile {
   const folders = Array.isArray(parsed.folders)
     ? [...new Set(parsed.folders.filter((f): f is string => typeof f === 'string' && f.trim().length > 0))]
     : undefined;
-  return { version: 1, setup: parsed.setup, folders, jobs };
+  const templates = normalizeTemplates(parsed.templates);
+  return { version: 1, setup: parsed.setup, folders, templates, jobs };
 }
 
 /** Keep only string→(non-empty)string entries from a hand-editable object; undefined if none survive. */
@@ -345,6 +395,59 @@ function normalizeStringRecord(raw: unknown): Record<string, string> | undefined
     }
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Keep only well-formed {arg, value?} entries with a non-empty arg; undefined if none survive. */
+function normalizeCustomArgs(raw: unknown): { arg: string; value?: string }[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const out: { arg: string; value?: string }[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const rawArg = (item as { arg?: unknown }).arg;
+    const arg = typeof rawArg === 'string' ? rawArg.trim() : '';
+    if (!arg) {
+      continue;
+    }
+    const rawValue = (item as { value?: unknown }).value;
+    const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+    out.push(value ? { arg, value } : { arg });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** Keep only well-formed templates with a non-empty name, deduped by name (last one wins); undefined if none survive. */
+function normalizeTemplates(raw: unknown): JobTemplate[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const byName = new Map<string, JobTemplate>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const rec = item as Record<string, unknown>;
+    const name = typeof rec.name === 'string' ? rec.name.trim() : '';
+    if (!name) {
+      continue;
+    }
+    const str = (key: string): string | undefined =>
+      typeof rec[key] === 'string' && (rec[key] as string).trim().length > 0 ? (rec[key] as string) : undefined;
+    byName.set(name, {
+      name,
+      namePattern: str('namePattern'),
+      command: str('command'),
+      cwd: str('cwd'),
+      toolId: str('toolId'),
+      toolVariantLabel: typeof rec.toolVariantLabel === 'string' ? rec.toolVariantLabel : undefined,
+      parseProblems: rec.parseProblems === false ? false : undefined,
+      folder: str('folder')
+    });
+  }
+  return byName.size > 0 ? [...byName.values()] : undefined;
 }
 
 function isFileNotFound(err: unknown): boolean {

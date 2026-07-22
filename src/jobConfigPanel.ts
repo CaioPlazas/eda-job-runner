@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
-import { JobDefinition, ToolDefinition } from './types';
+import { JobDefinition, JobTemplate, ToolDefinition } from './types';
 
 interface SaveMessage {
   type: 'save';
@@ -18,6 +18,7 @@ interface SaveMessage {
   toolVariantLabel: string;
   listInsertOverrides: Record<string, string>;
   folder: string;
+  customArgs: { arg: string; value?: string }[];
 }
 
 interface CancelMessage {
@@ -31,12 +32,15 @@ export class JobConfigPanel {
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
+  /** The job this panel saves to. Undefined until a brand-new job's first Save creates one. */
+  private currentJobId: string | undefined;
 
   static createOrShow(
     jobStore: JobStore,
     tools: ToolDefinition[],
     existingJob?: JobDefinition,
-    presetFolder?: string
+    presetFolder?: string,
+    presetTemplate?: JobTemplate
   ): void {
     const key = existingJob?.id ?? '__new__';
     const existing = JobConfigPanel.panels.get(key);
@@ -54,19 +58,39 @@ export class JobConfigPanel {
       { enableScripts: true, retainContextWhenHidden: true }
     );
 
-    JobConfigPanel.panels.set(key, new JobConfigPanel(panel, jobStore, key, existingJob, tools, presetFolder));
+    JobConfigPanel.panels.set(
+      key,
+      new JobConfigPanel(panel, jobStore, key, existingJob, tools, presetFolder, presetTemplate)
+    );
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly jobStore: JobStore,
-    private readonly key: string,
-    private readonly existingJob: JobDefinition | undefined,
+    /** Key into the static `panels` map -- mutable: a new job's first Save re-keys this from `'__new__'` to its real id. */
+    private mapKey: string,
+    existingJob: JobDefinition | undefined,
     tools: ToolDefinition[],
-    presetFolder: string | undefined
+    presetFolder: string | undefined,
+    presetTemplate: JobTemplate | undefined
   ) {
     this.panel = panel;
-    this.panel.webview.html = renderHtml(panel.webview, existingJob, tools, jobStore.getFolders(), presetFolder);
+    this.currentJobId = existingJob?.id;
+    // A template only ever seeds a brand-new job's initial fields -- it never
+    // applies once `existingJob` is real, and it doesn't affect save-routing
+    // (that's keyed off `currentJobId`, untouched by the seed below).
+    const seedJob = existingJob ?? (presetTemplate ? templateToSeedJob(presetTemplate) : undefined);
+    const autoSave = vscode.workspace
+      .getConfiguration('eda-job-runner')
+      .get<boolean>('experimentalAutoSaveJobConfig', false);
+    this.panel.webview.html = renderHtml(
+      panel.webview,
+      seedJob,
+      tools,
+      jobStore.getFolders(),
+      presetFolder ?? presetTemplate?.folder,
+      autoSave
+    );
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
       this.panel.onDidDispose(() => this.cleanup())
@@ -97,6 +121,7 @@ export class JobConfigPanel {
     // Overrides only mean anything alongside a tool's lists — drop orphans.
     const listInsertOverrides = toolId ? sanitizeOverrides(msg.listInsertOverrides) : undefined;
     const folder = msg.folder.trim() || undefined;
+    const customArgs = sanitizeCustomArgs(msg.customArgs);
 
     if (!name || !command) {
       void this.panel.webview.postMessage({
@@ -120,22 +145,47 @@ export class JobConfigPanel {
       toolId,
       toolVariantLabel,
       listInsertOverrides,
-      folder
+      folder,
+      customArgs
     };
-    if (this.existingJob) {
-      await this.jobStore.updateJob(this.existingJob.id, fields);
+    if (this.currentJobId) {
+      await this.jobStore.updateJob(this.currentJobId, fields);
     } else {
-      await this.jobStore.addJob(fields);
+      // First save of a brand-new job: adopt its id so a second Save updates
+      // instead of creating a duplicate, and re-key the singleton map entry
+      // away from '__new__' so a fresh "Add Job" can open its own panel.
+      const created = await this.jobStore.addJob(fields);
+      this.currentJobId = created.id;
+      JobConfigPanel.panels.delete(this.mapKey);
+      this.mapKey = created.id;
+      JobConfigPanel.panels.set(this.mapKey, this);
+      this.panel.title = `Configure: ${created.name}`;
     }
-    this.panel.dispose();
+    // Save no longer closes the tab -- just acknowledge, so the user can keep
+    // editing (and so an auto-save doesn't yank the tab out from under them).
+    void this.panel.webview.postMessage({ type: 'saved' });
   }
 
   private cleanup(): void {
-    JobConfigPanel.panels.delete(this.key);
+    JobConfigPanel.panels.delete(this.mapKey);
     for (const d of this.disposables) {
       d.dispose();
     }
   }
+}
+
+/** A template only ever seeds a brand-new job's initial form fields; the empty `id` is never used for save-routing. */
+function templateToSeedJob(t: JobTemplate): JobDefinition {
+  return {
+    id: '',
+    name: t.namePattern ?? '',
+    command: t.command ?? '',
+    cwd: t.cwd ?? '.',
+    toolId: t.toolId,
+    toolVariantLabel: t.toolVariantLabel,
+    parseProblems: t.parseProblems,
+    folder: t.folder
+  };
 }
 
 function renderHtml(
@@ -143,11 +193,17 @@ function renderHtml(
   job: JobDefinition | undefined,
   tools: ToolDefinition[],
   folders: string[],
-  presetFolder: string | undefined
+  presetFolder: string | undefined,
+  autoSave: boolean
 ): string {
   const nonce = getNonce();
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // A small (?) icon that reveals `html` on hover/focus -- CSS-only, no script
+  // needed (the CSP already allows inline style). `html` may itself contain
+  // markup (code/b/br) -- it's always our own static copy, never user data.
+  const help = (html: string) => `<span class="help" tabindex="0">?<span class="tip">${html}</span></span>`;
+
   // Slim payload for the builder script -- id/command/variants/options only, no rawHelp/scanError.
   // '<' escaped so a tool's own text can never break out of the <script> tag.
   const toolsJson = JSON.stringify(
@@ -162,10 +218,17 @@ function renderHtml(
       variants: t.variants.map(v => ({
         label: v.label,
         selectArgs: v.selectArgs,
-        options: v.options.map(o => ({ flags: o.flags, metavar: o.metavar, description: o.description, favorite: o.favorite }))
+        options: v.options.map(o => ({
+          flags: o.flags,
+          metavar: o.metavar,
+          description: o.description,
+          favorite: o.favorite,
+          valueListName: o.valueListName
+        }))
       }))
     }))
   ).replace(/</g, '\\u003c');
+  const customArgsJson = JSON.stringify(job?.customArgs ?? []).replace(/</g, '\\u003c');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -178,7 +241,8 @@ function renderHtml(
     font-family: var(--vscode-font-family);
     color: var(--vscode-foreground);
     padding: 24px;
-    max-width: 640px;
+    max-width: min(1200px, 100%);
+    width: 100%;
   }
   h2 { margin-top: 0; }
   label { display: block; margin-top: 18px; font-weight: 600; }
@@ -186,7 +250,7 @@ function renderHtml(
     width: 100%;
     box-sizing: border-box;
     margin-top: 6px;
-    padding: 7px 9px;
+    padding: 9px 12px;
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, transparent);
@@ -210,6 +274,41 @@ function renderHtml(
     margin-top: 0;
   }
   .hidden { display: none; }
+  .help {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: var(--vscode-badge-background, rgba(127,127,127,0.35));
+    color: var(--vscode-badge-foreground, var(--vscode-foreground));
+    font-size: 0.72em;
+    font-weight: 700;
+    cursor: help;
+    margin-left: 6px;
+    position: relative;
+    vertical-align: middle;
+  }
+  .help .tip {
+    display: none;
+    position: absolute;
+    left: 0;
+    top: 130%;
+    z-index: 10;
+    width: 320px;
+    max-width: 60vw;
+    padding: 8px 10px;
+    background: var(--vscode-editorHoverWidget-background, var(--vscode-input-background));
+    color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+    border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-input-border, rgba(127,127,127,0.4)));
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 400;
+    line-height: 1.4;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  .help:hover .tip, .help:focus .tip { display: block; }
   .optRow { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .optRow label.check { font-weight: 400; flex: 1 1 auto; min-width: 200px; }
   .optRow .optValue { width: auto; flex: 0 1 160px; margin-top: 0; }
@@ -223,6 +322,9 @@ function renderHtml(
   .optGroupHeading { margin-top: 14px; font-weight: 600; font-size: 0.85em; color: var(--vscode-descriptionForeground); text-transform: uppercase; letter-spacing: 0.04em; }
   .allOptsDetails { margin-top: 14px; }
   .allOptsDetails summary { cursor: pointer; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
+  #optFilter { margin-top: 14px; }
+  .customArgRow { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+  .customArgRow input { width: auto; flex: 1 1 200px; margin-top: 0; }
   .hint {
     font-size: 0.85em;
     color: var(--vscode-descriptionForeground);
@@ -232,6 +334,11 @@ function renderHtml(
     color: var(--vscode-errorForeground);
     margin-top: 14px;
     min-height: 1.2em;
+    font-size: 0.9em;
+  }
+  .savedFlash {
+    color: var(--vscode-terminal-ansiGreen, #89d185);
+    align-self: center;
     font-size: 0.9em;
   }
   details {
@@ -245,7 +352,7 @@ function renderHtml(
     padding: 6px 0;
   }
   details[open] summary { margin-bottom: 4px; }
-  .actions { margin-top: 26px; display: flex; gap: 8px; }
+  .actions { margin-top: 26px; display: flex; gap: 8px; align-items: center; }
   button {
     padding: 6px 16px;
     border: 1px solid transparent;
@@ -266,135 +373,104 @@ function renderHtml(
   <label for="name">Name</label>
   <input id="name" type="text" value="${esc(job?.name ?? '')}" placeholder="e.g. smoke_test" />
 
-  <label for="folder">Folder (optional)</label>
+  <label for="folder">Folder (optional) ${help(
+    "Groups this job under a folder in the sidebar. Leave blank for no folder. Typing a name that doesn't exist yet creates that folder."
+  )}</label>
   <input id="folder" list="folderOptions" type="text" value="${esc(job?.folder ?? presetFolder ?? '')}" placeholder="e.g. Compile" />
   <datalist id="folderOptions">
     ${folders.map(f => `<option value="${esc(f)}"></option>`).join('')}
   </datalist>
-  <div class="hint">
-    Groups this job under a folder in the sidebar. Leave blank for no folder.
-    Typing a name that doesn't exist yet creates that folder.
-  </div>
 
-  <label for="command">Command</label>
+  <label for="command">Command ${help(
+    'Shell command to run. Runs via the configured shell (bash login shell by default; see the Shell &amp; Environment panel), so module load / sourced environment setup is available.<br /><br />Optional placeholders: <code>${param:NAME}</code> (or <code>${param:NAME=default}</code>) prompts for a value on every Run, remembering what you last entered; <code>${randomSeed}</code> fills in a fresh random integer on every run with no prompt. "Re-run Last" on an already-run job replays its exact previous values/seed with no new prompt.'
+  )}</label>
   <textarea id="command" placeholder="e.g. make sim TEST=smoke_test">${esc(job?.command ?? '')}</textarea>
-  <div class="hint">
-    Shell command to run. Runs via the configured shell (bash login shell by
-    default; see the Shell &amp; Environment panel), so module load / sourced
-    environment setup is available.
-    <br />
-    Optional placeholders: <code>\${param:NAME}</code> (or
-    <code>\${param:NAME=default}</code>) prompts for a value on every Run,
-    remembering what you last entered; <code>\${randomSeed}</code> fills in a
-    fresh random integer on every run with no prompt. "Re-run Last" on an
-    already-run job replays its exact previous values/seed with no new prompt.
-  </div>
 
   <details id="toolBuilder" ${job?.toolId ? 'open' : ''}>
     <summary>Tool builder</summary>
-    <label for="toolSelect">Tool</label>
+    <label for="toolSelect">Tool ${help(
+      'Registered in the <b>Tool Setup</b> panel (wrench icon in the EDA Jobs view). Checking its flags below writes them into the Command field above — a hand-edit to Command always wins until you click "Sync".'
+    )}</label>
     <select id="toolSelect">
       <option value="">(none — plain command)</option>
       ${tools
         .map(t => `<option value="${esc(t.id)}" ${job?.toolId === t.id ? 'selected' : ''}>${esc(t.command)}</option>`)
         .join('')}
     </select>
-    <div class="hint">
-      Registered in the <b>Tool Setup</b> panel (wrench icon in the EDA Jobs
-      view). Checking its flags below writes them into the Command field
-      above — a hand-edit to Command always wins until you click "Sync".
-    </div>
 
     <div id="variantWrap" class="hidden">
       <label for="variantSelect">Sub-tool</label>
       <select id="variantSelect"></select>
     </div>
 
+    <input id="optFilter" type="text" placeholder="Filter flags…" />
     <div id="toolOptionsWrap"></div>
 
     <div id="toolListsWrap"></div>
+
+    <div id="customArgsWrap"></div>
+    <button class="secondary" id="addCustomArg" type="button" style="margin-top:10px;">+ Add custom argument</button>
 
     <div class="hint" id="builderHint"></div>
     <button class="secondary" id="syncBuilder" type="button" style="margin-top:10px;">↻ Sync command from builder</button>
   </details>
 
-  <label for="cwd">Working Directory</label>
+  <label for="cwd">Working Directory ${help('Relative to the workspace root. Use "." for the root itself.')}</label>
   <input id="cwd" type="text" value="${esc(job?.cwd ?? '.')}" placeholder="." />
-  <div class="hint">Relative to the workspace root. Use "." for the root itself.</div>
-
-  <label for="logFile">Live log file to tail (optional)</label>
-  <input id="logFile" type="text" value="${esc(job?.logFile ?? '')}" placeholder="e.g. run.log or \${workspaceFolder}/lsf.%J.out" />
-  <div class="hint">
-    For jobs that detach to a farm (LSF <code>bsub -o</code> / SGE
-    <code>qsub -o</code>) or write their own log: point the <b>Live Log</b>
-    viewer at that file so it streams the real output in real time. Absolute,
-    or relative to the working directory; supports <code>\${workspaceFolder}</code>.
-    Leave empty to tail the captured output.
-  </div>
-
-  <label class="check">
-    <input id="isDefault" type="checkbox" ${job?.default ? 'checked' : ''} />
-    Default job for this workspace
-  </label>
-  <div class="hint">
-    Run this with <b>EDA: Run Default Job</b> (and the F5 key, once a default
-    is set). Only one job per workspace can be the default — choosing this
-    unsets any other.
-  </div>
-
-  <label class="check">
-    <input id="parseProblems" type="checkbox" ${job?.parseProblems === false ? '' : 'checked'} />
-    Scan output for errors/warnings (Problems panel)
-  </label>
-  <div class="hint">
-    On by default. Detects UVM_ERROR/UVM_WARNING and common compile errors,
-    shows them in the Problems panel, and lets them mark the job failed.
-    Uncheck if you use a tool whose output the built-in patterns misread —
-    the job still runs and logs normally, judged purely by its exit code.
-  </div>
 
   <details id="advanced" ${
-    job?.postSetupCwd || job?.failPattern || job?.passPattern || (job?.runCount ?? 1) > 1 ? 'open' : ''
+    job?.postSetupCwd ||
+    job?.failPattern ||
+    job?.passPattern ||
+    (job?.runCount ?? 1) > 1 ||
+    job?.logFile ||
+    job?.default ||
+    job?.parseProblems === false
+      ? 'open'
+      : ''
   }>
     <summary>Advanced</summary>
 
-    <label for="postSetupCwd">Post-setup working directory (override)</label>
+    <label for="logFile">Live log file to tail (optional) ${help(
+      'For jobs that detach to a farm (LSF <code>bsub -o</code> / SGE <code>qsub -o</code>) or write their own log: point the <b>Live Log</b> viewer at that file so it streams the real output in real time. Absolute, or relative to the working directory; supports <code>${workspaceFolder}</code>. Leave empty to tail the captured output.'
+    )}</label>
+    <input id="logFile" type="text" value="${esc(job?.logFile ?? '')}" placeholder="e.g. run.log or \${workspaceFolder}/lsf.%J.out" />
+
+    <label class="check">
+      <input id="isDefault" type="checkbox" ${job?.default ? 'checked' : ''} />
+      Default job for this workspace
+      ${help(
+        'Run this with <b>EDA: Run Default Job</b> (and the F5 key, once a default is set). Only one job per workspace can be the default — choosing this unsets any other.'
+      )}
+    </label>
+
+    <label class="check">
+      <input id="parseProblems" type="checkbox" ${job?.parseProblems === false ? '' : 'checked'} />
+      Scan output for errors/warnings (Problems panel)
+      ${help(
+        'On by default. Detects UVM_ERROR/UVM_WARNING and common compile errors, shows them in the Problems panel, and lets them mark the job failed. Uncheck if you use a tool whose output the built-in patterns misread — the job still runs and logs normally, judged purely by its exit code.'
+      )}
+    </label>
+
+    <label for="postSetupCwd">Post-setup working directory (override) ${help(
+      'Overrides <code>eda-job-runner.postSetupCwd</code> (Shell &amp; Environment panel) for this job only — the directory its shell starts in, which <b>Working Directory</b> above then resolves against. Leave empty to inherit the workspace-wide setting.'
+    )}</label>
     <input id="postSetupCwd" type="text" value="${esc(job?.postSetupCwd ?? '')}" placeholder="inherit from Shell & Environment settings" />
-    <div class="hint">
-      Overrides <code>eda-job-runner.postSetupCwd</code> (Shell &amp;
-      Environment panel) for this job only — the directory its shell starts
-      in, which <b>Working Directory</b> above then resolves against. Leave
-      empty to inherit the workspace-wide setting.
-    </div>
 
-    <label for="runCount">Repeat count (sequential)</label>
+    <label for="runCount">Repeat count (sequential) ${help(
+      'Run this job this many times in a row when you click Run — e.g. 10 back-to-back runs of the same test with a random seed. Always sequential (never in parallel), regardless of the experimental multiple-jobs setting. Leave empty (or 1) for a normal single run.'
+    )}</label>
     <input id="runCount" type="number" min="1" max="1000" step="1" value="${job?.runCount && job.runCount > 1 ? job.runCount : ''}" placeholder="1" />
-    <div class="hint">
-      Run this job this many times in a row when you click Run — e.g. 10
-      back-to-back runs of the same test with a random seed. Always
-      sequential (never in parallel), regardless of the experimental
-      multiple-jobs setting. Leave empty (or 1) for a normal single run.
-    </div>
 
-    <label for="failPattern">Fail pattern (regex, optional)</label>
+    <label for="failPattern">Fail pattern (regex, optional) ${help(
+      'Tool-agnostic: case-insensitive regex matched against each output line, for a tool whose own pass/fail summary line the built-in patterns don’t cover. If it matches, the job is marked <b>failed</b> even if it exited 0 — works even with "Scan output" above off. An invalid regex is silently ignored (no error), same as leaving it blank.'
+    )}</label>
     <input id="failPattern" type="text" value="${esc(job?.failPattern ?? '')}" placeholder="e.g. TEST RESULT:\s*FAIL" />
-    <div class="hint">
-      Tool-agnostic: case-insensitive regex matched against each output
-      line, for a tool whose own pass/fail summary line the built-in
-      patterns don't cover. If it matches, the job is marked <b>failed</b>
-      even if it exited 0 — works even with "Scan output" above off. An
-      invalid regex is silently ignored (no error), same as leaving it blank.
-    </div>
 
-    <label for="passPattern">Pass pattern (regex, optional)</label>
+    <label for="passPattern">Pass pattern (regex, optional) ${help(
+      'Tool-agnostic, like Fail pattern above. When set, it fully governs the outcome: the job passes only if this matches at least once (ignoring exit code — for tools that always exit non-zero even on success) and is marked <b>failed</b> if it never appears. A matching Fail pattern still wins over this.'
+    )}</label>
     <input id="passPattern" type="text" value="${esc(job?.passPattern ?? '')}" placeholder="e.g. TEST RESULT:\s*PASS" />
-    <div class="hint">
-      Tool-agnostic, like Fail pattern above. When set, it fully governs the
-      outcome: the job passes only if this matches at least once (ignoring
-      exit code — for tools that always exit non-zero even on success) and
-      is marked <b>failed</b> if it never appears. A matching Fail pattern
-      still wins over this.
-    </div>
   </details>
 
   <div class="error" id="error"></div>
@@ -402,10 +478,12 @@ function renderHtml(
   <div class="actions">
     <button class="primary" id="save">Save</button>
     <button class="secondary" id="cancel">Cancel</button>
+    <span class="savedFlash hidden" id="savedFlash">Saved ✓</span>
   </div>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    const AUTO_SAVE = ${autoSave ? 'true' : 'false'};
     const nameEl = document.getElementById('name');
     const folderEl = document.getElementById('folder');
     const commandEl = document.getElementById('command');
@@ -418,6 +496,8 @@ function renderHtml(
     const postSetupCwdEl = document.getElementById('postSetupCwd');
     const runCountEl = document.getElementById('runCount');
     const errorEl = document.getElementById('error');
+    const savedFlashEl = document.getElementById('savedFlash');
+    let savedFlashTimer;
 
     const TOOLS = ${toolsJson};
     const SAVED_TOOL_VARIANT = ${JSON.stringify(job?.toolVariantLabel ?? '')};
@@ -426,8 +506,10 @@ function renderHtml(
     const toolSelectEl = document.getElementById('toolSelect');
     const variantWrap = document.getElementById('variantWrap');
     const variantSelectEl = document.getElementById('variantSelect');
+    const optFilterEl = document.getElementById('optFilter');
     const optionsWrap = document.getElementById('toolOptionsWrap');
     const listsWrap = document.getElementById('toolListsWrap');
+    const customArgsWrap = document.getElementById('customArgsWrap');
     const builderHint = document.getElementById('builderHint');
     const syncBtn = document.getElementById('syncBuilder');
 
@@ -490,7 +572,18 @@ function renderHtml(
       }
     }
 
-    function buildOptionRow(opt, text) {
+    // An option can source its value from a list (attached in Tool Setup)
+    // instead of a plain argparse choices= metavar -- the attached list wins
+    // when both could apply.
+    function optionChoices(opt, tool) {
+      if (opt.valueListName && tool && tool.lists) {
+        const list = tool.lists.find(l => l.name === opt.valueListName);
+        if (list) { return list.values || []; }
+      }
+      return parseChoices(opt.metavar);
+    }
+
+    function buildOptionRow(opt, text, tool) {
       const row = document.createElement('div');
       row.className = 'optRow';
 
@@ -511,7 +604,7 @@ function renderHtml(
 
       let valueInput;
       if (opt.metavar) {
-        const choices = parseChoices(opt.metavar);
+        const choices = optionChoices(opt, tool);
         const existing = opt.flags.map(f => extractValue(f, text)).find(v => v);
         if (choices) {
           valueInput = document.createElement('select');
@@ -551,6 +644,7 @@ function renderHtml(
 
     function renderOptions(tool, variant) {
       optionsWrap.innerHTML = '';
+      optFilterEl.value = '';
       if (!tool || !variant) { return; }
       const text = commandEl.value;
       const favorites = variant.options.filter(o => o.favorite);
@@ -561,14 +655,14 @@ function renderHtml(
         heading.className = 'optGroupHeading';
         heading.textContent = 'Favorites';
         optionsWrap.appendChild(heading);
-        favorites.forEach(opt => optionsWrap.appendChild(buildOptionRow(opt, text)));
+        favorites.forEach(opt => optionsWrap.appendChild(buildOptionRow(opt, text, tool)));
       }
 
       if (rest.length === 0) {
         return;
       }
       if (favorites.length === 0) {
-        rest.forEach(opt => optionsWrap.appendChild(buildOptionRow(opt, text)));
+        rest.forEach(opt => optionsWrap.appendChild(buildOptionRow(opt, text, tool)));
         return;
       }
       const details = document.createElement('details');
@@ -576,9 +670,18 @@ function renderHtml(
       const summary = document.createElement('summary');
       summary.textContent = 'All options (' + variant.options.length + ')';
       details.appendChild(summary);
-      rest.forEach(opt => details.appendChild(buildOptionRow(opt, text)));
+      rest.forEach(opt => details.appendChild(buildOptionRow(opt, text, tool)));
       optionsWrap.appendChild(details);
     }
+
+    optFilterEl.addEventListener('input', () => {
+      const q = optFilterEl.value.trim().toLowerCase();
+      optionsWrap.querySelectorAll('.optRow').forEach(row => {
+        const label = row.querySelector('label.check');
+        const text = (label ? label.textContent + ' ' + (label.title || '') : '').toLowerCase();
+        row.style.display = !q || text.includes(q) ? '' : 'none';
+      });
+    });
 
     function buildListRow(list, text) {
       const row = document.createElement('div');
@@ -637,13 +740,58 @@ function renderHtml(
     function renderLists(tool) {
       listsWrap.innerHTML = '';
       if (!tool || !tool.lists || tool.lists.length === 0) { return; }
+      // A list attached to an option (see optionChoices) already shows as
+      // that option's own dropdown -- don't also show it as a free-floating
+      // one. Only an unattached list (e.g. a plusarg with no real CLI flag
+      // to attach to) still needs its own row + insert-template control.
+      const variant = currentVariant(tool);
+      const attached = new Set((variant ? variant.options : []).map(o => o.valueListName).filter(Boolean));
+      const unattached = tool.lists.filter(l => !attached.has(l.name));
+      if (unattached.length === 0) { return; }
       const text = commandEl.value;
       const heading = document.createElement('div');
       heading.className = 'listGroupHeading';
       heading.textContent = 'Lists';
       listsWrap.appendChild(heading);
-      tool.lists.forEach(list => listsWrap.appendChild(buildListRow(list, text)));
+      unattached.forEach(list => listsWrap.appendChild(buildListRow(list, text)));
     }
+
+    function addCustomArgRow(arg, value) {
+      const row = document.createElement('div');
+      row.className = 'customArgRow';
+
+      const argInput = document.createElement('input');
+      argInput.type = 'text';
+      argInput.className = 'caArg';
+      argInput.placeholder = 'argument (e.g. --plusarg or +define)';
+      argInput.value = arg || '';
+
+      const valInput = document.createElement('input');
+      valInput.type = 'text';
+      valInput.className = 'caVal';
+      valInput.placeholder = 'value (optional)';
+      valInput.value = value || '';
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'secondary';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', () => {
+        row.remove();
+        onBuilderChange();
+      });
+
+      argInput.addEventListener('input', onBuilderChange);
+      valInput.addEventListener('input', onBuilderChange);
+
+      row.appendChild(argInput);
+      row.appendChild(valInput);
+      row.appendChild(removeBtn);
+      customArgsWrap.appendChild(row);
+    }
+
+    document.getElementById('addCustomArg').addEventListener('click', () => addCustomArgRow());
+    (${customArgsJson}).forEach(c => addCustomArgRow(c.arg, c.value));
 
     function buildCommandFromBuilder() {
       const tool = currentTool();
@@ -657,7 +805,9 @@ function renderHtml(
         const checkbox = row.querySelector('.optToggle');
         if (!checkbox.checked) { return; }
         const flags = checkbox.dataset.flags.split(',');
-        parts.push(flags[flags.length - 1]);
+        // Prefer a short (single-dash) flag when one exists -- e.g. "-p" over "--probe".
+        const preferred = flags.find(f => /^-[^-]/.test(f)) || flags[0];
+        parts.push(preferred);
         const valueInput = row.querySelector('.optValue');
         if (valueInput && valueInput.value.trim()) {
           parts.push(valueInput.value.trim());
@@ -668,6 +818,13 @@ function renderHtml(
         if (select && select.value.trim()) {
           parts.push(applyInsertTemplate(row.dataset.template, select.value.trim()));
         }
+      });
+      customArgsWrap.querySelectorAll('.customArgRow').forEach(row => {
+        const arg = row.querySelector('.caArg').value.trim();
+        if (!arg) { return; }
+        parts.push(arg);
+        const val = row.querySelector('.caVal').value.trim();
+        if (val) { parts.push(val); }
       });
       return parts.join(' ');
     }
@@ -713,6 +870,7 @@ function renderHtml(
     variantSelectEl.addEventListener('change', () => {
       const tool = currentTool();
       renderOptions(tool, currentVariant(tool));
+      renderLists(tool);
     });
     syncBtn.addEventListener('click', () => applyBuilderToCommand());
 
@@ -731,9 +889,8 @@ function renderHtml(
       }
     })();
 
-    document.getElementById('save').addEventListener('click', () => {
-      errorEl.textContent = '';
-      vscode.postMessage({
+    function collectSaveMessage() {
+      return {
         type: 'save',
         name: nameEl.value,
         folder: folderEl.value,
@@ -748,17 +905,51 @@ function renderHtml(
         runCount: runCountEl.value,
         toolId: toolSelectEl.value,
         toolVariantLabel: variantSelectEl.value,
-        listInsertOverrides: LIST_OVERRIDES
-      });
+        listInsertOverrides: LIST_OVERRIDES,
+        customArgs: Array.from(customArgsWrap.querySelectorAll('.customArgRow')).map(row => ({
+          arg: row.querySelector('.caArg').value,
+          value: row.querySelector('.caVal').value
+        }))
+      };
+    }
+
+    document.getElementById('save').addEventListener('click', () => {
+      errorEl.textContent = '';
+      vscode.postMessage(collectSaveMessage());
     });
 
     document.getElementById('cancel').addEventListener('click', () => {
       vscode.postMessage({ type: 'cancel' });
     });
 
+    if (AUTO_SAVE) {
+      let debounceTimer;
+      const scheduleAutoSave = () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          if (!nameEl.value.trim() || !commandEl.value.trim()) { return; } // don't nag mid-typing
+          errorEl.textContent = '';
+          vscode.postMessage(collectSaveMessage());
+        }, 300);
+      };
+      document.querySelectorAll('input, textarea, select').forEach(el => {
+        el.addEventListener('input', scheduleAutoSave);
+        el.addEventListener('change', scheduleAutoSave);
+        el.addEventListener('blur', scheduleAutoSave);
+        el.addEventListener('keydown', e => { if (e.key === 'Enter' && el.tagName !== 'TEXTAREA') { scheduleAutoSave(); } });
+      });
+    }
+
     window.addEventListener('message', event => {
-      if (event.data && event.data.type === 'error') {
-        errorEl.textContent = event.data.message;
+      const m = event.data;
+      if (!m) { return; }
+      if (m.type === 'error') {
+        errorEl.textContent = m.message;
+      } else if (m.type === 'saved') {
+        errorEl.textContent = '';
+        savedFlashEl.classList.remove('hidden');
+        clearTimeout(savedFlashTimer);
+        savedFlashTimer = setTimeout(() => savedFlashEl.classList.add('hidden'), 1600);
       }
     });
 
@@ -780,6 +971,28 @@ function sanitizeOverrides(raw: Record<string, string> | undefined): Record<stri
     }
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Drop rows with a blank argument; return undefined when nothing meaningful remains. */
+function sanitizeCustomArgs(raw: unknown): { arg: string; value?: string }[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const out: { arg: string; value?: string }[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const rawArg = (item as { arg?: unknown }).arg;
+    const arg = typeof rawArg === 'string' ? rawArg.trim() : '';
+    if (!arg) {
+      continue;
+    }
+    const rawValue = (item as { value?: unknown }).value;
+    const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+    out.push(value ? { arg, value } : { arg });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 function getNonce(): string {

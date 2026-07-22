@@ -2,7 +2,7 @@
   "name": "eda-job-runner",
   "displayName": "EDA Job Runner",
   "description": "Tool-agnostic sidebar for running and tracking EDA compile/simulation jobs (Xcelium, Questa, or any custom script) without leaving VS Code.",
-  "version": "0.14.0",
+  "version": "0.19.0",
   "publisher": "CaioPlazas",
   "license": "GPL-3.0",
   "icon": "media/icon.png",
@@ -99,6 +99,10 @@
         "icon": "$(copy)"
       },
       {
+        "command": "eda-job-runner.saveJobAsTemplate",
+        "title": "EDA: Save Job as Template..."
+      },
+      {
         "command": "eda-job-runner.refresh",
         "title": "EDA: Refresh Jobs",
         "icon": "$(refresh)"
@@ -122,6 +126,11 @@
         "command": "eda-job-runner.addJobInFolder",
         "title": "EDA: Add Job in Folder",
         "icon": "$(add)"
+      },
+      {
+        "command": "eda-job-runner.runFolder",
+        "title": "EDA: Run Folder (sequentially)",
+        "icon": "$(run-all)"
       },
       {
         "command": "eda-job-runner.renameFolder",
@@ -223,11 +232,6 @@
           "group": "inline@1"
         },
         {
-          "command": "eda-job-runner.runJob",
-          "when": "view == edaJobRunnerView && (viewItem == edaJob-running || viewItem == edaJobGroup-running) && edaJobRunner.multiRunsEnabled",
-          "group": "inline@1"
-        },
-        {
           "command": "eda-job-runner.stopJob",
           "when": "view == edaJobRunnerView && viewItem == edaJob-running",
           "group": "inline@1"
@@ -255,11 +259,6 @@
         {
           "command": "eda-job-runner.runJob",
           "when": "view == edaJobRunnerView && viewItem == edaJobGroup-idle && !edaJobRunner.anyJobRunning",
-          "group": "1_run@1"
-        },
-        {
-          "command": "eda-job-runner.runJob",
-          "when": "view == edaJobRunnerView && (viewItem == edaJob-running || viewItem == edaJobGroup-running) && edaJobRunner.multiRunsEnabled",
           "group": "1_run@1"
         },
         {
@@ -323,24 +322,39 @@
           "group": "2_modification@4"
         },
         {
-          "command": "eda-job-runner.addJobInFolder",
+          "command": "eda-job-runner.saveJobAsTemplate",
+          "when": "view == edaJobRunnerView && viewItem =~ /^(edaJob-|edaJobGroup-)/",
+          "group": "2_modification@5"
+        },
+        {
+          "command": "eda-job-runner.runFolder",
           "when": "view == edaJobRunnerView && viewItem == edaFolder",
           "group": "inline@1"
         },
         {
           "command": "eda-job-runner.addJobInFolder",
           "when": "view == edaJobRunnerView && viewItem == edaFolder",
+          "group": "inline@2"
+        },
+        {
+          "command": "eda-job-runner.runFolder",
+          "when": "view == edaJobRunnerView && viewItem == edaFolder",
           "group": "1_folder@1"
         },
         {
-          "command": "eda-job-runner.renameFolder",
+          "command": "eda-job-runner.addJobInFolder",
           "when": "view == edaJobRunnerView && viewItem == edaFolder",
           "group": "1_folder@2"
         },
         {
-          "command": "eda-job-runner.deleteFolder",
+          "command": "eda-job-runner.renameFolder",
           "when": "view == edaJobRunnerView && viewItem == edaFolder",
           "group": "1_folder@3"
+        },
+        {
+          "command": "eda-job-runner.deleteFolder",
+          "when": "view == edaJobRunnerView && viewItem == edaFolder",
+          "group": "1_folder@4"
         }
       ],
       "commandPalette": [
@@ -354,6 +368,10 @@
         },
         {
           "command": "eda-job-runner.duplicateJob",
+          "when": "false"
+        },
+        {
+          "command": "eda-job-runner.saveJobAsTemplate",
           "when": "false"
         },
         {
@@ -390,6 +408,10 @@
         },
         {
           "command": "eda-job-runner.addJobInFolder",
+          "when": "false"
+        },
+        {
+          "command": "eda-job-runner.runFolder",
           "when": "false"
         },
         {
@@ -476,7 +498,12 @@
         "eda-job-runner.experimentalMultipleRuns": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "**Experimental.** Allow more than one job — or more than one instance of the *same* job — to run at the same time, instead of the default one-job-at-a-time restriction. A job's own **Repeat count** (Advanced settings) runs sequentially regardless of this setting; this only affects overlapping *separate* Run clicks."
+          "markdownDescription": "**Experimental.** Allow more than one *different* job to run at the same time, instead of the default one-job-at-a-time restriction. A single job can never run concurrently with itself either way — its own **Repeat count** (Advanced settings) is the only way to run it again, always sequentially."
+        },
+        "eda-job-runner.experimentalAutoSaveJobConfig": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Experimental.** Auto-save a job's Configure form as you edit it (on typing/change/blur/Enter, debounced) instead of relying on the Save button — Save still works either way, and the tab never closes on its own."
         }
       }
     }
