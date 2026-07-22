@@ -2,13 +2,14 @@ import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { JobDefinition, JobsFileSetup } from './types';
+import { GlobalParam, JobDefinition, JobsFileSetup } from './types';
 import { LogManager } from './logManager';
 import { ensureGitignoreEntry } from './gitignoreManager';
 import { LogDiagnostics } from './logDiagnostics';
 import { ParseState, newParseState, parseLine } from './logParser';
 import { buildShellInvocation, resolveJobEnv, substituteVars } from './shellInvocation';
 import { ParamSpec, parseParams, substituteParams, substituteRandomSeed } from './paramSubstitution';
+import { flattenGlobalParams, substituteParamVars } from './paramVars';
 import { decideFinalState, compilePattern } from './jobOutcome';
 
 export type { JobRunState } from './jobOutcome';
@@ -125,6 +126,7 @@ export class JobRunner implements vscode.Disposable {
     private readonly workspaceFolder: vscode.WorkspaceFolder,
     private readonly logManager: LogManager,
     private readonly getSetup: () => JobsFileSetup | undefined,
+    private readonly getParams: () => GlobalParam[],
     private readonly memento: vscode.Memento,
     private readonly diagnostics: LogDiagnostics
   ) {
@@ -222,6 +224,15 @@ export class JobRunner implements vscode.Disposable {
       }
       template = substituteParams(job.command, values);
     }
+
+    // `${var:NAME}` references resolve silently -- no prompt, unlike
+    // `${param:...}` above -- from this job's own override, else the
+    // workspace-wide global default (Parameters panel). Resolved once per
+    // Run, same as `${param:...}`, so a repeat-count batch stays consistent;
+    // the result is baked into `resolvedCommand`, so Re-run Last (which
+    // returns before this point via `forcedCommand`) replays the exact same
+    // values without re-resolving.
+    template = substituteParamVars(template, flattenGlobalParams(this.getParams()), job.paramOverrides ?? {});
 
     const runCount = Math.max(1, Math.min(1000, Math.round(job.runCount ?? 1)));
     if (runCount > 1) {

@@ -54,10 +54,8 @@
     {
       "id": "692defac-c658-40a9-8db8-329f30dc22fe",
       "name": "Icarus Test",
-      "command": "dsim",
-      "cwd": ".",
-      "toolId": "95ddd32f-e82c-44a9-98b4-282a5a47c776",
-      "toolVariantLabel": ""
+      "command": "vvp build/counter_sim",
+      "cwd": "."
     },
     {
       "id": "6b66503f-93d5-4f36-ae7c-6ed14dedc456",

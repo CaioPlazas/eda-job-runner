@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.22.0 — New Parameters panel: global values, resolved silently
+
+Parametrized runs (`${param:NAME}`) always prompt on every Run, which is
+overkill for values that should just be configured once — e.g. a shared
+testbench path. A new **Parameters** panel (third view-title icon, next to
+Shell & Environment and Tool Setup) lets you define global name/value
+parameters, referenced in a job's Command as `${var:NAME}` and substituted
+silently every run — no prompt. `${param:NAME}` is completely unaffected
+and still prompts, for cases like seed-chasing where that's actually
+wanted. Per-job overrides (via the Configure form) are coming in a
+follow-up release; this one ships the storage, resolution, and the panel
+itself.
+
 ## 0.21.0 — Command field vs. Tool builder precedence, made obvious
 
 Whether the hand-written Command field or the Tool builder "owns" what's

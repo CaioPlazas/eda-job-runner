@@ -93,6 +93,15 @@ export interface JobDefinition {
    * discovered options/lists, in order. `value` is optional (a bare flag).
    */
   customArgs?: { arg: string; value?: string }[];
+  /**
+   * Per-job values for `${var:NAME}` references in this job's command,
+   * keyed by parameter name. Overrides the matching entry in
+   * `JobsFile.params` (see `GlobalParam`); a name here with no global
+   * counterpart is a job-local parameter. Resolved silently at run time --
+   * no prompt, unlike `${param:NAME}`. Set via the Configure form's
+   * "override parameter" checkboxes.
+   */
+  paramOverrides?: Record<string, string>;
 }
 
 /**
@@ -208,6 +217,18 @@ export function emptyToolsFile(): ToolsFile {
   return { version: 1, tools: [] };
 }
 
+/**
+ * A workspace-wide named value, referenced from a job's command as
+ * `${var:NAME}` and substituted silently at run time (no prompt) -- unlike
+ * `${param:NAME}`, which always prompts. Its default here is used unless a
+ * job sets its own value via `JobDefinition.paramOverrides`. Managed from
+ * the Parameters panel.
+ */
+export interface GlobalParam {
+  name: string;
+  value: string;
+}
+
 export interface JobsFileSetup {
   /** Path (relative to workspace root) to a script that is sourced before every job. */
   script?: string;
@@ -222,6 +243,8 @@ export interface JobsFile {
   folders?: string[];
   /** Saved job skeletons offered when adding a new job. See `JobTemplate`. */
   templates?: JobTemplate[];
+  /** Workspace-wide named values referenced as `${var:NAME}`. See `GlobalParam`. */
+  params?: GlobalParam[];
   jobs: JobDefinition[];
 }
 

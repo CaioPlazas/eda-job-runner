@@ -52,6 +52,13 @@ prompt at all — so "run this test 10 times with a different seed" needs
 no hand-editing between runs, and **Re-run Last** replays one exact prior
 run verbatim when you need to chase a specific failing seed.
 
+**Parameters** are a different, quieter kind of placeholder for values
+that shouldn't need a prompt at all — a shared testbench path, say. The
+Parameters panel (a third view-title icon) holds global name/value pairs;
+referencing one in a job's command as `${var:NAME}` resolves it silently,
+every run, from whatever's currently configured. `${param:...}` and
+`${var:...}` are independent and can be mixed freely in the same command.
+
 **Output is scanned, not just captured.** Full stdout/stderr streams to a
 log file per run (never buffered in memory, size-capped, ANSI-stripped),
 and simultaneously fed to a line parser that recognizes UVM messages and

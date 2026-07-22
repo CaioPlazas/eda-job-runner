@@ -9,6 +9,7 @@ import { LogFollowController } from './logFollow';
 import { StatusBarController } from './statusBar';
 import { JobConfigPanel } from './jobConfigPanel';
 import { ShellEnvPanel } from './shellEnvPanel';
+import { ParamsPanel } from './paramsPanel';
 import { LogLiveView } from './logLiveView';
 import { substituteVars } from './shellInvocation';
 import {
@@ -41,7 +42,14 @@ export function activate(context: vscode.ExtensionContext): void {
   const logManager = new LogManager(folder);
   const logDiagnostics = new LogDiagnostics(folder);
   context.subscriptions.push(logDiagnostics);
-  const jobRunner = new JobRunner(folder, logManager, () => jobStore.getSetup(), context.workspaceState, logDiagnostics);
+  const jobRunner = new JobRunner(
+    folder,
+    logManager,
+    () => jobStore.getSetup(),
+    () => jobStore.getParams(),
+    context.workspaceState,
+    logDiagnostics
+  );
   context.subscriptions.push(jobRunner);
 
   const treeProvider = new JobTreeProvider(jobStore, jobRunner);
@@ -99,6 +107,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('eda-job-runner.refresh', () => jobStore.load()),
     vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.configureTools', () => ToolSetupPanel.createOrShow(toolStore, jobStore, folder)),
+    vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.addFolder', () => addFolder(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.addJobInFolder', (item: FolderTreeItem) =>
       item ? JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), undefined, item.folderName) : undefined
