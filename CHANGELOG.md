@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.0 — README rewrite
+
+No functional changes. The README was rewritten from scratch to actually
+be readable — down from ~2400 to ~1000 words, features as one-line
+bullets instead of a paragraph each, the deep architecture essay cut down
+to what a marketplace visitor actually wants to know.
+
 ## 0.26.0 — Bug fixes from a focused code review
 
 A round of independent review over everything from the last several
