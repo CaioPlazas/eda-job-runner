@@ -1,5 +1,145 @@
 # Changelog
 
+## 0.39.0 — Seed detection for jobs that don't use ${randomSeed}
+
+The Log Viewer's Seed column previously showed "–" for any job whose seed
+wasn't captured via the `${randomSeed}` placeholder (e.g. typed literally,
+via `${param:SEED}`, or only ever echoed by the tool's own startup
+banner). It now falls back to scanning the run's own captured output:
+
+- A built-in library of best-effort guessed patterns for common
+  conventions (Questa/Xcelium `-sv_seed`/`-svseed`, a VCS-style
+  `+ntb_random_seed=`, generic `+seed=`/`-seed`, Verilator `--seed`, and a
+  loose `seed = value` fallback).
+- A per-**tool** custom regex override (Tool Setup's Advanced section,
+  "Seed pattern") for when the guesses don't match your site's actual
+  output — with a live paste-and-preview tester: paste a sample log line
+  and see what gets detected, updated as you type, no need to save first.
+- The Seed column also got a minimum width so a real seed value can't get
+  visually squeezed by wider neighboring columns.
+
+## 0.38.0 — Per-job logs-directory override
+
+A job's Advanced section gained a **Logs directory (override)** field,
+mirroring the existing Post-setup working directory override exactly —
+blank inherits the workspace-wide `logsDirectory` setting. The Log Viewer
+and "Clean all logs" now both scan every root a job could actually be
+writing to (the global root plus every job's own override), so an
+overridden job's runs stay visible and get cleaned up correctly instead of
+silently sitting outside what "clean all" or the Viewer's table sees.
+
+## 0.37.0 — Configurable logs directory, size-based retention, clean-all
+
+- **New `logsDirectory` setting** (Shell & Environment panel, with a
+  folder-browse button) lets you move where run logs are stored, instead
+  of the hardcoded `.eda-runner/logs` under the workspace root. The
+  `.gitignore` auto-entry prompt follows the new location (and stays
+  quiet if it's outside the workspace — nothing to ignore there).
+- **Size-based retention** (`logRetentionMaxSizeMB`, alongside the
+  existing count-based `logRetentionCount`) — both are now independent
+  checkboxes in the panel; either, both, or neither can be on (`0` means
+  off/unlimited for each). When both apply, the count cap is enforced
+  first, then the oldest survivors are pruned further until under the
+  size cap too.
+- **"Clean all logs now…"** button, with a confirmation showing exactly
+  how many files and how much disk space would be freed before deleting
+  anything.
+
+## 0.36.0 — Post-run command
+
+A job's Advanced section gained a checkbox: **"Run a command after this
+job finishes"**, plus the command itself. Runs once per completed lane,
+using the same shell/setup chain and working directory as the job —
+skipped for a Stopped ("killed") run, since that's not "the job's done, do
+the follow-up." It's a lightweight, fire-and-forget action, not a second
+tracked job: a nonzero exit or launch failure only shows a warning
+notification, never affecting the job's own already-decided pass/fail.
+
+## 0.35.0 — Job templates live in the Configure screen
+
+- A new Template row at the top of a job's Configure form: pick a saved
+  template from the dropdown and click **Load** to apply its fields into
+  the form (whether it's currently blank or already has content), or
+  **Save as template…** to save the current form's fields as a new
+  template (or update one, if the name already exists — with a
+  confirmation before overwriting). **Delete** removes a template
+  (`JobStore.deleteTemplate`, previously unreachable from any UI at all).
+- "New Job" now always opens a blank Configure panel directly — the
+  QuickPick that used to ask "start from a template, or blank?" *before*
+  the panel even existed is gone, since templates are now visible and
+  loadable from inside the panel itself.
+- The right-click "Save Job as Template..." command on an existing job
+  still works as a second entry point.
+
+## 0.34.0 — Clear run history, stop a whole folder
+
+- **"Clear Run History"** — a new right-click action on a job that's grown
+  an expandable repeat-count batch group collapses it back to a flat
+  single-run row, without deleting the job. Previously the only way back
+  to a flat row was deleting and recreating the job entirely.
+- **"Stop Folder"** — a folder's context menu (and its inline icon, next
+  to "Run Folder") now includes a Stop action that stops every currently
+  running job inside it, mirroring "Run Folder"'s existing job-filtering.
+- Small internal cleanup: `JobStore.getJobsInFolder()` replaces three
+  separate inline `getJobs().filter(j => j.folder === ...)` calls.
+
+## 0.33.0 — Fix five undo/data-loss bugs
+
+A dedicated sweep of the whole extension for "impossible to undo" actions
+(not just the job builder) turned up five real, confirmed bugs, now fixed:
+
+1. **The "✎ var" toggle in a job's Configure form was one-way.** Switching
+   a fixed-choices dropdown to a free-text `${var:NAME}` field deleted the
+   only control that could switch it back — the only route back was
+   collapsing and reopening the whole Tool builder. It's now a real
+   toggle: click again to switch back to the dropdown, with the value
+   preserved across the swap whenever it still fits.
+2. **Rescanning a tool silently dropped every flag's attached value-list
+   ("value source" dropdown).** Affected "Rescan All", a sub-tool's own
+   "Rescan", and — worst of all — "Save & Rescan" on the in-place tool
+   edit form, meaning any edit to a tool's command or help-arg wiped every
+   flag's dropdown attachment across every sub-tool. The merge that
+   already carried a flag's favorite star forward across a rescan now
+   carries its value-list attachment forward too.
+3. **Re-adding a sub-tool under a label that already existed didn't merge
+   at all** — it silently discarded the whole previous variant's
+   favorites and list attachments. Now goes through the same merge as a
+   rescan instead of a bare replace.
+4. **"Save Job as Template" could silently overwrite a same-named
+   template** with no confirmation. Now warns first.
+5. **Shell & Environment's "Use My VS Code Terminal Shell" immediately
+   overwrote any unsaved typing** in the Shell path/arguments/environment
+   fields with no undo. Now only asks for confirmation when it would
+   actually replace non-empty, different content.
+
+One item investigated during this sweep turned out not to be a bug:
+re-expanding a job's "Tool builder" after a hand-edited Command rebuilds
+the command from the builder's state — this looked like a regression
+against an older description of the feature, but it's the intended,
+already-documented design from the builder-precedence rework (collapsed =
+hand-edit is authoritative and frozen; expanded = the builder controls the
+field live, an explicit and visibly-labeled choice). No change made there.
+
+## 0.32.0 — Unified help icons, Repeat count and custom arguments relocated
+
+First release of a broader UI/UX feedback batch (see PLAN.md's Phase 11).
+
+- **The "(?)" help icon is now consistent across every panel.** Previously
+  only the job Configure form had it — Tool Setup, Shell & Environment, and
+  Parameters all still used plain, always-visible hint paragraphs. All four
+  now share one `webviewHelp.ts` module, and the icon itself is bigger and
+  legible (fixed pixel sizes instead of compounding `em`-relative values
+  that rendered as small as ~9-11px effective size on a high-DPI display).
+  Live status text (a tool's "scanned at ...", a value list's discovered
+  count, etc.) stays visible as before — only genuine help copy moved
+  behind the icon.
+- **Repeat count** is no longer buried in a job's Advanced section — it's
+  now always visible, right under Working Directory, matching how often
+  it's actually used.
+- **"+ Add custom argument"** now sits directly under a tool's discovered
+  options instead of appearing to dangle off the value-lists section below
+  it.
+
 ## 0.31.0 — Full reattachment after a window reload
 
 The last piece of clearing out the kill/reattachment backlog. Until now, a

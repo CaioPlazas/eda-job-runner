@@ -105,6 +105,7 @@ function normalize(parsed: Partial<ToolsFile> | undefined): ToolsFile {
       displayName: typeof t.displayName === 'string' && t.displayName.trim() ? t.displayName.trim() : undefined,
       scanDir: typeof t.scanDir === 'string' && t.scanDir.trim() ? t.scanDir.trim() : undefined,
       helpArg: typeof t.helpArg === 'string' && t.helpArg.trim() ? t.helpArg.trim() : undefined,
+      seedPattern: typeof t.seedPattern === 'string' && t.seedPattern.trim() ? t.seedPattern.trim() : undefined,
       variants: normalizeVariants(t.variants),
       lists: normalizeLists(t.lists),
       lastScanned: typeof t.lastScanned === 'number' ? t.lastScanned : undefined

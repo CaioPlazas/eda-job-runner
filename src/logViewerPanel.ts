@@ -3,8 +3,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { JobStore } from './jobStore';
 import { LogManager } from './logManager';
+import { ToolStore } from './toolStore';
 import { JobDefinition } from './types';
 import { parseLogHeader, parseLogTrailer, parseLogFilename, searchMatches } from './logIndex';
+import { detectSeed } from './seedDetect';
 
 interface OpenLogMessage {
   type: 'openLog';
@@ -57,7 +59,7 @@ export class LogViewerPanel {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
 
-  static createOrShow(jobStore: JobStore, logManager: LogManager): void {
+  static createOrShow(jobStore: JobStore, logManager: LogManager, toolStore: ToolStore): void {
     if (LogViewerPanel.current) {
       LogViewerPanel.current.panel.reveal();
       return;
@@ -66,13 +68,14 @@ export class LogViewerPanel {
       enableScripts: true,
       retainContextWhenHidden: true
     });
-    LogViewerPanel.current = new LogViewerPanel(panel, jobStore, logManager);
+    LogViewerPanel.current = new LogViewerPanel(panel, jobStore, logManager, toolStore);
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly jobStore: JobStore,
-    private readonly logManager: LogManager
+    private readonly logManager: LogManager,
+    private readonly toolStore: ToolStore
   ) {
     this.panel = panel;
     this.panel.webview.html = renderHtml(panel.webview);
@@ -115,8 +118,9 @@ export class LogViewerPanel {
 
   /** One row per past run across every job, built from each log's own header/trailer -- no separate persisted index needed. */
   private async gatherRows(): Promise<LogRow[]> {
-    const jobs = new Map(this.jobStore.getJobs().map(j => [j.id, j]));
-    const runs = await this.logManager.listAllRuns();
+    const jobList = this.jobStore.getJobs();
+    const jobs = new Map(jobList.map(j => [j.id, j]));
+    const runs = await this.logManager.listAllRuns(this.logManager.resolveAllRoots(jobList));
     const rows: LogRow[] = [];
     for (let i = 0; i < runs.length; i += READ_CONCURRENCY) {
       const batch = runs.slice(i, i + READ_CONCURRENCY);
@@ -136,6 +140,15 @@ export class LogViewerPanel {
     const filename = path.basename(logPath);
     const fromName = parseLogFilename(filename);
     const job = jobs.get(jobId);
+    // `# seed:` is only ever written when a job's Command uses
+    // ${randomSeed} -- a job that specifies its seed any other way (typed
+    // literally, ${param:SEED}, or the tool echoing it in its own startup
+    // banner) never gets that header field populated, so fall back to
+    // scanning the already-read head+tail text for it: the built-in
+    // guessed patterns, or this job's tool's own custom override if it has
+    // one (Tool Setup's "Seed pattern" field).
+    const tool = job?.toolId ? this.toolStore.getTool(job.toolId) : undefined;
+    const seed = header.seed ?? detectSeed(`${head}\n${tail}`, tool?.seedPattern);
     return {
       jobId,
       jobName: header.jobName ?? job?.name ?? `(deleted job ${jobId.slice(0, 8)})`,
@@ -143,7 +156,7 @@ export class LogViewerPanel {
       logPath,
       filename,
       laneLabel: header.laneLabel,
-      seed: header.seed,
+      seed,
       command: header.command,
       started: header.started ?? fromName.timestamp,
       state: trailer.state,
@@ -296,6 +309,8 @@ function renderHtml(webview: vscode.Webview): string {
   table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 0.9em; }
   th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--vscode-input-border, rgba(127,127,127,0.15)); white-space: nowrap; }
   th { font-weight: 600; color: var(--vscode-descriptionForeground); font-size: 0.85em; }
+  /* A real seed value can be a long random integer -- a fixed minimum keeps it from being squeezed illegibly narrow by wider neighbors like Job/Folder. */
+  .seedCol { min-width: 90px; }
   tbody tr { cursor: pointer; }
   tbody tr:hover { background: var(--vscode-list-hoverBackground); }
   .badge { padding: 2px 8px; border-radius: 10px; font-size: 0.82em; font-weight: 600; }
@@ -312,7 +327,8 @@ function renderHtml(webview: vscode.Webview): string {
   <div class="hint">
     Every past run across every job, newest first. Built directly from each
     log file's own header/trailer -- nothing is pre-indexed, so this always
-    reflects exactly what's on disk in <code>.eda-runner/logs/</code>.
+    reflects exactly what's on disk (the logs directory, configurable from
+    the Shell &amp; Environment panel — <code>.eda-runner/logs/</code> by default).
   </div>
 
   <div class="toolbar">
@@ -441,7 +457,7 @@ function renderHtml(webview: vscode.Webview): string {
         '<td>' + esc(row.jobName) + '</td>' +
         '<td>' + esc(row.folder || '–') + '</td>' +
         '<td>' + esc(row.laneLabel || '–') + '</td>' +
-        '<td>' + esc(row.seed || '–') + '</td>' +
+        '<td class="seedCol">' + esc(row.seed || '–') + '</td>' +
         '<td><span class="badge badge-' + status + '">' + esc(label) + '</span></td>' +
         '<td>' + esc(row.exitCode ?? '–') + '</td>' +
         '<td>' + esc(row.errorCount ?? '–') + '</td>' +
@@ -454,7 +470,7 @@ function renderHtml(webview: vscode.Webview): string {
         return '<div class="hint">No logs match the current filters.</div>';
       }
       return '<table><thead><tr>' +
-        '<th>Started</th><th>Job</th><th>Folder</th><th>Run</th><th>Seed</th><th>Status</th><th>Exit</th><th>Errors</th><th>Warnings</th>' +
+        '<th>Started</th><th>Job</th><th>Folder</th><th>Run</th><th class="seedCol">Seed</th><th>Status</th><th>Exit</th><th>Errors</th><th>Warnings</th>' +
         '</tr></thead><tbody>' + rows.map(rowHtml).join('') + '</tbody></table>';
     }
 

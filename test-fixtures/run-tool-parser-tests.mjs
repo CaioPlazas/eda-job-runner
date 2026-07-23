@@ -149,6 +149,29 @@ optional arguments:
   );
 }
 
+// --- a flag's attached value-list ("value source") also carries forward across a rescan ---
+{
+  const previous = [
+    { flags: ['-t', '--test'], metavar: 'TEST', valueListName: 'Tests' },
+    { flags: ['--verbose'], favorite: true }
+  ];
+  // Simulates a rescan: --test's description changed, --verbose unchanged.
+  // Neither favorite nor valueListName are ever produced by a scan itself
+  // (both are Tool Setup's own hand-set customizations) -- both must survive.
+  const next = [
+    { flags: ['-t', '--test'], metavar: 'TEST', description: 'Test name (updated)' },
+    { flags: ['--verbose'], description: 'Verbose output' }
+  ];
+  const merged = mergeFavorites(previous, next);
+  check(
+    eq(merged, [
+      { flags: ['-t', '--test'], metavar: 'TEST', description: 'Test name (updated)', valueListName: 'Tests' },
+      { flags: ['--verbose'], description: 'Verbose output', favorite: true }
+    ]),
+    `valueListName re-applied by flag identity after rescan, alongside favorite (got ${JSON.stringify(merged)})`
+  );
+}
+
 // --- no subparser signature -> no choices ---
 {
   check(eq(detectSubcommandChoices('usage: prog [-h] [--seed SEED]\n'), []), 'no subparser -> empty choices');

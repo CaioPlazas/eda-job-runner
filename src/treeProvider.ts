@@ -114,7 +114,7 @@ export class JobTreeProvider implements vscode.TreeDataProvider<EdaTreeNode> {
 
   getChildren(element?: EdaTreeNode): EdaTreeNode[] {
     if (element instanceof FolderTreeItem) {
-      return this.toTreeItems(this.jobStore.getJobs().filter(j => j.folder === element.folderName));
+      return this.toTreeItems(this.jobStore.getJobsInFolder(element.folderName));
     }
     if (element instanceof JobGroupTreeItem) {
       return this.jobRunner
@@ -127,7 +127,7 @@ export class JobTreeProvider implements vscode.TreeDataProvider<EdaTreeNode> {
 
     const folders = this.jobStore.getFolders();
     const jobs = this.jobStore.getJobs();
-    const folderItems = folders.map(name => new FolderTreeItem(name, jobs.filter(j => j.folder === name).length));
+    const folderItems = folders.map(name => new FolderTreeItem(name, this.jobStore.getJobsInFolder(name).length));
     const knownFolders = new Set(folders);
     const ungrouped = jobs.filter(j => !j.folder || !knownFolders.has(j.folder));
     return [...folderItems, ...this.toTreeItems(ungrouped)];

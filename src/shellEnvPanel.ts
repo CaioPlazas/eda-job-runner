@@ -2,8 +2,10 @@ import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as path from 'path';
 import { JobStore } from './jobStore';
+import { LogManager } from './logManager';
 import { detectVscodeShell } from './shellDetect';
 import { buildShellInvocation, defaultArgsForShell, resolveJobEnv, substituteVars } from './shellInvocation';
+import { HELP_CSS, help } from './webviewHelp';
 
 interface SaveMessage {
   type: 'save';
@@ -14,6 +16,9 @@ interface SaveMessage {
   setupScript: string;
   setupCommands: string; // one command per line
   postSetupCwd: string;
+  logsDirectory: string;
+  logRetentionCount: string;
+  logRetentionMaxSizeMB: string;
 }
 
 interface DetectMessage {
@@ -35,7 +40,21 @@ interface CancelMessage {
   type: 'cancel';
 }
 
-type WebviewMessage = SaveMessage | DetectMessage | TestMessage | CancelMessage;
+interface BrowseLogsDirMessage {
+  type: 'browseLogsDir';
+}
+
+interface CleanAllLogsMessage {
+  type: 'cleanAllLogs';
+}
+
+type WebviewMessage =
+  | SaveMessage
+  | DetectMessage
+  | TestMessage
+  | CancelMessage
+  | BrowseLogsDirMessage
+  | CleanAllLogsMessage;
 
 const TEST_TIMEOUT_MS = 15000;
 const TEST_OUTPUT_CAP = 64 * 1024;
@@ -48,7 +67,7 @@ export class ShellEnvPanel {
   private readonly disposables: vscode.Disposable[] = [];
   private testChild: cp.ChildProcess | undefined;
 
-  static createOrShow(jobStore: JobStore, folder: vscode.WorkspaceFolder): void {
+  static createOrShow(jobStore: JobStore, folder: vscode.WorkspaceFolder, logManager: LogManager): void {
     if (ShellEnvPanel.current) {
       ShellEnvPanel.current.panel.reveal();
       return;
@@ -59,13 +78,14 @@ export class ShellEnvPanel {
       vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true }
     );
-    ShellEnvPanel.current = new ShellEnvPanel(panel, jobStore, folder);
+    ShellEnvPanel.current = new ShellEnvPanel(panel, jobStore, folder, logManager);
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly jobStore: JobStore,
-    private readonly folder: vscode.WorkspaceFolder
+    private readonly folder: vscode.WorkspaceFolder,
+    private readonly logManager: LogManager
   ) {
     this.panel = panel;
     this.panel.webview.html = renderHtml(panel.webview, this.readState());
@@ -90,7 +110,10 @@ export class ShellEnvPanel {
         .join('\n'),
       setupScript: setup?.script ?? '',
       setupCommands: (setup?.commands ?? []).join('\n'),
-      postSetupCwd: config.get<string>('postSetupCwd', '')
+      postSetupCwd: config.get<string>('postSetupCwd', ''),
+      logsDirectory: config.get<string>('logsDirectory', ''),
+      logRetentionCount: Math.max(0, config.get<number>('logRetentionCount', 20)),
+      logRetentionMaxSizeMB: Math.max(0, config.get<number>('logRetentionMaxSizeMB', 0))
     };
   }
 
@@ -105,7 +128,49 @@ export class ShellEnvPanel {
         return this.onTest(msg);
       case 'save':
         return this.onSave(msg);
+      case 'browseLogsDir':
+        return this.onBrowseLogsDir();
+      case 'cleanAllLogs':
+        return this.onCleanAllLogs();
     }
+  }
+
+  private async onBrowseLogsDir(): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFolders: true,
+      canSelectFiles: false,
+      canSelectMany: false,
+      defaultUri: this.folder.uri,
+      openLabel: 'Select logs folder'
+    });
+    if (!picked || picked.length === 0) {
+      return;
+    }
+    void this.panel.webview.postMessage({ type: 'logsDirPicked', path: picked[0].fsPath });
+  }
+
+  private async onCleanAllLogs(): Promise<void> {
+    // The de-duplicated set of every root a per-job logsDirectory override
+    // could have redirected some job's runs to, not just the global root --
+    // otherwise an overridden job's logs would silently survive "clean all."
+    const roots = this.logManager.resolveAllRoots(this.jobStore.getJobs());
+    const { files, bytes } = await this.logManager.totalSize(roots);
+    if (files === 0) {
+      void vscode.window.showInformationMessage('EDA Job Runner: no logs to clean.');
+      return;
+    }
+    const confirm = await vscode.window.showWarningMessage(
+      `Delete all ${files} log file${files === 1 ? '' : 's'} (${formatBytes(bytes)}) across every job? This cannot be undone.`,
+      { modal: true },
+      'Delete all logs'
+    );
+    if (confirm !== 'Delete all logs') {
+      return;
+    }
+    const result = await this.logManager.cleanAllLogs(roots);
+    void vscode.window.showInformationMessage(
+      `EDA Job Runner: deleted ${result.files} log file${result.files === 1 ? '' : 's'} (${formatBytes(result.bytes)}).`
+    );
   }
 
   private onDetect(): void {
@@ -133,12 +198,26 @@ export class ShellEnvPanel {
     const shellArgs = msg.shellArgsAuto ? undefined : parseLines(msg.shellArgs);
     const env = parseEnv(msg.env);
 
+    const retentionCountParsed = parseInt(msg.logRetentionCount.trim(), 10);
+    const retentionSizeParsed = parseInt(msg.logRetentionMaxSizeMB.trim(), 10);
+
     try {
       await config.update('shellPath', shellPath, target);
       // undefined removes the key -> reverts to the auto (null) default.
       await config.update('shellArgs', shellArgs, target);
       await config.update('env', Object.keys(env).length > 0 ? env : undefined, target);
       await config.update('postSetupCwd', msg.postSetupCwd.trim() || undefined, target);
+      await config.update('logsDirectory', msg.logsDirectory.trim() || undefined, target);
+      await config.update(
+        'logRetentionCount',
+        Number.isFinite(retentionCountParsed) ? Math.max(0, retentionCountParsed) : undefined,
+        target
+      );
+      await config.update(
+        'logRetentionMaxSizeMB',
+        Number.isFinite(retentionSizeParsed) ? Math.max(0, retentionSizeParsed) : undefined,
+        target
+      );
 
       await this.jobStore.setSetup({
         script: msg.setupScript.trim() || undefined,
@@ -293,6 +372,13 @@ function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 interface PanelState {
   shellPath: string;
   shellArgsAuto: boolean;
@@ -301,6 +387,9 @@ interface PanelState {
   setupScript: string;
   setupCommands: string;
   postSetupCwd: string;
+  logsDirectory: string;
+  logRetentionCount: number;
+  logRetentionMaxSizeMB: number;
 }
 
 function renderHtml(webview: vscode.Webview, state: PanelState): string {
@@ -348,6 +437,7 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
     color: var(--vscode-descriptionForeground);
     margin-top: 4px;
   }
+  ${HELP_CSS}
   .row { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
   .row label { margin-top: 0; }
   .actions { margin-top: 26px; display: flex; gap: 8px; flex-wrap: wrap; }
@@ -380,67 +470,109 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
 </style>
 </head>
 <body>
-  <h2>Shell &amp; Environment</h2>
-  <div class="hint">
-    Controls how every job's command is launched. Settings are saved to this
-    workspace (they can also be set in User settings). Environment setup (sourced
-    script + pre-commands) is saved to <code>.vscode/eda-jobs.json</code>.
-  </div>
+  <h2>Shell &amp; Environment ${help(
+    "Controls how every job's command is launched. Settings are saved to this " +
+      'workspace (they can also be set in User settings). Environment setup (sourced ' +
+      'script + pre-commands) is saved to <code>.vscode/eda-jobs.json</code>.'
+  )}</h2>
 
   <div class="actions">
     <button class="secondary" id="detect">Use My VS Code Terminal Shell</button>
   </div>
   <div id="detectNote"></div>
 
-  <label for="shellPath">Shell path</label>
+  <label for="shellPath">Shell path ${help(
+    'Shell binary (name on PATH or absolute path), e.g. <code>bash</code>, <code>zsh</code>, <code>tcsh</code>.'
+  )}</label>
   <input id="shellPath" type="text" value="${esc(state.shellPath)}" placeholder="bash" />
-  <div class="hint">Shell binary (name on PATH or absolute path), e.g. <code>bash</code>, <code>zsh</code>, <code>tcsh</code>.</div>
 
   <label class="check">
     <input id="shellArgsAuto" type="checkbox" ${state.shellArgsAuto ? 'checked' : ''} />
     Auto-select shell arguments (recommended)
+    ${help(
+      'Picks the right invocation per shell family — <code>bash -lc</code>, ' +
+        '<code>tcsh -c</code>, etc. Uncheck to specify arguments yourself.'
+    )}
   </label>
-  <div class="hint">
-    Picks the right invocation per shell family — <code>bash -lc</code>,
-    <code>tcsh -c</code>, etc. Uncheck to specify arguments yourself.
-  </div>
 
   <div id="argsWrap" class="${state.shellArgsAuto ? 'hidden' : ''}">
-    <label for="shellArgs">Shell arguments (one per line)</label>
+    <label for="shellArgs">Shell arguments (one per line) ${help(
+      'Use the token <code>' +
+        '${command}' +
+        '</code> where the assembled command should go. If no line contains it, the command is appended as the final argument.'
+    )}</label>
     <textarea id="shellArgs" spellcheck="false">${esc(state.shellArgs)}</textarea>
-    <div class="hint">
-      Use the token <code>\${command}</code> where the assembled command should
-      go. If no line contains it, the command is appended as the final argument.
-    </div>
   </div>
 
-  <label for="env">Environment variables (one <code>KEY=VALUE</code> per line)</label>
+  <label for="env">Environment variables (one <code>KEY=VALUE</code> per line) ${help(
+    'Merged on top of the inherited environment. Supports <code>' +
+      '${workspaceFolder}' +
+      '</code> and <code>' +
+      '${env:NAME}' +
+      '</code>.'
+  )}</label>
   <textarea id="env" spellcheck="false" placeholder="LM_LICENSE_FILE=27000@licsrv">${esc(state.env)}</textarea>
-  <div class="hint">
-    Merged on top of the inherited environment. Supports
-    <code>\${workspaceFolder}</code> and <code>\${env:NAME}</code>.
-  </div>
 
-  <label for="setupScript">Setup script (sourced before every job)</label>
+  <label for="setupScript">Setup script (sourced before every job) ${help(
+    'Relative to the workspace root, or an absolute path. Optional.'
+  )}</label>
   <input id="setupScript" type="text" value="${esc(state.setupScript)}" placeholder="scripts/env_setup.sh" />
-  <div class="hint">Relative to the workspace root, or an absolute path. Optional.</div>
 
   <label for="setupCommands">Setup commands (one per line, run before every job)</label>
   <textarea id="setupCommands" spellcheck="false" placeholder="module load xcelium/24.03">${esc(state.setupCommands)}</textarea>
 
-  <label for="postSetupCwd">Post-setup working directory</label>
+  <label for="postSetupCwd">Post-setup working directory ${help(
+    "Where a job's shell starts, after its own startup (sourcing " +
+      '<code>.bashrc</code>/<code>.zshrc</code>/<code>.cshrc</code> etc.) and ' +
+      "before the setup commands above and the job's command run. A job's own " +
+      '<b>Working Directory</b> (in its config form) then resolves relative to ' +
+      'this instead of the workspace root — useful when the actual EDA run ' +
+      'tree (and site tool-load setup) lives outside the folder you have open ' +
+      'in VS Code. Supports <code>' +
+      '${workspaceFolder}' +
+      '</code> and <code>' +
+      '${env:NAME}' +
+      '</code>. Leave blank to resolve against the workspace ' +
+      "root, as before. A job can override this individually in its Advanced " +
+      'settings.'
+  )}</label>
   <input id="postSetupCwd" type="text" value="${esc(state.postSetupCwd)}" placeholder="e.g. work or \${workspaceFolder}/work" />
-  <div class="hint">
-    Where a job's shell starts, after its own startup (sourcing
-    <code>.bashrc</code>/<code>.zshrc</code>/<code>.cshrc</code> etc.) and
-    before the setup commands above and the job's command run. A job's own
-    <b>Working Directory</b> (in its config form) then resolves relative to
-    this instead of the workspace root — useful when the actual EDA run
-    tree (and site tool-load setup) lives outside the folder you have open
-    in VS Code. Supports <code>\${workspaceFolder}</code> and
-    <code>\${env:NAME}</code>. Leave blank to resolve against the workspace
-    root, as before. A job can override this individually in its Advanced
-    settings.
+
+  <label for="logsDirectory">Logs directory ${help(
+    'Where run logs are stored, instead of the default <code>.eda-runner/logs</code> under the workspace root. ' +
+      'Absolute, or relative to the workspace root; supports <code>' +
+      '${workspaceFolder}' +
+      '</code> and <code>' +
+      '${env:NAME}' +
+      '</code>. Leave blank to keep the default. A job can override this individually in its Advanced settings.'
+  )}</label>
+  <div class="row">
+    <input id="logsDirectory" type="text" style="flex:1;" value="${esc(state.logsDirectory)}" placeholder=".eda-runner/logs (default)" />
+    <button class="secondary" id="browseLogsDir" type="button">Browse…</button>
+  </div>
+
+  <label class="check">
+    <input id="limitByCount" type="checkbox" ${state.logRetentionCount > 0 ? 'checked' : ''} />
+    Keep at most
+  </label>
+  <div class="row">
+    <input id="logRetentionCount" type="number" min="1" style="flex:0 0 100px;" value="${state.logRetentionCount > 0 ? state.logRetentionCount : 20}" ${state.logRetentionCount > 0 ? '' : 'disabled'} />
+    <span>past runs per job ${help('Older runs beyond this count are deleted automatically after each new run.')}</span>
+  </div>
+
+  <label class="check">
+    <input id="limitBySize" type="checkbox" ${state.logRetentionMaxSizeMB > 0 ? 'checked' : ''} />
+    Keep at most
+  </label>
+  <div class="row">
+    <input id="logRetentionMaxSizeMB" type="number" min="1" style="flex:0 0 100px;" value="${state.logRetentionMaxSizeMB > 0 ? state.logRetentionMaxSizeMB : 500}" ${state.logRetentionMaxSizeMB > 0 ? '' : 'disabled'} />
+    <span>MB total per job ${help(
+      'Once a job\'s own past runs exceed this total size, the oldest surviving ones are deleted (after the count limit above, if that\'s also on) until back under it.'
+    )}</span>
+  </div>
+
+  <div class="actions">
+    <button class="secondary" id="cleanAllLogs">Clean all logs now…</button>
   </div>
 
   <div class="actions">
@@ -457,9 +589,19 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
     const argsWrap = $('argsWrap');
     const testOut = $('testOut');
     const detectNote = $('detectNote');
+    const limitByCountEl = $('limitByCount');
+    const logRetentionCountEl = $('logRetentionCount');
+    const limitBySizeEl = $('limitBySize');
+    const logRetentionMaxSizeMBEl = $('logRetentionMaxSizeMB');
 
     autoEl.addEventListener('change', () => {
       argsWrap.classList.toggle('hidden', autoEl.checked);
+    });
+    limitByCountEl.addEventListener('change', () => {
+      logRetentionCountEl.disabled = !limitByCountEl.checked;
+    });
+    limitBySizeEl.addEventListener('change', () => {
+      logRetentionMaxSizeMBEl.disabled = !limitBySizeEl.checked;
     });
 
     function collect() {
@@ -470,7 +612,10 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
         env: $('env').value,
         setupScript: $('setupScript').value,
         setupCommands: $('setupCommands').value,
-        postSetupCwd: $('postSetupCwd').value
+        postSetupCwd: $('postSetupCwd').value,
+        logsDirectory: $('logsDirectory').value,
+        logRetentionCount: limitByCountEl.checked ? logRetentionCountEl.value : '0',
+        logRetentionMaxSizeMB: limitBySizeEl.checked ? logRetentionMaxSizeMBEl.value : '0'
       };
     }
 
@@ -487,11 +632,24 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
       vscode.postMessage(Object.assign({ type: 'save' }, collect()));
     });
     $('cancel').addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
+    $('browseLogsDir').addEventListener('click', () => vscode.postMessage({ type: 'browseLogsDir' }));
+    $('cleanAllLogs').addEventListener('click', () => vscode.postMessage({ type: 'cleanAllLogs' }));
 
     window.addEventListener('message', event => {
       const m = event.data;
       if (!m) { return; }
       if (m.type === 'detected') {
+        // Only ask before overwriting a field that actually has unsaved
+        // content different from what was just detected -- an empty field,
+        // or one that already matches, needs no confirmation.
+        const wouldOverwrite =
+          ($('shellPath').value && $('shellPath').value !== m.shellPath) ||
+          ($('shellArgs').value && $('shellArgs').value !== m.shellArgs) ||
+          (m.env && $('env').value && $('env').value !== m.env);
+        if (wouldOverwrite && !confirm('This will replace your current Shell path/arguments/environment fields with the detected values. Continue?')) {
+          detectNote.textContent = 'Detection cancelled -- your current fields were left as-is.';
+          return;
+        }
         $('shellPath').value = m.shellPath;
         $('shellArgs').value = m.shellArgs;
         if (m.env) { $('env').value = m.env; }
@@ -504,6 +662,8 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
       } else if (m.type === 'saveError') {
         testOut.style.display = 'block';
         testOut.textContent = m.message;
+      } else if (m.type === 'logsDirPicked') {
+        $('logsDirectory').value = m.path;
       }
     });
 

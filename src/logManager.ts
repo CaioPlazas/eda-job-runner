@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { resolveLogsRoot } from './logsRoot';
+import { planPrune, RetentionOptions } from './logRetention';
+import { JobDefinition } from './types';
 
 // Per-file cap on how much of a (potentially up-to-200MB) log is read for the
 // log viewer's table -- only the header (first block) and trailer (last
@@ -9,19 +12,46 @@ import * as path from 'path';
 const HEAD_TAIL_CAP = 4 * 1024;
 
 export class LogManager {
-  private readonly logsRoot: string;
+  private readonly workspaceRoot: string;
 
-  constructor(workspaceFolder: vscode.WorkspaceFolder) {
-    this.logsRoot = path.join(workspaceFolder.uri.fsPath, '.eda-runner', 'logs');
+  constructor(private readonly workspaceFolder: vscode.WorkspaceFolder) {
+    this.workspaceRoot = workspaceFolder.uri.fsPath;
   }
 
   /**
-   * `laneSuffix` disambiguates log filenames for a job's non-primary run
-   * lanes (concurrent extra instances, or sequential repeat-count
-   * iterations) — e.g. "run2" or "3-10" — so they never collide with each
-   * other or with the primary lane's log, and don't relink `latest.log`
-   * (that always tracks the primary lane).
+   * The effective logs-storage root: the `eda-job-runner.logsDirectory`
+   * workspace setting if set, else `<workspaceRoot>/.eda-runner/logs` (the
+   * hardcoded default this used to be unconditionally). Recomputed fresh on
+   * every call, not cached at construction -- a `.vscode/settings.json` edit
+   * doesn't require a window reload, same convention as every other
+   * config-backed setting in this codebase (e.g. `shellPath`/`postSetupCwd`
+   * in jobRunner.ts). `jobOverride` plugs in a per-job override (see
+   * `JobDefinition.logsDirectory`) when the caller has one.
    */
+  resolveRoot(jobOverride?: string): string {
+    const globalSetting = vscode.workspace
+      .getConfiguration('eda-job-runner', this.workspaceFolder.uri)
+      .get<string>('logsDirectory', '');
+    return resolveLogsRoot({ workspaceRoot: this.workspaceRoot, globalSetting, jobOverride });
+  }
+
+  /**
+   * The de-duplicated set of every logs root actually in use: the global
+   * root, plus each job's own resolved override (if any) -- a cross-job
+   * scan (the Log Viewer's table, "clean all logs") needs every root a
+   * per-job `logsDirectory` override could have redirected a job's runs
+   * to, or they'd silently vanish from view/from the clean-all sweep.
+   */
+  resolveAllRoots(jobs: JobDefinition[]): string[] {
+    const roots = new Set<string>([this.resolveRoot()]);
+    for (const job of jobs) {
+      if (job.logsDirectory && job.logsDirectory.trim()) {
+        roots.add(this.resolveRoot(job.logsDirectory));
+      }
+    }
+    return [...roots];
+  }
+
   /**
    * Opens the log file with the `a` (append) flag and returns the raw
    * `FileHandle` rather than a `WriteStream`: the caller passes its `.fd`
@@ -31,31 +61,33 @@ export class LogManager {
    * interleave out of order) -- this is what lets capture survive an
    * extension-host restart, since it no longer depends on this process
    * staying alive to relay the child's output through a pipe.
+   *
+   * `laneSuffix` disambiguates log filenames for a job's non-primary run
+   * lanes (concurrent extra instances, or sequential repeat-count
+   * iterations) — e.g. "run2" or "3-10" — so they never collide with each
+   * other or with the primary lane's log, and don't relink `latest.log`
+   * (that always tracks the primary lane).
    */
   async createLogFile(
     jobId: string,
-    retentionCount: number,
-    laneSuffix?: string
+    retention: RetentionOptions,
+    laneSuffix?: string,
+    root: string = this.resolveRoot()
   ): Promise<{ logPath: string; handle: fs.promises.FileHandle }> {
-    const dir = path.join(this.logsRoot, jobId);
+    const dir = path.join(root, jobId);
     await fs.promises.mkdir(dir, { recursive: true });
     const logPath = path.join(dir, `${timestamp()}${laneSuffix ? `_${laneSuffix}` : ''}.log`);
     const handle = await fs.promises.open(logPath, 'a');
     if (!laneSuffix) {
       await this.relinkLatest(dir, logPath);
     }
-    await this.prune(jobId, retentionCount);
+    await this.prune(jobId, retention, root);
     return { logPath, handle };
   }
 
-  async getLatestLogPath(jobId: string): Promise<string | undefined> {
-    const runs = await this.listRuns(jobId);
-    return runs[0];
-  }
-
   /** Newest-first list of past run log files for a job (excludes the latest.log symlink). */
-  async listRuns(jobId: string): Promise<string[]> {
-    const dir = path.join(this.logsRoot, jobId);
+  async listRuns(jobId: string, root: string = this.resolveRoot()): Promise<string[]> {
+    const dir = path.join(root, jobId);
     try {
       const entries = await fs.promises.readdir(dir);
       return entries
@@ -68,23 +100,35 @@ export class LogManager {
     }
   }
 
-  /** Every job id that has ever had a log directory created, including one for a job since deleted from JobStore. */
-  async listAllJobIds(): Promise<string[]> {
+  /** Every job id that has ever had a log directory created under `root`, including one for a job since deleted from JobStore. */
+  async listAllJobIds(root: string = this.resolveRoot()): Promise<string[]> {
     try {
-      const entries = await fs.promises.readdir(this.logsRoot, { withFileTypes: true });
+      const entries = await fs.promises.readdir(root, { withFileTypes: true });
       return entries.filter(e => e.isDirectory()).map(e => e.name);
     } catch {
       return [];
     }
   }
 
-  /** Every past run log across every job (not just one), for the log viewer's table. Not sorted -- callers order by whatever field they display. */
-  async listAllRuns(): Promise<{ jobId: string; logPath: string }[]> {
-    const jobIds = await this.listAllJobIds();
-    const perJob = await Promise.all(
-      jobIds.map(async jobId => (await this.listRuns(jobId)).map(logPath => ({ jobId, logPath })))
+  /**
+   * Every past run log across every job, for the log viewer's table. Not
+   * sorted -- callers order by whatever field they display. `roots`
+   * defaults to just the single global root; a per-job override (see
+   * `JobDefinition.logsDirectory`) means a caller that wants to see
+   * everything needs to pass the de-duplicated set of every root actually
+   * in use (global + each overriding job's own).
+   */
+  async listAllRuns(roots: string[] = [this.resolveRoot()]): Promise<{ jobId: string; logPath: string }[]> {
+    const perRoot = await Promise.all(
+      roots.map(async root => {
+        const jobIds = await this.listAllJobIds(root);
+        const perJob = await Promise.all(
+          jobIds.map(async jobId => (await this.listRuns(jobId, root)).map(logPath => ({ jobId, logPath })))
+        );
+        return perJob.flat();
+      })
     );
-    return perJob.flat();
+    return perRoot.flat();
   }
 
   /**
@@ -125,16 +169,46 @@ export class LogManager {
     }
   }
 
+  /** Total run count and on-disk byte size across `roots` -- the "how much would this actually delete" summary for the clean-all confirmation. */
+  async totalSize(roots: string[] = [this.resolveRoot()]): Promise<{ files: number; bytes: number }> {
+    const runs = await this.listAllRuns(roots);
+    let bytes = 0;
+    for (const run of runs) {
+      bytes += await this.fileSize(run.logPath);
+    }
+    return { files: runs.length, bytes };
+  }
+
+  /** Deletes every past run log under `roots`, unconditionally -- the caller is responsible for confirming first (see extension.ts's cleanAllLogs command). Returns what was actually freed. */
+  async cleanAllLogs(roots: string[] = [this.resolveRoot()]): Promise<{ files: number; bytes: number }> {
+    const runs = await this.listAllRuns(roots);
+    let bytes = 0;
+    for (const run of runs) {
+      bytes += await this.fileSize(run.logPath);
+      await fs.promises.unlink(run.logPath).catch(() => undefined);
+    }
+    return { files: runs.length, bytes };
+  }
+
+  private async fileSize(filePath: string): Promise<number> {
+    try {
+      return (await fs.promises.stat(filePath)).size;
+    } catch {
+      return 0;
+    }
+  }
+
   private async relinkLatest(dir: string, logPath: string): Promise<void> {
     const linkPath = path.join(dir, 'latest.log');
     await fs.promises.unlink(linkPath).catch(() => undefined);
     await fs.promises.symlink(path.basename(logPath), linkPath).catch(() => undefined);
   }
 
-  private async prune(jobId: string, keep: number): Promise<void> {
-    const runs = await this.listRuns(jobId);
-    const stale = runs.slice(Math.max(0, keep));
-    await Promise.all(stale.map(p => fs.promises.unlink(p).catch(() => undefined)));
+  private async prune(jobId: string, retention: RetentionOptions, root: string): Promise<void> {
+    const runs = await this.listRuns(jobId, root);
+    const withSizes = await Promise.all(runs.map(async p => ({ path: p, size: await this.fileSize(p) })));
+    const toDelete = planPrune(withSizes, retention);
+    await Promise.all(toDelete.map(p => fs.promises.unlink(p).catch(() => undefined)));
   }
 }
 

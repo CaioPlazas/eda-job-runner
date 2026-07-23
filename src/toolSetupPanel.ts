@@ -4,6 +4,8 @@ import { JobStore } from './jobStore';
 import { ToolDefinition, ToolList, ToolOption, ToolVariant } from './types';
 import { scanVariant, scanTool, scanLists, discoverList } from './toolIntrospect';
 import { detectSubcommandChoices, mergeFavorites, parseChoices } from './toolOptionParser';
+import { HELP_CSS, help } from './webviewHelp';
+import { BUILTIN_SEED_PATTERNS } from './seedDetect';
 
 interface ScanNewMessage {
   type: 'scanNew';
@@ -46,6 +48,7 @@ interface SaveEditMessage {
   helpArg: string;
   displayName: string;
   scanDir: string;
+  seedPattern: string;
 }
 interface StartAddVariantMessage {
   type: 'startAddVariant';
@@ -316,11 +319,13 @@ export class ToolSetupPanel {
         const helpArg = msg.helpArg.trim() || '--help';
         const displayName = msg.displayName.trim();
         const scanDir = msg.scanDir.trim();
+        const seedPattern = msg.seedPattern.trim();
         await this.toolStore.updateTool(msg.id, {
           command,
           helpArg,
           displayName: displayName || undefined,
-          scanDir: scanDir || undefined
+          scanDir: scanDir || undefined,
+          seedPattern: seedPattern || undefined
         });
         const updated = this.toolStore.getTool(msg.id);
         if (updated) {
@@ -352,8 +357,14 @@ export class ToolSetupPanel {
         }
         const helpArg = tool.helpArg?.trim() || '--help';
         const result = await scanVariant(tool.command, selectArgs, helpArg, this.jobStore, this.folder, tool.scanDir);
+        // Re-adding a label that already exists (nothing in the UI stops
+        // this) used to be a bare replace, silently discarding the previous
+        // variant's favorites and value-list attachments entirely -- route
+        // it through the same merge every rescan path already uses instead.
+        const existing = tool.variants.find(v => v.label === label);
+        const options = existing ? mergeFavorites(existing.options, result.options) : result.options;
         const variants = tool.variants.filter(v => v.label !== label);
-        variants.push({ label, selectArgs, options: result.options, rawHelp: result.rawHelp, scanError: result.scanError });
+        variants.push({ label, selectArgs, options, rawHelp: result.rawHelp, scanError: result.scanError });
         await this.toolStore.updateTool(msg.id, { variants, lastScanned: Date.now() });
         this.addingVariantForToolId = undefined;
         this.render();
@@ -485,6 +496,14 @@ function renderHtml(
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+  // For the Seed pattern paste-and-preview tester -- regex source (not the
+  // RegExp object itself, which doesn't survive JSON.stringify) plus label,
+  // re-compiled client-side so the live preview needs no host round-trip.
+  const seedPatternsJson = JSON.stringify(BUILTIN_SEED_PATTERNS.map(p => ({ label: p.label, source: p.pattern.source }))).replace(
+    /</g,
+    '\\u003c'
+  );
+
   // A choices metavar (e.g. "{qrun,dsim}") renders as "choices: qrun, dsim"
   // instead of the literal brace form, since Configure's builder now treats
   // it specially (a dropdown) -- showing raw braces here would look stale.
@@ -590,16 +609,15 @@ function renderHtml(
 
   const renderLists = (tool: ToolDefinition): string => `
     <div class="lists">
-      <div class="listsHeading">Value lists</div>
-      <div class="hint">
-        Discovered values for a dropdown. <b>Attach one to a flag</b> using that
-        flag's "value source" column above (in a variant's option table) to
-        make it that flag's dropdown — the usual case. Leave a list unattached
-        for a value with no real CLI flag to attach to (e.g. a plusarg like
-        <code>+UVM_TESTNAME=</code>) — an unattached list keeps its own row
-        below, with an insert template controlling exactly how a picked value
-        is written into the Command.
-      </div>
+      <div class="listsHeading">Value lists ${help(
+        'Discovered values for a dropdown. <b>Attach one to a flag</b> using that ' +
+          "flag's \"value source\" column above (in a variant's option table) to " +
+          "make it that flag's dropdown — the usual case. Leave a list unattached " +
+          'for a value with no real CLI flag to attach to (e.g. a plusarg like ' +
+          '<code>+UVM_TESTNAME=</code>) — an unattached list keeps its own row ' +
+          'below, with an insert template controlling exactly how a picked value ' +
+          'is written into the Command.'
+      )}</div>
       ${(tool.lists ?? []).map(l => renderList(tool.id, l)).join('')}
       <div class="listRow">
         <input type="text" placeholder="name (e.g. Test)" class="newListName" style="flex:1;" />
@@ -626,12 +644,24 @@ function renderHtml(
       </div>
       <details class="advancedFields">
         <summary>Advanced (name, scan directory)</summary>
-        <label>Display name</label>
-        <div class="hint">Friendly label shown wherever this tool is listed. Leave blank to just show the command.</div>
+        <label>Display name ${help('Friendly label shown wherever this tool is listed. Leave blank to just show the command.')}</label>
         <input type="text" class="editDisplayName" value="${esc(tool.displayName ?? '')}" placeholder="${esc(tool.command)}" />
-        <label>Scan directory</label>
-        <div class="hint">Directory this tool's scans/rescans run from. Leave blank to use the workspace's postSetupCwd setting. Register the same command twice with different scan directories (and names) if colleagues keep separate copies in different folders.</div>
+        <label>Scan directory ${help(
+          "Directory this tool's scans/rescans run from. Leave blank to use the workspace's postSetupCwd setting. " +
+            'Register the same command twice with different scan directories (and names) if colleagues keep separate copies in different folders.'
+        )}</label>
         <input type="text" class="editScanDir" value="${esc(tool.scanDir ?? '')}" placeholder="(workspace default)" />
+        <label>Seed pattern (regex, optional) ${help(
+          "Recovers a run's seed for the Log Viewer's Seed column when a job's Command doesn't use " +
+            '<code>${randomSeed}</code> (whose value is already captured directly). Capture group 1 is the seed. ' +
+            "Overrides the built-in guessed patterns for every job using this tool. Leave blank to just use the guesses."
+        )}</label>
+        <input type="text" class="editSeedPattern" value="${esc(tool.seedPattern ?? '')}" placeholder="e.g. MY_SEED=(\\d+)" />
+        <div class="seedTester">
+          <label>Try it: paste a sample log line</label>
+          <textarea class="seedTesterSample" rows="2" placeholder="paste a line from a real run's output here"></textarea>
+          <div class="hint seedTesterResult">Detected seed: <i>(nothing pasted yet)</i></div>
+        </div>
       </details>
     </div>`;
     }
@@ -682,10 +712,10 @@ function renderHtml(
       }
       <div id="manualVariants"></div>
       <button class="secondary" id="addVariantRow" type="button">+ Add sub-tool manually</button>
-      <div class="hint">
-        A sub-tool's <b>selector args</b> are what's inserted after the command to reach it, e.g.
-        <code>regression</code> (positional) or <code>--regression</code> (flag) — whatever the tool itself expects.
-      </div>
+      ${help(
+        "A sub-tool's <b>selector args</b> are what's inserted after the command to reach it, e.g. " +
+          '<code>regression</code> (positional) or <code>--regression</code> (flag) — whatever the tool itself expects.'
+      )}
       <div class="actions">
         <button class="primary" id="confirmAdd">Add</button>
         <button class="secondary" id="cancelAdd">Cancel</button>
@@ -696,15 +726,17 @@ function renderHtml(
       <h3>Add a tool</h3>
       <label for="newCommand">Command</label>
       <input id="newCommand" type="text" placeholder="your_run_script.py or /path/to/tool" />
-      <label for="newHelpArg">Help argument</label>
+      <label for="newHelpArg">Help argument ${help(
+        'Scanned through the same shell &amp; workspace setup chain a job uses (Shell &amp; Environment panel).'
+      )}</label>
       <input id="newHelpArg" type="text" value="--help" />
-      <div class="hint">Scanned through the same shell &amp; workspace setup chain a job uses (Shell &amp; Environment panel).</div>
       <details class="advancedFields">
         <summary>Advanced (name, scan directory)</summary>
         <label for="newDisplayName">Display name</label>
         <input id="newDisplayName" type="text" placeholder="(defaults to the command)" />
-        <label for="newScanDir">Scan directory</label>
-        <div class="hint">Leave blank to use the workspace's postSetupCwd setting. Set this (with a distinguishing display name) to register the same command a second time for a different folder, e.g. colleagues keeping separate copies in work1/work2.</div>
+        <label for="newScanDir">Scan directory ${help(
+          "Leave blank to use the workspace's postSetupCwd setting. Set this (with a distinguishing display name) to register the same command a second time for a different folder, e.g. colleagues keeping separate copies in work1/work2."
+        )}</label>
         <input id="newScanDir" type="text" placeholder="(workspace default)" />
       </details>
       <div class="actions">
@@ -745,6 +777,7 @@ function renderHtml(
   label.check { display: flex; align-items: center; gap: 8px; font-weight: 400; margin-top: 6px; }
   label.check input { width: auto; margin-top: 0; }
   .hint { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
+  ${HELP_CSS}
   .err { color: var(--vscode-errorForeground); }
   .actions { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
   button {
@@ -800,6 +833,10 @@ function renderHtml(
   .listRow { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
   .listRow input, .listRow select { margin-top: 0; }
   .listRow select { width: auto; padding: 6px 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; }
+  .seedTester { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--vscode-input-border, rgba(127,127,127,0.25)); border-radius: 4px; }
+  .seedTester label { margin-top: 0; font-weight: 400; }
+  .seedTester textarea { width: 100%; box-sizing: border-box; margin-top: 4px; font-family: var(--vscode-editor-font-family); font-size: 0.85em; resize: vertical; }
+  .seedTesterResult { margin-top: 6px; }
   .busyOverlay {
     position: fixed;
     inset: 0;
@@ -815,12 +852,11 @@ function renderHtml(
 </style>
 </head>
 <body>
-  <h2>Tool Setup</h2>
-  <div class="hint">
-    Register a tool's command and its <code>--help</code> output is scanned into checkable flags —
-    used by a job's Configure form to build its Command field. Star a flag to surface it first in
-    that builder. Re-scanned automatically on every window reload, in case the tool's own flags changed.
-  </div>
+  <h2>Tool Setup ${help(
+    "Register a tool's command and its <code>--help</code> output is scanned into checkable flags — " +
+      "used by a job's Configure form to build its Command field. Star a flag to surface it first in " +
+      "that builder. Re-scanned automatically on every window reload, in case the tool's own flags changed."
+  )}</h2>
 
   ${pendingHtml}
 
@@ -833,6 +869,51 @@ function renderHtml(
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const $ = id => document.getElementById(id);
+
+    // Mirrors seedDetect.ts's detectSeed exactly, client-side, so the
+    // paste-and-preview tester needs no host round-trip: try the tool's own
+    // custom pattern first (if it compiles and matches), then each built-in
+    // guessed pattern in order. BUILTIN_SEED_PATTERNS ships as {label,
+    // source} (a RegExp doesn't survive JSON.stringify) and is recompiled
+    // here.
+    const BUILTIN_SEED_PATTERNS = (${seedPatternsJson}).map(p => ({ label: p.label, pattern: new RegExp(p.source, 'i') }));
+    function detectSeedPreview(text, customSource) {
+      const custom = (customSource || '').trim();
+      if (custom) {
+        try {
+          const m = new RegExp(custom, 'i').exec(text);
+          if (m && m[1]) { return { value: m[1], via: 'custom pattern' }; }
+        } catch {
+          // Invalid regex -- fall through to the builtins, same as the real detectSeed.
+        }
+      }
+      for (const { label, pattern } of BUILTIN_SEED_PATTERNS) {
+        const m = pattern.exec(text);
+        if (m && m[1]) { return { value: m[1], via: label }; }
+      }
+      return null;
+    }
+    (function wireSeedTesters() {
+      document.querySelectorAll('.tool').forEach(toolEl => {
+        const patternEl = toolEl.querySelector('.editSeedPattern');
+        const sampleEl = toolEl.querySelector('.seedTesterSample');
+        const resultEl = toolEl.querySelector('.seedTesterResult');
+        if (!patternEl || !sampleEl || !resultEl) { return; }
+        const update = () => {
+          const sample = sampleEl.value;
+          if (!sample.trim()) {
+            resultEl.innerHTML = 'Detected seed: <i>(nothing pasted yet)</i>';
+            return;
+          }
+          const found = detectSeedPreview(sample, patternEl.value);
+          resultEl.innerHTML = found
+            ? 'Detected seed: <b>' + found.value.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</b> (via ' + found.via.replace(/&/g, '&amp;').replace(/</g, '&lt;') + ')'
+            : 'Detected seed: <i>no match</i>';
+        };
+        patternEl.addEventListener('input', update);
+        sampleEl.addEventListener('input', update);
+      });
+    })();
 
     // Preserve scroll position across a render() -- a full panel.webview.html
     // reassignment (every state change here does one) reloads the document,
@@ -964,7 +1045,8 @@ function renderHtml(
         command: wrap.querySelector('.editCommand').value,
         helpArg: wrap.querySelector('.editHelpArg').value,
         displayName: wrap.querySelector('.editDisplayName').value,
-        scanDir: wrap.querySelector('.editScanDir').value
+        scanDir: wrap.querySelector('.editScanDir').value,
+        seedPattern: wrap.querySelector('.editSeedPattern').value
       });
     });
     wire('[data-confirm-addvariant]', btn => {

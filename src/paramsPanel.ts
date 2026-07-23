@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
 import { GlobalParam } from './types';
+import { HELP_CSS, help } from './webviewHelp';
 
 interface SaveMessage {
   type: 'save';
@@ -91,6 +92,7 @@ function renderHtml(webview: vscode.Webview, params: GlobalParam[]): string {
     color: var(--vscode-descriptionForeground);
     margin-top: 4px;
   }
+  ${HELP_CSS}
   .paramRow { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
   .paramRow input { width: auto; flex: 1 1 200px; margin: 0; }
   .paramRow .pName { flex: 1 1 220px; }
@@ -126,14 +128,15 @@ function renderHtml(webview: vscode.Webview, params: GlobalParam[]): string {
 </style>
 </head>
 <body>
-  <h2>Parameters</h2>
-  <div class="hint">
-    Workspace-wide named values, referenced in a job's Command (including the
-    Tool builder's free-text fields) as <code>\${var:NAME}</code>. Resolved
-    silently every run — no prompt, unlike <code>\${param:NAME}</code> (which
-    still prompts every Run and is unaffected by this panel). A job can
-    override any parameter's value for itself in its own Configure form.
-  </div>
+  <h2>Parameters ${help(
+    "Workspace-wide named values, referenced in a job's Command (including the " +
+      "Tool builder's free-text fields) as <code>" +
+      '${var:NAME}' +
+      '</code>. Resolved silently every run — no prompt, unlike <code>' +
+      '${param:NAME}' +
+      "</code> (which still prompts every Run and is unaffected by this panel). " +
+      "A job can override any parameter's value for itself in its own Configure form."
+  )}</h2>
 
   <div id="paramsWrap"></div>
   <button class="secondary" id="addParam" type="button" style="margin-top:10px;">+ Add parameter</button>
