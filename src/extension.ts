@@ -40,7 +40,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const toolStore = new ToolStore(folder);
   context.subscriptions.push(toolStore);
 
-  const logManager = new LogManager(folder);
+  const logManager = new LogManager(folder, context.workspaceState);
   const logDiagnostics = new LogDiagnostics(folder);
   context.subscriptions.push(logDiagnostics);
   const jobRunner = new JobRunner(
@@ -106,7 +106,7 @@ export function activate(context: vscode.ExtensionContext): void {
       jobStore.duplicateJob(item.job.id)
     ),
     vscode.commands.registerCommand('eda-job-runner.refresh', () => jobStore.load()),
-    vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, folder, logManager)),
+    vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, folder, logManager, jobRunner)),
     vscode.commands.registerCommand('eda-job-runner.configureTools', () => ToolSetupPanel.createOrShow(toolStore, jobStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.openLogViewer', () => LogViewerPanel.createOrShow(jobStore, logManager, toolStore)),

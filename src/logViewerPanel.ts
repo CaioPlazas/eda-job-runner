@@ -231,7 +231,7 @@ export class LogViewerPanel {
   }
 }
 
-function renderHtml(webview: vscode.Webview): string {
+export function renderHtml(webview: vscode.Webview): string {
   const nonce = getNonce();
 
   return `<!DOCTYPE html>

@@ -2,7 +2,7 @@
   "name": "eda-job-runner",
   "displayName": "EDA Job Runner",
   "description": "Tool-agnostic sidebar for running and tracking EDA compile/simulation jobs (Xcelium, Questa, or any custom script) without leaving VS Code.",
-  "version": "0.39.0",
+  "version": "0.40.0",
   "publisher": "CaioPlazas",
   "license": "GPL-3.0",
   "icon": "media/icon.png",
@@ -518,23 +518,42 @@
         "eda-job-runner.killSignals": {
           "type": "array",
           "default": [
-            { "signal": "SIGINT", "graceSeconds": 5 },
-            { "signal": "SIGTERM", "graceSeconds": 5 },
-            { "signal": "SIGKILL" }
+            {
+              "signal": "SIGINT",
+              "graceSeconds": 5
+            },
+            {
+              "signal": "SIGTERM",
+              "graceSeconds": 5
+            },
+            {
+              "signal": "SIGKILL"
+            }
           ],
           "items": {
             "type": "object",
             "properties": {
               "signal": {
                 "type": "string",
-                "enum": ["SIGINT", "SIGTERM", "SIGKILL", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGABRT"]
+                "enum": [
+                  "SIGINT",
+                  "SIGTERM",
+                  "SIGKILL",
+                  "SIGHUP",
+                  "SIGQUIT",
+                  "SIGUSR1",
+                  "SIGUSR2",
+                  "SIGABRT"
+                ]
               },
               "graceSeconds": {
                 "type": "number",
                 "minimum": 0
               }
             },
-            "required": ["signal"]
+            "required": [
+              "signal"
+            ]
           },
           "markdownDescription": "Ordered escalation sequence used when stopping a job (signalled against the whole process group, so it reaches the entire `make`/shell/simulator tree). Each stage waits `graceSeconds` (falling back to `killGracePeriodSeconds` when omitted) before moving to the next; a final `SIGKILL` is always appended even if omitted here. Defaults to `SIGINT` first since many EDA tools release their license cleanly on ctrl+c but not on `SIGTERM`."
         },
@@ -548,7 +567,7 @@
           "type": "number",
           "default": 200,
           "minimum": 1,
-          "description": "Maximum amount (MB) of a run's output fed into error/warning parsing and Fail/Pass pattern matching. Once exceeded, parsing stops (with a marker) but the job keeps running and its full output keeps being recorded to the log file regardless -- since v0.30.0 the log file is written directly by the job's own process, so this setting no longer limits the file's own size (use logRetentionCount to bound total disk usage)."
+          "description": "Maximum amount (MB) of a run's output fed into error/warning parsing and Fail/Pass pattern matching -- NOT a log file size limit, despite the name (kept for settings.json compatibility). Once exceeded, parsing stops (with a marker) but the job keeps running and its full output keeps being recorded to the log file regardless -- since v0.30.0 the log file is written directly by the job's own process, so this setting no longer bounds the file itself. To bound disk usage, use logRetentionCount and/or logRetentionMaxSizeMB (Shell & Environment panel) instead -- unrelated settings despite the similar name."
         },
         "eda-job-runner.logRetentionCount": {
           "type": "number",
@@ -608,6 +627,7 @@
     "@types/vscode": "^1.74.0",
     "@vscode/vsce": "^2.32.0",
     "esbuild": "^0.23.0",
+    "playwright-core": "^1.61.1",
     "typescript": "^5.5.0"
   }
 }

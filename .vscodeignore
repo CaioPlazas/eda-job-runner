@@ -15,5 +15,6 @@ sample-projects/**
 test-fixtures/**
 docs/**
 scripts/**
+.webview-preview/**
 .github/**
 .claude/**

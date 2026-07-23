@@ -162,6 +162,11 @@ const ANSI_PATTERN = /\x1B\[[0-9;]*[a-zA-Z]/g;
 // first) so a very large repeat count or long-lived concurrent usage can't
 // grow this in-memory, non-persisted structure without bound.
 const MAX_LANES_PER_JOB = 50;
+// A post-run command is meant to be a quick follow-up action (a notification,
+// a cleanup script), not a second tracked job -- unlike the job itself, it's
+// never meant to survive as a detached background process. Mirrors the Test
+// button's own timeout in shellEnvPanel.ts.
+const POST_RUN_TIMEOUT_MS = 60_000;
 
 export class JobRunner implements vscode.Disposable {
   private readonly _onDidChangeStatus = new vscode.EventEmitter<string | undefined>();
@@ -171,6 +176,8 @@ export class JobRunner implements vscode.Disposable {
   private readonly activeRuns = new Map<string, ActiveRun>();
   /** Jobs currently being re-tailed after a window reload. See beginReattachment/ReattachRun. */
   private readonly reattachedRuns = new Map<string, ReattachRun>();
+  /** Still-running `runPostRunCommand` children -- unlike the job itself, killed on dispose() (see there) rather than left detached. */
+  private readonly postRunChildren = new Set<cp.ChildProcess>();
   /**
    * Lane-group tracking for a job that has run as a sequential repeat-count
    * batch (a job can never run concurrently with itself — see `run()`). Not
@@ -245,6 +252,23 @@ export class JobRunner implements vscode.Disposable {
   getLanes(jobId: string): { laneKey: string; status: JobRunStatus }[] {
     const group = this.laneGroups.get(jobId);
     return group ? [...group.entries()].map(([laneKey, status]) => ({ laneKey, status })) : [];
+  }
+
+  /**
+   * The log file every currently-live run (spawned or reattached) is
+   * actively writing to -- "clean all logs" must never unlink one of these,
+   * or the child keeps writing into an orphaned inode while the log viewer
+   * and error-count tailing silently freeze on the now-vanished path.
+   */
+  getActiveLogPaths(): Set<string> {
+    const paths = new Set<string>();
+    for (const run of this.activeRuns.values()) {
+      paths.add(run.logPath);
+    }
+    for (const run of this.reattachedRuns.values()) {
+      paths.add(run.logPath);
+    }
+    return paths;
   }
 
   /**
@@ -667,6 +691,13 @@ export class JobRunner implements vscode.Disposable {
             'further error/warning counting and pattern matching stop.\n'
         )
         .catch(() => undefined);
+      // The tailer's only purpose is feeding chunks here (feedChunk), and
+      // parsing/pattern-matching is now permanently capped for the rest of
+      // this run -- polling on, reading every subsequent 500ms delta off a
+      // (potentially still-growing, up to 200MB) log file just to hand it
+      // straight to the `if (run.parseTruncated) return;` guard above would
+      // be pure wasted I/O for however much longer the run keeps going.
+      run.tailer.stop();
     }
   }
 
@@ -731,16 +762,15 @@ export class JobRunner implements vscode.Disposable {
     if (run.finished) {
       // Node can fire both 'error' and 'exit' for the same child in some
       // failure modes; only the first should actually finalize this run. This
-      // guard (and clearing killTimer/removing the activeRuns entry) all
-      // happen before the first `await` below, so it's still race-free now
-      // that finish() is async.
+      // guard (unlike removing the activeRuns entry, see below) happens
+      // before the first `await` below, so it's still race-free now that
+      // finish() is async.
       return;
     }
     run.finished = true;
     if (run.killTimer) {
       clearTimeout(run.killTimer);
     }
-    this.activeRuns.delete(run.laneKey);
 
     // The child wrote straight to the log file (no pipe in between), so its
     // output is already durable on disk by the time 'exit' fires -- but our
@@ -844,6 +874,15 @@ export class JobRunner implements vscode.Disposable {
       resolvedCommand: run.resolvedCommand
     });
 
+    // Only removed here, at the very end -- not right after the 'exit'/'error'
+    // event fires -- so `run()`'s activeRuns.has(laneKey) guard keeps refusing
+    // a new run for this same lane for as long as this finish() still has
+    // cleanup in flight (log trailer write/close, setLaneStatus above). Doing
+    // this earlier left a window where a fresh run() could slip through the
+    // guard, get its own activeRuns entry, and then have this finish() call
+    // overwrite its live "running" status with this (older) run's terminal
+    // one once the awaits above finally settled.
+    this.activeRuns.delete(run.laneKey);
     this.resolveLaneCompletion(laneKey, finalState);
   }
 
@@ -882,13 +921,30 @@ export class JobRunner implements vscode.Disposable {
       );
       return;
     }
+    this.postRunChildren.add(child);
+    const timer = setTimeout(() => {
+      if (child.pid) {
+        try {
+          process.kill(child.pid, 'SIGKILL');
+        } catch {
+          /* already gone */
+        }
+      }
+    }, POST_RUN_TIMEOUT_MS);
+
     child.on('error', err => {
+      clearTimeout(timer);
+      this.postRunChildren.delete(child);
       void vscode.window.showWarningMessage(`EDA Job Runner: post-run command failed to start: ${err.message}`);
     });
     child.on('exit', (code, signal) => {
+      clearTimeout(timer);
+      this.postRunChildren.delete(child);
       if (code !== 0 || signal) {
         void vscode.window.showWarningMessage(
-          `EDA Job Runner: post-run command exited ${code ?? 'n/a'}${signal ? ` (signal ${signal})` : ''}.`
+          `EDA Job Runner: post-run command exited ${code ?? 'n/a'}${
+            signal ? ` (signal ${signal}${signal === 'SIGKILL' ? ', timed out' : ''})` : ''
+          }.`
         );
       }
     });
@@ -971,6 +1027,10 @@ export class JobRunner implements vscode.Disposable {
     run.parseBytesFed += Buffer.byteLength(stripped, 'utf8');
     if (run.parseBytesFed > run.maxParseBytes) {
       run.parseTruncated = true;
+      // Same reasoning as feedChunk's own tailer.stop() -- nothing further
+      // is ever done with a chunk once parsing is capped for the rest of
+      // this run, so keep polling for one would be pure wasted I/O.
+      run.tailer.stop();
     }
   }
 
@@ -1198,6 +1258,18 @@ export class JobRunner implements vscode.Disposable {
       run.tailer.stop();
       if (run.pollTimer) {
         clearInterval(run.pollTimer);
+      }
+    }
+    // Unlike the job itself (see the comment below), a post-run command is
+    // never meant to survive as a detached background process -- it's a
+    // quick follow-up action, not a second tracked job.
+    for (const child of this.postRunChildren) {
+      if (child.pid) {
+        try {
+          process.kill(child.pid, 'SIGKILL');
+        } catch {
+          /* already gone */
+        }
       }
     }
     this._onDidChangeStatus.dispose();

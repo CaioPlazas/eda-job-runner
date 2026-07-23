@@ -16,3 +16,6 @@ transcript
 vsim.wlf
 
 .claude/
+
+# Visual-test harness output (scripts/render-webviews.mjs + screenshot-webviews.mjs) -- regenerated, not committed.
+.webview-preview/
