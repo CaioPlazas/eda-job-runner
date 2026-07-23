@@ -399,7 +399,12 @@ export class ToolSetupPanel {
           )
         };
         await this.toolStore.updateTool(msg.id, { variants });
-        this.render();
+        // No this.render() -- a favorite-star click is the highest-frequency
+        // interaction in this panel, and the client already patched its own
+        // DOM (icon + re-sort) the moment it was clicked, matching this same
+        // sort order (see the client script's fav click handler). A full
+        // webview.html reassignment here would just discard the filter text,
+        // open <details>, focus, and scroll position for no visible benefit.
         return;
       }
 
@@ -420,7 +425,9 @@ export class ToolSetupPanel {
           )
         };
         await this.toolStore.updateTool(msg.id, { variants });
-        this.render();
+        // No this.render() -- the <select> the user just changed already
+        // shows its new value natively; nothing else on the page depends on
+        // valueListName, so there's nothing to patch or re-render at all.
         return;
       }
 
@@ -485,7 +492,7 @@ export class ToolSetupPanel {
   }
 }
 
-function renderHtml(
+export function renderHtml(
   webview: vscode.Webview,
   tools: ToolDefinition[],
   pendingAdd: PendingAdd | undefined,
@@ -532,6 +539,14 @@ function renderHtml(
       return '<div class="hint">No options detected.</div>';
     }
     const lists = tool.lists ?? [];
+    // Embedded per-row as data-orig-idx (below) so the client-side favorite
+    // toggle (see toggleFavorite's wire() handler) can re-sort using this
+    // same original-definition order as its tiebreak, exactly like this
+    // sort's stable behavior against the untouched `options` array -- without
+    // it, repeatedly toggling a flag on/off client-side would sort against
+    // whatever order the DOM happened to be in from the previous toggle,
+    // permanently drifting away from what a fresh render would show.
+    const origIndex = new Map(options.map((o, i) => [o.flags.join('|'), i]));
     const sorted = [...options].sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite));
     return `<input type="text" class="optFilterTool" placeholder="Filter flags…" />
     <table class="opts">${sorted
@@ -551,7 +566,7 @@ function renderHtml(
                   .join('')}
               </select></td>`
             : '<td></td>';
-        return `<tr>
+        return `<tr data-orig-idx="${origIndex.get(key) ?? 0}">
           <td><button class="favBtn ${o.favorite ? 'favOn' : ''}" data-fav-id="${esc(tool.id)}" data-fav-label="${esc(
           variantLabel
         )}" data-fav-key="${esc(key)}" title="${o.favorite ? 'Unfavorite' : 'Favorite'}" type="button">${
@@ -877,9 +892,13 @@ function renderHtml(
     // source} (a RegExp doesn't survive JSON.stringify) and is recompiled
     // here.
     const BUILTIN_SEED_PATTERNS = (${seedPatternsJson}).map(p => ({ label: p.label, pattern: new RegExp(p.source, 'i') }));
+    // Mirrors seedDetect.ts's CATASTROPHIC_SHAPE -- this tester re-runs the
+    // pattern on every keystroke, so a nested-quantifier typo (e.g. "(a+)+")
+    // would otherwise freeze this webview's tab, not just the real Log Viewer.
+    const CATASTROPHIC_SHAPE = /\\([^()]*[+*][^()]*\\)[+*]/;
     function detectSeedPreview(text, customSource) {
       const custom = (customSource || '').trim();
-      if (custom) {
+      if (custom && !CATASTROPHIC_SHAPE.test(custom)) {
         try {
           const m = new RegExp(custom, 'i').exec(text);
           if (m && m[1]) { return { value: m[1], via: 'custom pattern' }; }
@@ -978,14 +997,37 @@ function renderHtml(
         label: btn.getAttribute('data-remove-variant-label')
       })
     );
-    wire('[data-fav-id]', btn =>
+    // The highest-frequency interaction in this panel -- patch this row (and
+    // re-sort the table, favorites-first, exactly like the server's own
+    // renderOptionRowsEditable sort) right here instead of waiting on a host
+    // round-trip + a full webview.html reassignment (see onMessage's
+    // 'toggleFavorite' case, which no longer calls render() for this reason).
+    wire('[data-fav-id]', btn => {
+      const nowFavorite = !btn.classList.contains('favOn');
+      btn.classList.toggle('favOn', nowFavorite);
+      btn.textContent = nowFavorite ? '★' : '☆';
+      btn.title = nowFavorite ? 'Unfavorite' : 'Favorite';
+      const table = btn.closest('table.opts');
+      if (table) {
+        const rows = Array.from(table.querySelectorAll('tr'));
+        rows.sort((a, b) => {
+          const aFav = a.querySelector('.favBtn.favOn') ? 1 : 0;
+          const bFav = b.querySelector('.favBtn.favOn') ? 1 : 0;
+          // Ties (both favorite or both not) fall back to each row's
+          // original definition-order index -- not current DOM order -- so
+          // repeated toggling stays idempotent instead of permanently
+          // drifting away from what a fresh render would show.
+          return bFav - aFav || Number(a.dataset.origIdx) - Number(b.dataset.origIdx);
+        });
+        rows.forEach(r => table.appendChild(r));
+      }
       vscode.postMessage({
         type: 'toggleFavorite',
         id: btn.getAttribute('data-fav-id'),
         label: btn.getAttribute('data-fav-label'),
         flagsKey: btn.getAttribute('data-fav-key')
-      })
-    );
+      });
+    });
     document.querySelectorAll('.valueSourceSelect').forEach(sel => {
       sel.addEventListener('change', () => {
         vscode.postMessage({

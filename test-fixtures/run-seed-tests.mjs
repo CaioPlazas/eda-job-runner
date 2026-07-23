@@ -53,6 +53,39 @@ check(compileSeedPattern('') === undefined, 'compileSeedPattern("") -> undefined
 // --- no match anywhere -> undefined ---
 check(detectSeed('a perfectly ordinary log line with no seed info at all') === undefined, 'no match -> undefined');
 
+// --- seed value must look numeric/hex, not a bare word ---
+check(
+  detectSeed('Simulation seed: automatic') === undefined,
+  'the loosest fallback does not treat a non-numeric word ("automatic") as a seed'
+);
+check(
+  detectSeed('vsim -sv_seed  tb_top') === undefined,
+  '-sv_seed followed by no real value does not capture the next positional arg ("tb_top") as the seed'
+);
+check(detectSeed('# Random Seed: 0x1a2b3c') === '0x1a2b3c', 'a 0x-prefixed hex seed value is still detected');
+
+// --- catastrophic-backtracking custom patterns are refused outright, never executed ---
+check(compileSeedPattern('(a+)+b') === undefined, 'a classic catastrophic-backtracking shape is refused, not compiled');
+check(compileSeedPattern('(x*)*') === undefined, 'another catastrophic shape variant ((x*)*) is refused');
+check(compileSeedPattern('MY_SEED=(\\d+)') instanceof RegExp, 'an ordinary safe custom pattern still compiles fine');
+{
+  const start = Date.now();
+  // Would take many seconds (backtracking is exponential in input length) if this pattern actually ran.
+  const result = detectSeed('a'.repeat(60), '(a+)+b');
+  const elapsed = Date.now() - start;
+  check(result === undefined, 'a catastrophic custom pattern is skipped and falls through to the builtins (no match here)');
+  check(elapsed < 1000, `detectSeed with a catastrophic custom pattern returns immediately (${elapsed}ms) instead of hanging`);
+}
+
+// --- the (safe) custom-pattern text cap still finds a match near the tail of a huge log ---
+{
+  const huge = 'x'.repeat(50000) + '\nMY_SEED=777888';
+  check(
+    detectSeed(huge, 'MY_SEED=(\\d+)') === '777888',
+    'a safe custom pattern still finds a match near the tail of a huge log, despite the text cap'
+  );
+}
+
 // --- sanity: the exported builtin list is non-empty and each entry has a label + pattern ---
 check(BUILTIN_SEED_PATTERNS.length > 0, 'BUILTIN_SEED_PATTERNS is non-empty');
 check(

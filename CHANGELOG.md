@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.40.0 — Bug fixes, performance, and a visual-test harness
+
+A focused code-review pass, plus a new internal tool: a headless-Chromium
+harness that renders every webview panel's real HTML and screenshots it,
+used to visually verify these fixes (dev-only, not shipped in the VSIX).
+
+**Bug fixes:**
+- A repeat-count batch no longer self-prunes its own still-running
+  iterations under the default log-retention count — a batch's N runs now
+  count as one "family" that's kept or removed as a whole.
+- "Clean all logs" no longer deletes a currently-running job's live log,
+  and no longer leaves `latest.log` symlinks dangling.
+- Deleting a job that used a per-job logs-directory override no longer
+  orphans its past logs from the Log Viewer / "clean all."
+- Loading a job template no longer leaks a previous job's parameter
+  overrides or custom arguments into the newly-loaded job.
+- Seed detection no longer invents a seed from a non-numeric word (e.g.
+  "Simulation seed: automatic"), and a custom seed-pattern regex can no
+  longer freeze the extension host.
+- Fixed a race where a fresh run could have its live status overwritten
+  by an older run finishing up in the background.
+- A post-run command is now tracked, timed out, and stopped on extension
+  deactivation instead of being able to leak indefinitely.
+- Shell auto-detect no longer silently discards the detected arguments it
+  just showed you.
+
+**Performance:**
+- The Log Viewer caches each log's header/trailer read instead of
+  re-reading every past run's log file on every open and every Refresh.
+- Toggling a favorite flag or a value-source dropdown in Tool Setup no
+  longer reloads the whole panel.
+- The log tailer stops polling a run's growing log once its parsing cap
+  is reached, instead of reading and discarding for the rest of the run.
+
+**Cleanup:** clearer settings/help text distinguishing the two
+similarly-named log-size settings; the two log-retention checkboxes are
+now labeled distinctly instead of both saying "Keep at most."
+
 ## 0.39.0 — Seed detection for jobs that don't use ${randomSeed}
 
 The Log Viewer's Seed column previously showed "–" for any job whose seed

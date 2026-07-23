@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as path from 'path';
 import { JobStore } from './jobStore';
+import { JobRunner } from './jobRunner';
 import { LogManager } from './logManager';
 import { detectVscodeShell } from './shellDetect';
 import { buildShellInvocation, defaultArgsForShell, resolveJobEnv, substituteVars } from './shellInvocation';
@@ -67,7 +68,12 @@ export class ShellEnvPanel {
   private readonly disposables: vscode.Disposable[] = [];
   private testChild: cp.ChildProcess | undefined;
 
-  static createOrShow(jobStore: JobStore, folder: vscode.WorkspaceFolder, logManager: LogManager): void {
+  static createOrShow(
+    jobStore: JobStore,
+    folder: vscode.WorkspaceFolder,
+    logManager: LogManager,
+    jobRunner: JobRunner
+  ): void {
     if (ShellEnvPanel.current) {
       ShellEnvPanel.current.panel.reveal();
       return;
@@ -78,14 +84,15 @@ export class ShellEnvPanel {
       vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true }
     );
-    ShellEnvPanel.current = new ShellEnvPanel(panel, jobStore, folder, logManager);
+    ShellEnvPanel.current = new ShellEnvPanel(panel, jobStore, folder, logManager, jobRunner);
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly jobStore: JobStore,
     private readonly folder: vscode.WorkspaceFolder,
-    private readonly logManager: LogManager
+    private readonly logManager: LogManager,
+    private readonly jobRunner: JobRunner
   ) {
     this.panel = panel;
     this.panel.webview.html = renderHtml(panel.webview, this.readState());
@@ -154,7 +161,11 @@ export class ShellEnvPanel {
     // could have redirected some job's runs to, not just the global root --
     // otherwise an overridden job's logs would silently survive "clean all."
     const roots = this.logManager.resolveAllRoots(this.jobStore.getJobs());
-    const { files, bytes } = await this.logManager.totalSize(roots);
+    // Currently-live runs are never deleted -- unlinking one out from under
+    // its still-writing child would freeze live tailing and orphan the
+    // eventual trailer write (see JobRunner.getActiveLogPaths).
+    const active = this.jobRunner.getActiveLogPaths();
+    const { files, bytes } = await this.logManager.totalSize(roots, active);
     if (files === 0) {
       void vscode.window.showInformationMessage('EDA Job Runner: no logs to clean.');
       return;
@@ -167,18 +178,27 @@ export class ShellEnvPanel {
     if (confirm !== 'Delete all logs') {
       return;
     }
-    const result = await this.logManager.cleanAllLogs(roots);
+    const result = await this.logManager.cleanAllLogs(roots, active);
+    const skippedNote = result.skipped > 0 ? ` (${result.skipped} currently running, skipped)` : '';
     void vscode.window.showInformationMessage(
-      `EDA Job Runner: deleted ${result.files} log file${result.files === 1 ? '' : 's'} (${formatBytes(result.bytes)}).`
+      `EDA Job Runner: deleted ${result.files} log file${result.files === 1 ? '' : 's'} (${formatBytes(result.bytes)})${skippedNote}.`
     );
   }
 
   private onDetect(): void {
     const detected = detectVscodeShell();
+    // Only safe to leave "Auto" checked if the detected args are exactly
+    // what defaultArgsForShell would already produce for this shell at Save
+    // time -- otherwise checking Auto here would make onSave discard the
+    // very args just filled in and shown to the user (shellArgsAuto ? undefined
+    // : ... -- see onSave below), silently reverting to the generic per-shell
+    // default instead of what was actually detected.
+    const isDefaultArgs = arraysEqual(detected.args, defaultArgsForShell(detected.path));
     void this.panel.webview.postMessage({
       type: 'detected',
       shellPath: detected.path,
       shellArgs: detected.args.join('\n'),
+      shellArgsIsDefault: isDefaultArgs,
       env: Object.entries(detected.env)
         .map(([k, v]) => `${k}=${v}`)
         .join('\n'),
@@ -349,6 +369,10 @@ function buildTestCommand(script: string, commands: string[], workspaceRoot: str
   return steps.join(' && ');
 }
 
+function arraysEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
 function parseLines(text: string): string[] {
   return text
     .split('\n')
@@ -392,7 +416,7 @@ interface PanelState {
   logRetentionMaxSizeMB: number;
 }
 
-function renderHtml(webview: vscode.Webview, state: PanelState): string {
+export function renderHtml(webview: vscode.Webview, state: PanelState): string {
   const nonce = getNonce();
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -432,11 +456,6 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
   textarea { min-height: 56px; resize: vertical; white-space: pre; }
   label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; }
   label.check input { width: auto; margin-top: 0; }
-  .hint {
-    font-size: 0.85em;
-    color: var(--vscode-descriptionForeground);
-    margin-top: 4px;
-  }
   ${HELP_CSS}
   .row { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
   .row label { margin-top: 0; }
@@ -553,7 +572,7 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
 
   <label class="check">
     <input id="limitByCount" type="checkbox" ${state.logRetentionCount > 0 ? 'checked' : ''} />
-    Keep at most
+    Limit by run count
   </label>
   <div class="row">
     <input id="logRetentionCount" type="number" min="1" style="flex:0 0 100px;" value="${state.logRetentionCount > 0 ? state.logRetentionCount : 20}" ${state.logRetentionCount > 0 ? '' : 'disabled'} />
@@ -562,12 +581,13 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
 
   <label class="check">
     <input id="limitBySize" type="checkbox" ${state.logRetentionMaxSizeMB > 0 ? 'checked' : ''} />
-    Keep at most
+    Limit by total size
   </label>
   <div class="row">
     <input id="logRetentionMaxSizeMB" type="number" min="1" style="flex:0 0 100px;" value="${state.logRetentionMaxSizeMB > 0 ? state.logRetentionMaxSizeMB : 500}" ${state.logRetentionMaxSizeMB > 0 ? '' : 'disabled'} />
     <span>MB total per job ${help(
-      'Once a job\'s own past runs exceed this total size, the oldest surviving ones are deleted (after the count limit above, if that\'s also on) until back under it.'
+      'Once a job\'s own past runs exceed this total size, the oldest surviving ones are deleted (after the count limit above, if that\'s also on) until back under it. ' +
+        'This bounds disk usage only -- unrelated to the separate logMaxSizeMB setting (settings.json only), which caps how much of a run\'s output gets parsed for errors/warnings, not how much is kept on disk.'
     )}</span>
   </div>
 
@@ -653,8 +673,12 @@ function renderHtml(webview: vscode.Webview, state: PanelState): string {
         $('shellPath').value = m.shellPath;
         $('shellArgs').value = m.shellArgs;
         if (m.env) { $('env').value = m.env; }
-        autoEl.checked = true;
-        argsWrap.classList.add('hidden');
+        // Only safe to check Auto when the detected args ARE the generic
+        // per-shell default -- otherwise Save would discard these detected
+        // args entirely (shellArgsAuto true -> onSave persists no override)
+        // and silently fall back to that generic default instead.
+        autoEl.checked = m.shellArgsIsDefault;
+        argsWrap.classList.toggle('hidden', autoEl.checked);
         detectNote.textContent = 'Filled from ' + m.source + '. Review, then Save.';
       } else if (m.type === 'testResult') {
         testOut.style.display = 'block';

@@ -253,7 +253,7 @@ export class JobConfigPanel {
   }
 }
 
-function renderHtml(
+export function renderHtml(
   webview: vscode.Webview,
   job: JobDefinition | undefined,
   tools: ToolDefinition[],
@@ -725,24 +725,28 @@ function renderHtml(
       paramOverridesWrap.appendChild(row);
     }
 
-    (function initParamOverrides() {
+    // A named function (not the IIFE it used to be) so loadTemplate can
+    // re-run it against an empty override set after clearing the wrap --
+    // a template never carries param overrides of its own.
+    function initParamOverrides(savedOverrides) {
       const seenNames = new Set();
       GLOBAL_PARAMS.forEach(p => {
         seenNames.add(p.name);
-        const hasOverride = Object.prototype.hasOwnProperty.call(SAVED_PARAM_OVERRIDES, p.name);
-        addParamOverrideRow(p.name, hasOverride ? SAVED_PARAM_OVERRIDES[p.name] : '', hasOverride, true);
+        const hasOverride = Object.prototype.hasOwnProperty.call(savedOverrides, p.name);
+        addParamOverrideRow(p.name, hasOverride ? savedOverrides[p.name] : '', hasOverride, true);
       });
-      Object.keys(SAVED_PARAM_OVERRIDES).forEach(name => {
+      Object.keys(savedOverrides).forEach(name => {
         if (seenNames.has(name)) { return; }
         seenNames.add(name);
-        addParamOverrideRow(name, SAVED_PARAM_OVERRIDES[name], true, false);
+        addParamOverrideRow(name, savedOverrides[name], true, false);
       });
       parseVarNames(commandEl.value).forEach(name => {
         if (seenNames.has(name)) { return; }
         seenNames.add(name);
         addParamOverrideRow(name, '', false, false);
       });
-    })();
+    }
+    initParamOverrides(SAVED_PARAM_OVERRIDES);
 
     document.getElementById('addParamOverride').addEventListener('click', () => addParamOverrideRow('', '', true, false));
 
@@ -1161,6 +1165,15 @@ function renderHtml(
       parseProblemsEl.checked = t.parseProblems !== false;
       SAVED_TOOL_VARIANT = t.toolVariantLabel || '';
       toolSelectEl.value = t.toolId || '';
+      // A template never carries custom args, param overrides, or list
+      // insert-template overrides of its own -- clear all three before
+      // rebuilding, or leftovers from whatever job/template was loaded
+      // before get silently re-appended into the new Command via
+      // buildCommandFromBuilder and persisted on Save.
+      customArgsWrap.innerHTML = '';
+      paramOverridesWrap.innerHTML = '';
+      LIST_OVERRIDES = {};
+      initParamOverrides({});
       // Sync the builder's selects/checkboxes from the just-applied Command
       // text BEFORE possibly opening the builder -- so if opening it does
       // trigger its own 'toggle' rebuild, it rebuilds from state that

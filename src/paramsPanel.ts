@@ -66,7 +66,7 @@ export class ParamsPanel {
   }
 }
 
-function renderHtml(webview: vscode.Webview, params: GlobalParam[]): string {
+export function renderHtml(webview: vscode.Webview, params: GlobalParam[]): string {
   const nonce = getNonce();
   // Guards against a param value containing "</script>" breaking out of the
   // embedded script block, same convention as jobConfigPanel.ts's customArgsJson.
@@ -87,11 +87,6 @@ function renderHtml(webview: vscode.Webview, params: GlobalParam[]): string {
     width: 100%;
   }
   h2 { margin-top: 0; }
-  .hint {
-    font-size: 0.85em;
-    color: var(--vscode-descriptionForeground);
-    margin-top: 4px;
-  }
   ${HELP_CSS}
   .paramRow { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
   .paramRow input { width: auto; flex: 1 1 200px; margin: 0; }
