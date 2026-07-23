@@ -96,15 +96,32 @@ export function parseHelpOutput(helpText: string): ParsedOption[] {
 }
 
 /**
- * Carry a "favorite" star forward across a rescan. Rescanning always
- * produces a fresh options list (parsed straight from the tool's current
- * `--help`), so favorite status -- set by hand in Tool Setup -- has to be
- * re-applied by matching on the option's own flag spelling, not list
- * position (which a scan can freely reorder).
+ * Carry hand-set-in-Tool-Setup customizations -- a "favorite" star and a
+ * flag's attached value-list ("value source") -- forward across a rescan.
+ * Rescanning always produces a fresh options list (parsed straight from the
+ * tool's current `--help`, which has no concept of either), so both have to
+ * be re-applied by matching on the option's own flag spelling, not list
+ * position (which a scan can freely reorder). Previously this only carried
+ * `favorite` forward, silently dropping every flag's `valueListName` on
+ * every rescan (including the automatic rescan after editing a tool's
+ * command/help-arg) -- a real, if easy to reproduce, data-loss bug.
  */
-export function mergeFavorites<T extends { flags: string[]; favorite?: boolean }>(previous: T[], next: T[]): T[] {
-  const favoriteKeys = new Set(previous.filter(o => o.favorite).map(o => o.flags.join('|')));
-  return next.map(o => (favoriteKeys.has(o.flags.join('|')) ? { ...o, favorite: true } : o));
+export function mergeFavorites<T extends { flags: string[]; favorite?: boolean; valueListName?: string }>(
+  previous: T[],
+  next: T[]
+): T[] {
+  const byFlags = new Map(previous.map(o => [o.flags.join('|'), o]));
+  return next.map(o => {
+    const prior = byFlags.get(o.flags.join('|'));
+    if (!prior) {
+      return o;
+    }
+    return {
+      ...o,
+      favorite: prior.favorite ? true : o.favorite,
+      valueListName: prior.valueListName ?? o.valueListName
+    };
+  });
 }
 
 /**

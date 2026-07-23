@@ -16,6 +16,7 @@ import { computeKillSchedule, KillStage, RawKillSignalEntry } from './killPlan';
 import { FileTailer } from './tailer';
 import { parseLogTrailer } from './logIndex';
 import { decideReattachState } from './reattach';
+import { RetentionOptions } from './logRetention';
 
 export type { JobRunState } from './jobOutcome';
 import type { JobRunState } from './jobOutcome';
@@ -116,6 +117,9 @@ interface ActiveRun {
   /** Whether failRegex/passRegex has matched any line seen so far this run. */
   matchedFail: boolean;
   matchedPass: boolean;
+  /** Captured from the job at spawn time -- see JobDefinition.postRunEnabled/postRunCommand. */
+  postRunEnabled: boolean;
+  postRunCommand?: string;
 }
 
 /**
@@ -241,6 +245,22 @@ export class JobRunner implements vscode.Disposable {
   getLanes(jobId: string): { laneKey: string; status: JobRunStatus }[] {
     const group = this.laneGroups.get(jobId);
     return group ? [...group.entries()].map(([laneKey, status]) => ({ laneKey, status })) : [];
+  }
+
+  /**
+   * Collapse a job's repeat-count batch history back to a flat single-run
+   * row, without touching the job itself -- until now the only way back to
+   * a flat row was deleting and recreating the job. A no-op while a batch
+   * for this job is actually in flight (a live iteration still needs
+   * somewhere to record its own lane), so this is only ever wired up to a
+   * command scoped to an idle group in the tree.
+   */
+  clearLanes(jobId: string): void {
+    if (this.activeBatchJobs.has(jobId) || [...this.activeRuns.values()].some(run => run.jobId === jobId)) {
+      return;
+    }
+    this.laneGroups.delete(jobId);
+    this._onDidChangeStatus.fire(jobId);
   }
 
   /**
@@ -392,7 +412,6 @@ export class JobRunner implements vscode.Disposable {
     mirrorPrimary: boolean,
     template: string
   ): Promise<JobRunState> {
-    void ensureGitignoreEntry(this.workspaceFolder, this.memento);
     const { command: resolvedCommand, seed } = substituteRandomSeed(template);
 
     const config = vscode.workspace.getConfiguration('eda-job-runner', this.workspaceFolder.uri);
@@ -400,12 +419,19 @@ export class JobRunner implements vscode.Disposable {
     const shellArgs = config.get<string[] | null>('shellArgs', null);
     const envSetting = config.get<Record<string, string>>('env', {});
     const maxBytes = Math.max(1, config.get<number>('logMaxSizeMB', 200)) * MB;
-    const retentionCount = Math.max(1, config.get<number>('logRetentionCount', 20));
+    // 0 means "no limit" for either -- see logRetention.ts's planPrune.
+    const retention: RetentionOptions = {
+      maxCount: Math.max(0, config.get<number>('logRetentionCount', 20)),
+      maxTotalBytes: Math.max(0, config.get<number>('logRetentionMaxSizeMB', 0)) * MB
+    };
     const globalPostSetupCwd = config.get<string>('postSetupCwd', '');
 
     const workspaceRoot = this.workspaceFolder.uri.fsPath;
     const cwdAbs = this.resolveCwdAbs(job, globalPostSetupCwd);
     const shellCommand = buildShellCommand(this.getSetup(), resolvedCommand, workspaceRoot);
+
+    const logsRoot = this.logManager.resolveRoot(job.logsDirectory);
+    void ensureGitignoreEntry(this.workspaceFolder, this.memento, logsRoot);
 
     // Fresh run: drop the previous run's Problems-panel entries for this job
     // (every lane is mirrorPrimary=true now that a job can't run concurrently
@@ -416,7 +442,7 @@ export class JobRunner implements vscode.Disposable {
     }
 
     const laneSuffix = laneKey === job.id ? undefined : sanitizeLaneSuffix(label ?? laneKey);
-    const { logPath, handle: logHandle } = await this.logManager.createLogFile(job.id, retentionCount, laneSuffix);
+    const { logPath, handle: logHandle } = await this.logManager.createLogFile(job.id, retention, laneSuffix, logsRoot);
     const startTime = Date.now();
     // The structured fields (seed/cwd/started) are written BEFORE the
     // free-text command line deliberately: the log viewer's header parser
@@ -479,7 +505,9 @@ export class JobRunner implements vscode.Disposable {
       failRegex: compilePattern(job.failPattern),
       passRegex: compilePattern(job.passPattern),
       matchedFail: false,
-      matchedPass: false
+      matchedPass: false,
+      postRunEnabled: job.postRunEnabled === true,
+      postRunCommand: job.postRunCommand
     };
     this.activeRuns.set(laneKey, run);
     this.beginLaneCompletion(laneKey);
@@ -795,6 +823,14 @@ export class JobRunner implements vscode.Disposable {
       .catch(() => undefined);
     await run.logHandle.close().catch(() => undefined);
 
+    // A user Stop isn't "the job's done, run the follow-up" -- skip it for a
+    // killed run. Fire-and-forget: this shouldn't block lane completion, and
+    // its own outcome is surfaced via a notification, never folded into the
+    // job's own already-decided pass/fail.
+    if (finalState !== 'killed') {
+      this.runPostRunCommand(run);
+    }
+
     this.setLaneStatus(run, {
       state: finalState,
       startTime: previous?.startTime,
@@ -809,6 +845,53 @@ export class JobRunner implements vscode.Disposable {
     });
 
     this.resolveLaneCompletion(laneKey, finalState);
+  }
+
+  /**
+   * Spawns `run.postRunCommand` fire-and-forget, once per completed lane --
+   * same shell/setup chain and working directory as the job itself, but
+   * intentionally not folded into the main pipeline's capture/parsing/
+   * status: this is a lightweight follow-up action, not a second tracked
+   * job, so a failure here only shows a warning notification. A no-op
+   * unless the job's "Run a command after this job finishes" checkbox is
+   * on and the field isn't blank.
+   */
+  private runPostRunCommand(run: ActiveRun): void {
+    const postRunCommand = run.postRunCommand?.trim();
+    if (!run.postRunEnabled || !postRunCommand) {
+      return;
+    }
+    const config = vscode.workspace.getConfiguration('eda-job-runner', this.workspaceFolder.uri);
+    const shellPath = (config.get<string>('shellPath', 'bash') || 'bash').trim() || 'bash';
+    const shellArgs = config.get<string[] | null>('shellArgs', null);
+    const envSetting = config.get<Record<string, string>>('env', {});
+    const workspaceRoot = this.workspaceFolder.uri.fsPath;
+    const shellCommand = buildShellCommand(this.getSetup(), postRunCommand, workspaceRoot);
+    const { file, args } = buildShellInvocation(shellPath, shellArgs, shellCommand);
+
+    let child: cp.ChildProcess;
+    try {
+      child = cp.spawn(file, args, {
+        cwd: run.cwdAbs,
+        stdio: 'ignore',
+        env: resolveJobEnv(envSetting, workspaceRoot)
+      });
+    } catch (err) {
+      void vscode.window.showWarningMessage(
+        `EDA Job Runner: post-run command failed to start: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return;
+    }
+    child.on('error', err => {
+      void vscode.window.showWarningMessage(`EDA Job Runner: post-run command failed to start: ${err.message}`);
+    });
+    child.on('exit', (code, signal) => {
+      if (code !== 0 || signal) {
+        void vscode.window.showWarningMessage(
+          `EDA Job Runner: post-run command exited ${code ?? 'n/a'}${signal ? ` (signal ${signal})` : ''}.`
+        );
+      }
+    });
   }
 
   /**

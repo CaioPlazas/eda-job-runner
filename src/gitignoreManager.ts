@@ -1,15 +1,26 @@
 import * as vscode from 'vscode';
+import { logsRootRelativeToWorkspace } from './logsRoot';
 
 const ASKED_KEY = 'eda-job-runner.gitignorePrompted';
-const IGNORE_LINE = '.eda-runner/';
 
 /**
- * Offers, once per workspace, to add .eda-runner/ to .gitignore so
+ * Offers, once per workspace, to add the logs root to .gitignore so
  * simulation logs never end up staged for commit. Fire-and-forget: never
- * blocks a job from starting.
+ * blocks a job from starting. A no-op (and never prompts at all) when
+ * `logsRoot` isn't actually inside the workspace -- e.g. an absolute path
+ * elsewhere on disk (see `eda-job-runner.logsDirectory`) -- there's nothing
+ * meaningful to gitignore in that case.
  */
-export async function ensureGitignoreEntry(workspaceFolder: vscode.WorkspaceFolder, memento: vscode.Memento): Promise<void> {
+export async function ensureGitignoreEntry(
+  workspaceFolder: vscode.WorkspaceFolder,
+  memento: vscode.Memento,
+  logsRoot: string
+): Promise<void> {
   if (memento.get<boolean>(ASKED_KEY, false)) {
+    return;
+  }
+  const ignoreLine = logsRootRelativeToWorkspace(logsRoot, workspaceFolder.uri.fsPath);
+  if (!ignoreLine) {
     return;
   }
 
@@ -22,19 +33,19 @@ export async function ensureGitignoreEntry(workspaceFolder: vscode.WorkspaceFold
     exists = false;
   }
 
-  if (existing.split('\n').some(line => line.trim() === IGNORE_LINE || line.trim() === '.eda-runner')) {
+  if (existing.split('\n').some(line => line.trim() === ignoreLine || line.trim() === ignoreLine.replace(/\/$/, ''))) {
     await memento.update(ASKED_KEY, true);
     return;
   }
 
   const choice = await vscode.window.showInformationMessage(
-    'EDA Job Runner writes simulation logs to .eda-runner/ in this workspace. Add it to .gitignore so logs are never committed?',
+    `EDA Job Runner writes simulation logs to ${ignoreLine} in this workspace. Add it to .gitignore so logs are never committed?`,
     'Add to .gitignore',
     "Don't ask again"
   );
 
   if (choice === 'Add to .gitignore') {
-    const newContent = exists ? existing.replace(/\n?$/, '\n') + `${IGNORE_LINE}\n` : `${IGNORE_LINE}\n`;
+    const newContent = exists ? existing.replace(/\n?$/, '\n') + `${ignoreLine}\n` : `${ignoreLine}\n`;
     await vscode.workspace.fs.writeFile(gitignoreUri, Buffer.from(newContent, 'utf8'));
     await memento.update(ASKED_KEY, true);
   } else if (choice === "Don't ask again") {

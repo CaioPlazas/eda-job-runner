@@ -106,10 +106,10 @@ export function activate(context: vscode.ExtensionContext): void {
       jobStore.duplicateJob(item.job.id)
     ),
     vscode.commands.registerCommand('eda-job-runner.refresh', () => jobStore.load()),
-    vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, folder)),
+    vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, folder, logManager)),
     vscode.commands.registerCommand('eda-job-runner.configureTools', () => ToolSetupPanel.createOrShow(toolStore, jobStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore)),
-    vscode.commands.registerCommand('eda-job-runner.openLogViewer', () => LogViewerPanel.createOrShow(jobStore, logManager)),
+    vscode.commands.registerCommand('eda-job-runner.openLogViewer', () => LogViewerPanel.createOrShow(jobStore, logManager, toolStore)),
     vscode.commands.registerCommand('eda-job-runner.addFolder', () => addFolder(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.addJobInFolder', (item: FolderTreeItem) =>
       item ? JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), undefined, item.folderName) : undefined
@@ -117,6 +117,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('eda-job-runner.renameFolder', (item: FolderTreeItem) => renameFolder(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.deleteFolder', (item: FolderTreeItem) => deleteFolder(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.runFolder', (item: FolderTreeItem) => runFolder(jobStore, jobRunner, item)),
+    vscode.commands.registerCommand('eda-job-runner.stopFolder', (item: FolderTreeItem) => stopFolder(jobStore, jobRunner, item)),
     vscode.commands.registerCommand('eda-job-runner.moveJobToFolder', (item: EdaTreeElement) => moveJobToFolder(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.runDefaultJob', () => {
       const def = jobStore.getDefaultJob();
@@ -157,6 +158,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('eda-job-runner.stopAllRuns', (item: JobGroupTreeItem) =>
       jobRunner.stopAllRuns(item.job.id)
+    ),
+    // Collapses a repeat-count batch's expandable group back to a flat
+    // single-run row, without deleting the job -- a no-op while the batch
+    // is still running (see clearLanes), which the menu also guards against
+    // by only ever showing this on an idle group.
+    vscode.commands.registerCommand('eda-job-runner.clearRunHistory', (item: JobGroupTreeItem) =>
+      item ? jobRunner.clearLanes(item.job.id) : undefined
     ),
     // Opens this specific row's own log — the primary's latest run, or one
     // exact lane's log when invoked on a run inside a job group.
@@ -210,22 +218,12 @@ async function deleteJob(jobStore: JobStore, item: EdaTreeElement): Promise<void
   }
 }
 
-async function addJob(jobStore: JobStore, toolStore: ToolStore): Promise<void> {
-  const templates = jobStore.getTemplates();
-  if (templates.length === 0) {
-    JobConfigPanel.createOrShow(jobStore, toolStore.getTools());
-    return;
-  }
-  const BLANK = 'Blank job';
-  const choice = await vscode.window.showQuickPick([BLANK, ...templates.map(t => t.name)], {
-    title: 'New job',
-    placeHolder: 'Start from a template, or a blank job'
-  });
-  if (!choice) {
-    return;
-  }
-  const template = choice === BLANK ? undefined : templates.find(t => t.name === choice);
-  JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), undefined, undefined, template);
+// A blank Configure panel always opens first now -- templates are loaded
+// from a dropdown inside the panel itself instead of a QuickPick shown
+// before it existed, so they're visible/reachable without having to
+// remember to pick one before the form was even on screen.
+function addJob(jobStore: JobStore, toolStore: ToolStore): void {
+  JobConfigPanel.createOrShow(jobStore, toolStore.getTools());
 }
 
 async function saveJobAsTemplate(jobStore: JobStore, item: EdaTreeElement): Promise<void> {
@@ -240,9 +238,24 @@ async function saveJobAsTemplate(jobStore: JobStore, item: EdaTreeElement): Prom
   if (!name || !name.trim()) {
     return;
   }
+  const trimmedName = name.trim();
+  // addTemplate() replaces any existing template of the same name -- confirm
+  // first, since two differently-configured jobs sharing a name (or
+  // re-saving the same job later) could otherwise silently clobber an
+  // earlier template with no way back.
+  if (jobStore.getTemplates().some(t => t.name === trimmedName)) {
+    const confirm = await vscode.window.showWarningMessage(
+      `A template named "${trimmedName}" already exists. Overwrite it?`,
+      { modal: true },
+      'Overwrite'
+    );
+    if (confirm !== 'Overwrite') {
+      return;
+    }
+  }
   const job = item.job;
   const template: JobTemplate = {
-    name: name.trim(),
+    name: trimmedName,
     namePattern: job.name,
     command: job.command,
     cwd: job.cwd,
@@ -276,7 +289,7 @@ async function deleteFolder(jobStore: JobStore, item: FolderTreeItem): Promise<v
   if (!item) {
     return;
   }
-  const jobCount = jobStore.getJobs().filter(j => j.folder === item.folderName).length;
+  const jobCount = jobStore.getJobsInFolder(item.folderName).length;
   if (jobCount === 0) {
     const confirm = await vscode.window.showWarningMessage(`Delete folder "${item.folderName}"?`, { modal: true }, 'Delete');
     if (confirm === 'Delete') {
@@ -305,10 +318,19 @@ async function runFolder(jobStore: JobStore, jobRunner: JobRunner, item: FolderT
   if (!item) {
     return;
   }
-  const jobs = jobStore.getJobs().filter(j => j.folder === item.folderName);
+  const jobs = jobStore.getJobsInFolder(item.folderName);
   for (const job of jobs) {
     await jobRunner.run(job);
   }
+}
+
+/** Stop every currently-running job in a folder (each job's own tracked lanes, via stopAllRuns). */
+async function stopFolder(jobStore: JobStore, jobRunner: JobRunner, item: FolderTreeItem): Promise<void> {
+  if (!item) {
+    return;
+  }
+  const jobs = jobStore.getJobsInFolder(item.folderName);
+  await Promise.all(jobs.map(job => jobRunner.stopAllRuns(job.id)));
 }
 
 async function moveJobToFolder(jobStore: JobStore, item: EdaTreeElement): Promise<void> {
@@ -368,7 +390,7 @@ async function openLogHistory(logManager: LogManager, item: EdaTreeElement): Pro
   if (!item) {
     return;
   }
-  const runs = await logManager.listRuns(item.job.id);
+  const runs = await logManager.listRuns(item.job.id, logManager.resolveRoot(item.job.logsDirectory));
   if (runs.length === 0) {
     void vscode.window.showInformationMessage(`No logs yet for "${item.job.name}" — run it first.`);
     return;

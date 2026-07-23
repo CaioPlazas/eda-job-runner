@@ -93,7 +93,9 @@ by hand. Registered tools for Tool Setup live in their own file,
 | `killSignals` | SIGINT → SIGTERM → SIGKILL | Ordered kill signal escalation, each with its own grace period |
 | `killGracePeriodSeconds` | `5` | Fallback grace period for a `killSignals` stage that doesn't set its own |
 | `logMaxSizeMB` | `200` | Cap on how much of a run's output is parsed for error/warning counts (the log file itself isn't size-limited — see `logRetentionCount`) |
-| `logRetentionCount` | `20` | Past runs kept per job |
+| `logsDirectory` | `""` | Where logs are stored, instead of `.eda-runner/logs` under the workspace root |
+| `logRetentionCount` | `20` | Past runs kept per job by count (`0` = unlimited) |
+| `logRetentionMaxSizeMB` | `0` | Past runs kept per job by total size (`0` = off) |
 | `failOnLogErrors` | `true` | Fail a job on log errors, even if it exited 0 |
 | `experimentalMultipleRuns` | `false` | Let *different* jobs run at once |
 

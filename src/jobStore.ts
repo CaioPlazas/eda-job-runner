@@ -57,6 +57,11 @@ export class JobStore implements vscode.Disposable {
     return this.data.jobs.find(j => j.id === id);
   }
 
+  /** Every job assigned to a given folder (by name) -- undefined/no-match `folder` fields are ungrouped, never returned here. */
+  getJobsInFolder(name: string): JobDefinition[] {
+    return this.data.jobs.filter(j => j.folder === name);
+  }
+
   getDefaultJob(): JobDefinition | undefined {
     return this.data.jobs.find(j => j.default);
   }
@@ -264,12 +269,15 @@ export class JobStore implements vscode.Disposable {
     job.passPattern = updates.passPattern;
     job.logFile = updates.logFile;
     job.postSetupCwd = updates.postSetupCwd;
+    job.logsDirectory = updates.logsDirectory;
     job.runCount = updates.runCount;
     job.toolId = updates.toolId;
     job.toolVariantLabel = updates.toolVariantLabel;
     job.listInsertOverrides = updates.listInsertOverrides;
     job.customArgs = updates.customArgs;
     job.paramOverrides = updates.paramOverrides;
+    job.postRunEnabled = updates.postRunEnabled;
+    job.postRunCommand = updates.postRunCommand;
     if (updates.folder) {
       this.ensureFolder(updates.folder);
       job.folder = updates.folder;
@@ -302,12 +310,15 @@ export class JobStore implements vscode.Disposable {
       passPattern: job.passPattern,
       logFile: job.logFile,
       postSetupCwd: job.postSetupCwd,
+      logsDirectory: job.logsDirectory,
       runCount: job.runCount,
       toolId: job.toolId,
       toolVariantLabel: job.toolVariantLabel,
       listInsertOverrides: job.listInsertOverrides,
       customArgs: job.customArgs,
       paramOverrides: job.paramOverrides,
+      postRunEnabled: job.postRunEnabled,
+      postRunCommand: job.postRunCommand,
       folder: job.folder
     });
   }
@@ -368,6 +379,9 @@ function normalize(parsed: Partial<JobsFile> | undefined): JobsFile {
       if (typeof j.postSetupCwd === 'string' && j.postSetupCwd.trim().length > 0) {
         job.postSetupCwd = j.postSetupCwd.trim();
       }
+      if (typeof j.logsDirectory === 'string' && j.logsDirectory.trim().length > 0) {
+        job.logsDirectory = j.logsDirectory.trim();
+      }
       if (typeof j.runCount === 'number' && Number.isFinite(j.runCount) && j.runCount > 1) {
         job.runCount = Math.min(1000, Math.round(j.runCount));
       }
@@ -391,6 +405,10 @@ function normalize(parsed: Partial<JobsFile> | undefined): JobsFile {
       }
       if (typeof j.folder === 'string' && j.folder.trim().length > 0) {
         job.folder = j.folder.trim();
+      }
+      if (j.postRunEnabled === true && typeof j.postRunCommand === 'string' && j.postRunCommand.trim().length > 0) {
+        job.postRunEnabled = true;
+        job.postRunCommand = j.postRunCommand.trim();
       }
       // Tolerate a hand-edited file that marked more than one job default:
       // keep the first, drop the rest, so the invariant always holds in memory.

@@ -54,6 +54,13 @@ export interface JobDefinition {
    */
   postSetupCwd?: string;
   /**
+   * Per-job override of `eda-job-runner.logsDirectory` — where this job's
+   * own run logs are stored, instead of the workspace-wide setting.
+   * Blank/undefined inherits the setting. Supports `${workspaceFolder}` /
+   * `${env:NAME}`. Set via a job's Advanced configuration.
+   */
+  logsDirectory?: string;
+  /**
    * Sequential repeat count for Run — e.g. 10 back-to-back runs of the same
    * test with a random seed, one after another (never in parallel). 1 or
    * undefined means a normal single run. Set via a job's Advanced
@@ -102,6 +109,24 @@ export interface JobDefinition {
    * "override parameter" checkboxes.
    */
   paramOverrides?: Record<string, string>;
+  /**
+   * Whether `postRunCommand` below is active. A separate explicit flag
+   * (not "non-empty command means enabled") so the checkbox in the
+   * Configure form can disable/re-enable the field without losing
+   * whatever was typed into it, matching this form's parameter-override
+   * checkbox-disables-a-field convention.
+   */
+  postRunEnabled?: boolean;
+  /**
+   * Run after this job finishes (passed or failed) -- skipped for a
+   * user-stopped ("killed") run, since a Stop isn't "the job's done, run
+   * the follow-up." Spawned fire-and-forget, once per completed lane, via
+   * the same shell/setup chain and working directory as the job itself; a
+   * nonzero exit or launch failure surfaces a warning notification rather
+   * than affecting the job's own already-decided pass/fail. Only takes
+   * effect when `postRunEnabled` is true.
+   */
+  postRunCommand?: string;
 }
 
 /**
@@ -206,6 +231,16 @@ export interface ToolDefinition {
   lists?: ToolList[];
   /** Epoch ms of the last scan attempt (successful or not). */
   lastScanned?: number;
+  /**
+   * Custom regex (capture group 1 = the seed value) for recovering a run's
+   * seed from its captured log output, for the Log Viewer's Seed column --
+   * overrides the built-in guessed patterns (see seedDetect.ts) for every
+   * job bound to this tool. Only needed when a job's Command doesn't use
+   * `${randomSeed}` (whose value is already captured directly) and the
+   * built-in guesses don't match this tool's actual output. Set via Tool
+   * Setup's Advanced section, with a live paste-and-preview tester.
+   */
+  seedPattern?: string;
 }
 
 export interface ToolsFile {

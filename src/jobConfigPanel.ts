@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
 import { GlobalParam, JobDefinition, JobTemplate, ToolDefinition } from './types';
+import { HELP_CSS, help } from './webviewHelp';
 
 interface SaveMessage {
   type: 'save';
@@ -13,7 +14,10 @@ interface SaveMessage {
   failPattern: string;
   passPattern: string;
   postSetupCwd: string;
+  logsDirectory: string;
   runCount: string;
+  postRunEnabled: boolean;
+  postRunCommand: string;
   toolId: string;
   toolVariantLabel: string;
   listInsertOverrides: Record<string, string>;
@@ -26,7 +30,24 @@ interface CancelMessage {
   type: 'cancel';
 }
 
-type WebviewMessage = SaveMessage | CancelMessage;
+/** Sent by the in-panel "Save as template…" button -- the host still owns the name prompt and overwrite confirmation, same as the right-click "Save Job as Template" command. */
+interface SaveTemplateRequestMessage {
+  type: 'saveTemplateRequest';
+  namePattern: string;
+  command: string;
+  cwd: string;
+  toolId: string;
+  toolVariantLabel: string;
+  parseProblems: boolean;
+  folder: string;
+}
+
+interface DeleteTemplateRequestMessage {
+  type: 'deleteTemplateRequest';
+  name: string;
+}
+
+type WebviewMessage = SaveMessage | CancelMessage | SaveTemplateRequestMessage | DeleteTemplateRequestMessage;
 
 export class JobConfigPanel {
   private static readonly panels = new Map<string, JobConfigPanel>();
@@ -36,13 +57,7 @@ export class JobConfigPanel {
   /** The job this panel saves to. Undefined until a brand-new job's first Save creates one. */
   private currentJobId: string | undefined;
 
-  static createOrShow(
-    jobStore: JobStore,
-    tools: ToolDefinition[],
-    existingJob?: JobDefinition,
-    presetFolder?: string,
-    presetTemplate?: JobTemplate
-  ): void {
+  static createOrShow(jobStore: JobStore, tools: ToolDefinition[], existingJob?: JobDefinition, presetFolder?: string): void {
     const key = existingJob?.id ?? '__new__';
     const existing = JobConfigPanel.panels.get(key);
     if (existing) {
@@ -59,10 +74,7 @@ export class JobConfigPanel {
       { enableScripts: true, retainContextWhenHidden: true }
     );
 
-    JobConfigPanel.panels.set(
-      key,
-      new JobConfigPanel(panel, jobStore, key, existingJob, tools, presetFolder, presetTemplate)
-    );
+    JobConfigPanel.panels.set(key, new JobConfigPanel(panel, jobStore, key, existingJob, tools, presetFolder));
   }
 
   private constructor(
@@ -72,26 +84,22 @@ export class JobConfigPanel {
     private mapKey: string,
     existingJob: JobDefinition | undefined,
     tools: ToolDefinition[],
-    presetFolder: string | undefined,
-    presetTemplate: JobTemplate | undefined
+    presetFolder: string | undefined
   ) {
     this.panel = panel;
     this.currentJobId = existingJob?.id;
-    // A template only ever seeds a brand-new job's initial fields -- it never
-    // applies once `existingJob` is real, and it doesn't affect save-routing
-    // (that's keyed off `currentJobId`, untouched by the seed below).
-    const seedJob = existingJob ?? (presetTemplate ? templateToSeedJob(presetTemplate) : undefined);
     const autoSave = vscode.workspace
       .getConfiguration('eda-job-runner')
       .get<boolean>('experimentalAutoSaveJobConfig', false);
     this.panel.webview.html = renderHtml(
       panel.webview,
-      seedJob,
+      existingJob,
       tools,
       jobStore.getFolders(),
-      presetFolder ?? presetTemplate?.folder,
+      presetFolder,
       autoSave,
-      jobStore.getParams()
+      jobStore.getParams(),
+      jobStore.getTemplates()
     );
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
@@ -103,6 +111,12 @@ export class JobConfigPanel {
     if (msg.type === 'cancel') {
       this.panel.dispose();
       return;
+    }
+    if (msg.type === 'saveTemplateRequest') {
+      return this.onSaveTemplateRequest(msg);
+    }
+    if (msg.type === 'deleteTemplateRequest') {
+      return this.onDeleteTemplateRequest(msg);
     }
 
     const name = msg.name.trim();
@@ -116,8 +130,11 @@ export class JobConfigPanel {
     const failPattern = msg.failPattern.trim() || undefined;
     const passPattern = msg.passPattern.trim() || undefined;
     const postSetupCwd = msg.postSetupCwd.trim() || undefined;
+    const logsDirectory = msg.logsDirectory.trim() || undefined;
     const runCountParsed = parseInt(msg.runCount.trim(), 10);
     const runCount = Number.isFinite(runCountParsed) && runCountParsed > 1 ? Math.min(1000, runCountParsed) : undefined;
+    const postRunCommand = msg.postRunCommand.trim() || undefined;
+    const postRunEnabled = msg.postRunEnabled === true && !!postRunCommand ? true : undefined;
     const toolId = msg.toolId.trim() || undefined;
     const toolVariantLabel = toolId ? msg.toolVariantLabel : undefined;
     // Overrides only mean anything alongside a tool's lists — drop orphans.
@@ -144,7 +161,10 @@ export class JobConfigPanel {
       failPattern,
       passPattern,
       postSetupCwd,
+      logsDirectory,
       runCount,
+      postRunEnabled,
+      postRunCommand,
       toolId,
       toolVariantLabel,
       listInsertOverrides,
@@ -170,26 +190,67 @@ export class JobConfigPanel {
     void this.panel.webview.postMessage({ type: 'saved' });
   }
 
+  /**
+   * The name prompt and overwrite confirmation are the same shape as the
+   * right-click "Save Job as Template" command in extension.ts (kept as a
+   * second entry point) -- this one saves the panel's own live, possibly
+   * unsaved, form fields instead of a persisted job's.
+   */
+  private async onSaveTemplateRequest(msg: SaveTemplateRequestMessage): Promise<void> {
+    const name = await vscode.window.showInputBox({
+      prompt: 'Template name',
+      value: msg.namePattern.trim(),
+      validateInput: v => (v.trim() ? undefined : 'Name is required')
+    });
+    if (!name || !name.trim()) {
+      return;
+    }
+    const trimmedName = name.trim();
+    if (this.jobStore.getTemplates().some(t => t.name === trimmedName)) {
+      const confirm = await vscode.window.showWarningMessage(
+        `A template named "${trimmedName}" already exists. Overwrite it?`,
+        { modal: true },
+        'Overwrite'
+      );
+      if (confirm !== 'Overwrite') {
+        return;
+      }
+    }
+    const toolId = msg.toolId.trim() || undefined;
+    const template: JobTemplate = {
+      name: trimmedName,
+      namePattern: msg.namePattern.trim() || undefined,
+      command: msg.command.trim() || undefined,
+      cwd: msg.cwd.trim() || undefined,
+      toolId,
+      toolVariantLabel: toolId ? msg.toolVariantLabel : undefined,
+      parseProblems: msg.parseProblems === false ? false : undefined,
+      folder: msg.folder.trim() || undefined
+    };
+    await this.jobStore.addTemplate(template);
+    void this.panel.webview.postMessage({ type: 'templates', list: this.jobStore.getTemplates(), selected: trimmedName });
+    void vscode.window.showInformationMessage(`Saved template "${trimmedName}".`);
+  }
+
+  private async onDeleteTemplateRequest(msg: DeleteTemplateRequestMessage): Promise<void> {
+    const name = msg.name.trim();
+    if (!name) {
+      return;
+    }
+    const confirm = await vscode.window.showWarningMessage(`Delete template "${name}"? This cannot be undone.`, { modal: true }, 'Delete');
+    if (confirm !== 'Delete') {
+      return;
+    }
+    await this.jobStore.deleteTemplate(name);
+    void this.panel.webview.postMessage({ type: 'templates', list: this.jobStore.getTemplates() });
+  }
+
   private cleanup(): void {
     JobConfigPanel.panels.delete(this.mapKey);
     for (const d of this.disposables) {
       d.dispose();
     }
   }
-}
-
-/** A template only ever seeds a brand-new job's initial form fields; the empty `id` is never used for save-routing. */
-function templateToSeedJob(t: JobTemplate): JobDefinition {
-  return {
-    id: '',
-    name: t.namePattern ?? '',
-    command: t.command ?? '',
-    cwd: t.cwd ?? '.',
-    toolId: t.toolId,
-    toolVariantLabel: t.toolVariantLabel,
-    parseProblems: t.parseProblems,
-    folder: t.folder
-  };
 }
 
 function renderHtml(
@@ -199,15 +260,12 @@ function renderHtml(
   folders: string[],
   presetFolder: string | undefined,
   autoSave: boolean,
-  globalParams: GlobalParam[]
+  globalParams: GlobalParam[],
+  templates: JobTemplate[]
 ): string {
   const nonce = getNonce();
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  // A small (?) icon that reveals `html` on hover/focus -- CSS-only, no script
-  // needed (the CSP already allows inline style). `html` may itself contain
-  // markup (code/b/br) -- it's always our own static copy, never user data.
-  const help = (html: string) => `<span class="help" tabindex="0">?<span class="tip">${html}</span></span>`;
 
   // Slim payload for the builder script -- id/command/variants/options only, no rawHelp/scanError.
   // '<' escaped so a tool's own text can never break out of the <script> tag.
@@ -236,6 +294,7 @@ function renderHtml(
   const customArgsJson = JSON.stringify(job?.customArgs ?? []).replace(/</g, '\\u003c');
   const globalParamsJson = JSON.stringify(globalParams).replace(/</g, '\\u003c');
   const paramOverridesJson = JSON.stringify(job?.paramOverrides ?? {}).replace(/</g, '\\u003c');
+  const templatesJson = JSON.stringify(templates).replace(/</g, '\\u003c');
   const hasVarRef = /\$\{var:[A-Za-z_][\w-]*\}/.test(job?.command ?? '');
 
   return `<!DOCTYPE html>
@@ -282,41 +341,7 @@ function renderHtml(
     margin-top: 0;
   }
   .hidden { display: none; }
-  .help {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 15px;
-    height: 15px;
-    border-radius: 50%;
-    background: var(--vscode-badge-background, rgba(127,127,127,0.35));
-    color: var(--vscode-badge-foreground, var(--vscode-foreground));
-    font-size: 0.72em;
-    font-weight: 700;
-    cursor: help;
-    margin-left: 6px;
-    position: relative;
-    vertical-align: middle;
-  }
-  .help .tip {
-    display: none;
-    position: absolute;
-    left: 0;
-    top: 130%;
-    z-index: 10;
-    width: 320px;
-    max-width: 60vw;
-    padding: 8px 10px;
-    background: var(--vscode-editorHoverWidget-background, var(--vscode-input-background));
-    color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
-    border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-input-border, rgba(127,127,127,0.4)));
-    border-radius: 4px;
-    font-size: 0.85em;
-    font-weight: 400;
-    line-height: 1.4;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-  }
-  .help:hover .tip, .help:focus .tip { display: block; }
+  ${HELP_CSS}
   .optRow { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .optRow label.check { font-weight: 400; flex: 1 1 auto; min-width: 200px; }
   .optRow .optValue { width: auto; flex: 0 1 160px; margin-top: 0; }
@@ -376,10 +401,28 @@ function renderHtml(
   .primary:hover { background: var(--vscode-button-hoverBackground); }
   .secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
   .secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .templateRow { display: flex; gap: 8px; align-items: flex-end; margin-top: 18px; flex-wrap: wrap; }
+  .templateRow > div { flex: 1 1 240px; }
+  .templateRow button { flex: 0 0 auto; }
 </style>
 </head>
 <body>
   <h2>${job ? 'Configure Job' : 'Add Job'}</h2>
+
+  <div class="templateRow">
+    <div>
+      <label for="templateSelect">Template ${help(
+        "Load a saved template's fields into this form below, or save the current form as a new one. Deleting a template only removes the template itself — jobs already created from it are untouched."
+      )}</label>
+      <select id="templateSelect">
+        <option value="">(none)</option>
+        ${templates.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('')}
+      </select>
+    </div>
+    <button class="secondary" id="loadTemplate" type="button">Load</button>
+    <button class="secondary" id="saveAsTemplate" type="button">Save as template…</button>
+    <button class="secondary" id="deleteTemplateBtn" type="button">Delete</button>
+  </div>
 
   <label for="name">Name</label>
   <input id="name" type="text" value="${esc(job?.name ?? '')}" placeholder="e.g. smoke_test" />
@@ -421,10 +464,10 @@ function renderHtml(
     <input id="optFilter" type="text" placeholder="Filter flags…" />
     <div id="toolOptionsWrap"></div>
 
-    <div id="toolListsWrap"></div>
-
     <div id="customArgsWrap"></div>
     <button class="secondary" id="addCustomArg" type="button" style="margin-top:10px;">+ Add custom argument</button>
+
+    <div id="toolListsWrap"></div>
   </details>
 
   <datalist id="varOptions">
@@ -447,14 +490,20 @@ function renderHtml(
   <label for="cwd">Working Directory ${help('Relative to the workspace root. Use "." for the root itself.')}</label>
   <input id="cwd" type="text" value="${esc(job?.cwd ?? '.')}" placeholder="." />
 
+  <label for="runCount">Repeat count (sequential) ${help(
+    'Run this job this many times in a row when you click Run — e.g. 10 back-to-back runs of the same test with a random seed. Always sequential (never in parallel), regardless of the experimental multiple-jobs setting. Leave empty (or 1) for a normal single run.'
+  )}</label>
+  <input id="runCount" type="number" min="1" max="1000" step="1" value="${job?.runCount && job.runCount > 1 ? job.runCount : ''}" placeholder="1" />
+
   <details id="advanced" ${
     job?.postSetupCwd ||
+    job?.logsDirectory ||
     job?.failPattern ||
     job?.passPattern ||
-    (job?.runCount ?? 1) > 1 ||
     job?.logFile ||
     job?.default ||
-    job?.parseProblems === false
+    job?.parseProblems === false ||
+    job?.postRunEnabled
       ? 'open'
       : ''
   }>
@@ -486,10 +535,10 @@ function renderHtml(
     )}</label>
     <input id="postSetupCwd" type="text" value="${esc(job?.postSetupCwd ?? '')}" placeholder="inherit from Shell & Environment settings" />
 
-    <label for="runCount">Repeat count (sequential) ${help(
-      'Run this job this many times in a row when you click Run — e.g. 10 back-to-back runs of the same test with a random seed. Always sequential (never in parallel), regardless of the experimental multiple-jobs setting. Leave empty (or 1) for a normal single run.'
+    <label for="logsDirectory">Logs directory (override) ${help(
+      'Overrides <code>eda-job-runner.logsDirectory</code> (Shell &amp; Environment panel) for this job only. Leave empty to inherit the workspace-wide setting.'
     )}</label>
-    <input id="runCount" type="number" min="1" max="1000" step="1" value="${job?.runCount && job.runCount > 1 ? job.runCount : ''}" placeholder="1" />
+    <input id="logsDirectory" type="text" value="${esc(job?.logsDirectory ?? '')}" placeholder="inherit from Shell & Environment settings" />
 
     <label for="failPattern">Fail pattern (regex, optional) ${help(
       'Tool-agnostic: case-insensitive regex matched against each output line, for a tool whose own pass/fail summary line the built-in patterns don’t cover. If it matches, the job is marked <b>failed</b> even if it exited 0 — works even with "Scan output" above off. An invalid regex is silently ignored (no error), same as leaving it blank.'
@@ -500,6 +549,15 @@ function renderHtml(
       'Tool-agnostic, like Fail pattern above. When set, it fully governs the outcome: the job passes only if this matches at least once (ignoring exit code — for tools that always exit non-zero even on success) and is marked <b>failed</b> if it never appears. A matching Fail pattern still wins over this.'
     )}</label>
     <input id="passPattern" type="text" value="${esc(job?.passPattern ?? '')}" placeholder="e.g. TEST RESULT:\s*PASS" />
+
+    <label class="check">
+      <input id="postRunEnabled" type="checkbox" ${job?.postRunEnabled ? 'checked' : ''} />
+      Run a command after this job finishes
+      ${help(
+        'Runs once per completed lane after the job passes or fails — skipped for a Stopped run. Uses the same shell/setup chain and working directory as the job itself. A nonzero exit or launch failure only shows a warning notification; it never changes this job\'s own result.'
+      )}
+    </label>
+    <input id="postRunCommand" type="text" value="${esc(job?.postRunCommand ?? '')}" placeholder="e.g. notify-send done || true" ${job?.postRunEnabled ? '' : 'disabled'} />
   </details>
 
   <div class="error" id="error"></div>
@@ -523,17 +581,28 @@ function renderHtml(
     const failPatternEl = document.getElementById('failPattern');
     const passPatternEl = document.getElementById('passPattern');
     const postSetupCwdEl = document.getElementById('postSetupCwd');
+    const logsDirectoryEl = document.getElementById('logsDirectory');
     const runCountEl = document.getElementById('runCount');
+    const postRunEnabledEl = document.getElementById('postRunEnabled');
+    const postRunCommandEl = document.getElementById('postRunCommand');
+    postRunEnabledEl.addEventListener('change', () => {
+      postRunCommandEl.disabled = !postRunEnabledEl.checked;
+    });
     const errorEl = document.getElementById('error');
     const savedFlashEl = document.getElementById('savedFlash');
     let savedFlashTimer;
 
     const TOOLS = ${toolsJson};
-    const SAVED_TOOL_VARIANT = ${JSON.stringify(job?.toolVariantLabel ?? '')};
+    // Mutable (not const): loading a template re-seeds which variant should
+    // be pre-selected the next time renderVariantSelect runs, same as a
+    // freshly-opened existing job's saved variant would be.
+    let SAVED_TOOL_VARIANT = ${JSON.stringify(job?.toolVariantLabel ?? '')};
     // Per-job insert-template overrides for a tool's value lists, keyed by list name.
     let LIST_OVERRIDES = ${JSON.stringify(job?.listInsertOverrides ?? {})};
     const GLOBAL_PARAMS = ${globalParamsJson};
     const SAVED_PARAM_OVERRIDES = ${paramOverridesJson};
+    let TEMPLATES = ${templatesJson};
+    const templateSelectEl = document.getElementById('templateSelect');
     const paramOverridesWrap = document.getElementById('paramOverridesWrap');
     const toolSelectEl = document.getElementById('toolSelect');
     const variantWrap = document.getElementById('variantWrap');
@@ -738,54 +807,68 @@ function renderHtml(
         // time the builder rebuilds Command from the row (e.g. reopening this
         // job's Configure form, where the details section renders pre-open).
         const useDropdown = choices && (!existing || choices.includes(existing));
-        if (useDropdown) {
-          valueInput = document.createElement('select');
-          valueInput.className = 'optValue';
+
+        const buildSelect = value => {
+          const el = document.createElement('select');
+          el.className = 'optValue';
           const blank = document.createElement('option');
           blank.value = '';
           blank.textContent = '(none)';
-          valueInput.appendChild(blank);
+          el.appendChild(blank);
           choices.forEach(c => {
             const o = document.createElement('option');
             o.value = c;
             o.textContent = c;
-            valueInput.appendChild(o);
+            el.appendChild(o);
           });
-          if (existing) { valueInput.value = existing; }
-        } else {
-          valueInput = document.createElement('input');
-          valueInput.type = 'text';
-          valueInput.className = 'optValue';
-          valueInput.placeholder = opt.metavar;
-          valueInput.setAttribute('list', 'varOptions');
-          if (existing) { valueInput.value = existing; }
-        }
+          // Setting .value to something outside the choice list is a no-op
+          // (leaves it on the blank option) -- exactly what should happen when
+          // swapping back from a \${var:...}/unmatched free-text value.
+          if (value && choices.includes(value)) { el.value = value; }
+          return el;
+        };
+        const buildFree = value => {
+          const el = document.createElement('input');
+          el.type = 'text';
+          el.className = 'optValue';
+          el.placeholder = choices ? '\${var:NAME}' : opt.metavar;
+          el.setAttribute('list', 'varOptions');
+          if (value) { el.value = value; }
+          return el;
+        };
+
+        valueInput = choices ? (useDropdown ? buildSelect(existing) : buildFree(existing)) : buildFree(existing);
         valueInput.disabled = !checkbox.checked;
         row.appendChild(valueInput);
 
         // A fixed-choices dropdown can't hold a \${var:NAME} reference -- this
-        // one-way toggle swaps it for a free-text field (with the same
-        // varOptions autocomplete as any other builder value field) for
-        // whoever needs a parameter instead of one of the listed choices.
-        if (useDropdown) {
+        // toggle swaps the active editor between the dropdown and a free-text
+        // field (with the same varOptions autocomplete as any other builder
+        // value field), relabeling itself and preserving the value across the
+        // swap whenever it still fits, in both directions.
+        if (choices) {
           const varToggle = document.createElement('button');
           varToggle.type = 'button';
           varToggle.className = 'secondary varToggle';
-          varToggle.textContent = '✎ var';
-          varToggle.title = 'Use a parameter (\${var:NAME}) instead of one of the fixed choices';
+          const syncToggleLabel = () => {
+            const isDropdown = valueInput.tagName === 'SELECT';
+            varToggle.textContent = isDropdown ? '✎ var' : '◀ choices';
+            varToggle.title = isDropdown
+              ? 'Use a parameter (\${var:NAME}) instead of one of the fixed choices'
+              : 'Switch back to the fixed-choices dropdown';
+          };
           varToggle.addEventListener('click', () => {
-            const freeInput = document.createElement('input');
-            freeInput.type = 'text';
-            freeInput.className = 'optValue';
-            freeInput.setAttribute('list', 'varOptions');
-            freeInput.placeholder = '\${var:NAME}';
-            freeInput.disabled = valueInput.disabled;
-            freeInput.addEventListener('input', onBuilderChange);
-            valueInput.replaceWith(freeInput);
-            valueInput = freeInput;
-            varToggle.remove();
+            const currentValue = valueInput.value;
+            const wasDisabled = valueInput.disabled;
+            const next = valueInput.tagName === 'SELECT' ? buildFree(currentValue) : buildSelect(currentValue);
+            next.disabled = wasDisabled;
+            next.addEventListener(next.tagName === 'SELECT' ? 'change' : 'input', onBuilderChange);
+            valueInput.replaceWith(next);
+            valueInput = next;
+            syncToggleLabel();
             onBuilderChange();
           });
+          syncToggleLabel();
           row.appendChild(varToggle);
         }
       }
@@ -1032,10 +1115,15 @@ function renderHtml(
       onBuilderChange();
     });
 
-    (function initBuilder() {
-      // Guarded: a fault in the optional tool-builder must never leave the
-      // whole form locked (Save/Cancel are wired after this) -- the plain
-      // Command field still works without the builder.
+    // Re-syncs the builder's selects/checkboxes FROM the current Command
+    // text/toolSelectEl value -- never the other way around, so calling
+    // this never silently rewrites Command itself (only an actual builder
+    // interaction, or an open toolBuilder's own 'toggle'/change handlers,
+    // ever do that). Used both at initial load and after loading a
+    // template into the live form. Guarded: a fault in the optional tool
+    // builder must never leave the whole form locked (Save/Cancel are
+    // wired after this) -- the plain Command field still works without it.
+    function refreshBuilderUI() {
       try {
         const tool = currentTool();
         renderVariantSelect(tool);
@@ -1045,7 +1133,61 @@ function renderHtml(
       } catch (e) {
         console.error('EDA Job Runner: tool builder init failed', e);
       }
-    })();
+    }
+    refreshBuilderUI();
+
+    function renderTemplateOptions(selectName) {
+      templateSelectEl.innerHTML = '';
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = '(none)';
+      templateSelectEl.appendChild(blank);
+      TEMPLATES.forEach(t => {
+        const o = document.createElement('option');
+        o.value = t.name;
+        o.textContent = t.name;
+        templateSelectEl.appendChild(o);
+      });
+      if (selectName) { templateSelectEl.value = selectName; }
+    }
+
+    document.getElementById('loadTemplate').addEventListener('click', () => {
+      const t = TEMPLATES.find(x => x.name === templateSelectEl.value);
+      if (!t) { return; }
+      nameEl.value = t.namePattern || '';
+      folderEl.value = t.folder || '';
+      commandEl.value = t.command || '';
+      cwdEl.value = t.cwd || '.';
+      parseProblemsEl.checked = t.parseProblems !== false;
+      SAVED_TOOL_VARIANT = t.toolVariantLabel || '';
+      toolSelectEl.value = t.toolId || '';
+      // Sync the builder's selects/checkboxes from the just-applied Command
+      // text BEFORE possibly opening the builder -- so if opening it does
+      // trigger its own 'toggle' rebuild, it rebuilds from state that
+      // already matches the template, not stale leftovers from whatever
+      // was in the form before Load was clicked.
+      refreshBuilderUI();
+      toolBuilderEl.open = !!t.toolId;
+      updateHint();
+    });
+
+    document.getElementById('saveAsTemplate').addEventListener('click', () => {
+      vscode.postMessage({
+        type: 'saveTemplateRequest',
+        namePattern: nameEl.value,
+        command: commandEl.value,
+        cwd: cwdEl.value,
+        toolId: toolSelectEl.value,
+        toolVariantLabel: variantSelectEl.value,
+        parseProblems: parseProblemsEl.checked,
+        folder: folderEl.value
+      });
+    });
+
+    document.getElementById('deleteTemplateBtn').addEventListener('click', () => {
+      if (!templateSelectEl.value) { return; }
+      vscode.postMessage({ type: 'deleteTemplateRequest', name: templateSelectEl.value });
+    });
 
     function collectSaveMessage() {
       return {
@@ -1060,7 +1202,10 @@ function renderHtml(
         failPattern: failPatternEl.value,
         passPattern: passPatternEl.value,
         postSetupCwd: postSetupCwdEl.value,
+        logsDirectory: logsDirectoryEl.value,
         runCount: runCountEl.value,
+        postRunEnabled: postRunEnabledEl.checked,
+        postRunCommand: postRunCommandEl.value,
         toolId: toolSelectEl.value,
         toolVariantLabel: variantSelectEl.value,
         listInsertOverrides: LIST_OVERRIDES,
@@ -1119,6 +1264,9 @@ function renderHtml(
         savedFlashEl.classList.remove('hidden');
         clearTimeout(savedFlashTimer);
         savedFlashTimer = setTimeout(() => savedFlashEl.classList.add('hidden'), 1600);
+      } else if (m.type === 'templates') {
+        TEMPLATES = m.list;
+        renderTemplateOptions(m.selected || '');
       }
     });
 
