@@ -1,18 +1,36 @@
 import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
-import { GlobalParam } from './types';
+import { GlobalParam, ValueList } from './types';
 import { HELP_CSS, help } from './webviewHelp';
+import { discoverList } from './toolIntrospect';
+import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 
 interface SaveMessage {
   type: 'save';
   params: { name: string; value: string }[];
 }
-
 interface CancelMessage {
   type: 'cancel';
 }
+interface AddListMessage {
+  type: 'addList';
+  name: string;
+  sourceType: 'file' | 'command';
+  source: string;
+  pattern: string;
+  insertTemplate: string;
+  scanDir: string;
+}
+interface RefreshListMessage {
+  type: 'refreshList';
+  name: string;
+}
+interface RemoveListMessage {
+  type: 'removeList';
+  name: string;
+}
 
-type WebviewMessage = SaveMessage | CancelMessage;
+type WebviewMessage = SaveMessage | CancelMessage | AddListMessage | RefreshListMessage | RemoveListMessage | BrowseMessage;
 
 export class ParamsPanel {
   private static current: ParamsPanel | undefined;
@@ -20,7 +38,7 @@ export class ParamsPanel {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
 
-  static createOrShow(jobStore: JobStore): void {
+  static createOrShow(jobStore: JobStore, folder: vscode.WorkspaceFolder): void {
     if (ParamsPanel.current) {
       ParamsPanel.current.panel.reveal();
       return;
@@ -29,16 +47,24 @@ export class ParamsPanel {
       enableScripts: true,
       retainContextWhenHidden: true
     });
-    ParamsPanel.current = new ParamsPanel(panel, jobStore);
+    ParamsPanel.current = new ParamsPanel(panel, jobStore, folder);
   }
 
-  private constructor(panel: vscode.WebviewPanel, private readonly jobStore: JobStore) {
+  private constructor(
+    panel: vscode.WebviewPanel,
+    private readonly jobStore: JobStore,
+    private readonly folder: vscode.WorkspaceFolder
+  ) {
     this.panel = panel;
-    this.panel.webview.html = renderHtml(panel.webview, jobStore.getParams());
+    this.render();
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
       this.panel.onDidDispose(() => this.cleanup())
     );
+  }
+
+  private render(): void {
+    this.panel.webview.html = renderHtml(this.panel.webview, this.jobStore.getParams(), this.jobStore.getLists());
   }
 
   private async onMessage(msg: WebviewMessage): Promise<void> {
@@ -55,6 +81,50 @@ export class ParamsPanel {
         this.panel.dispose();
         return;
       }
+      case 'addList': {
+        const name = msg.name.trim();
+        const source = msg.source.trim();
+        if (!name || !source) {
+          return;
+        }
+        const scanDir = msg.scanDir.trim() || undefined;
+        const list: ValueList = {
+          name,
+          command: msg.sourceType === 'command' ? source : undefined,
+          file: msg.sourceType === 'file' ? source : undefined,
+          pattern: msg.pattern.trim() || undefined,
+          insertTemplate: msg.insertTemplate.trim() || undefined,
+          scanDir,
+          values: []
+        };
+        const discovered = await discoverList(list, this.jobStore, this.folder, scanDir);
+        // Replace any existing list of the same name (edit-in-place), else append.
+        const lists = this.jobStore.getLists().filter(l => l.name !== name);
+        lists.push(discovered);
+        await this.jobStore.setLists(lists);
+        this.render();
+        return;
+      }
+      case 'refreshList': {
+        const lists = this.jobStore.getLists();
+        const idx = lists.findIndex(l => l.name === msg.name);
+        if (idx === -1) {
+          return;
+        }
+        const refreshed = lists.slice();
+        refreshed[idx] = await discoverList(refreshed[idx], this.jobStore, this.folder, refreshed[idx].scanDir);
+        await this.jobStore.setLists(refreshed);
+        this.render();
+        return;
+      }
+      case 'removeList': {
+        const lists = this.jobStore.getLists().filter(l => l.name !== msg.name);
+        await this.jobStore.setLists(lists);
+        this.render();
+        return;
+      }
+      case 'browse':
+        return handleBrowseMessage(msg, this.panel.webview, this.folder);
     }
   }
 
@@ -66,11 +136,12 @@ export class ParamsPanel {
   }
 }
 
-export function renderHtml(webview: vscode.Webview, params: GlobalParam[]): string {
+export function renderHtml(webview: vscode.Webview, params: GlobalParam[], lists: ValueList[]): string {
   const nonce = getNonce();
-  // Guards against a param value containing "</script>" breaking out of the
-  // embedded script block, same convention as jobConfigPanel.ts's customArgsJson.
+  // Guards against a param/list value containing "</script>" breaking out of
+  // the embedded script block, same convention as jobConfigPanel.ts's customArgsJson.
   const paramsJson = JSON.stringify(params).replace(/</g, '\\u003c');
+  const listsJson = JSON.stringify(lists).replace(/</g, '\\u003c');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -86,13 +157,15 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[]): stri
     max-width: min(1200px, 100%);
     width: 100%;
   }
-  h2 { margin-top: 0; }
+  h2 { margin-top: 14px; }
+  h2:first-child { margin-top: 0; }
   ${HELP_CSS}
+  ${BROWSE_CSS}
   .paramRow { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
   .paramRow input { width: auto; flex: 1 1 200px; margin: 0; }
   .paramRow .pName { flex: 1 1 220px; }
   .paramRow .pValue { flex: 2 1 320px; }
-  input {
+  input, select {
     box-sizing: border-box;
     padding: 9px 12px;
     background: var(--vscode-input-background);
@@ -102,7 +175,8 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[]): stri
     font-family: var(--vscode-editor-font-family);
     font-size: var(--vscode-editor-font-size);
   }
-  input:focus {
+  option { background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
+  input:focus, select:focus {
     outline: 1px solid var(--vscode-focusBorder);
     outline-offset: -1px;
   }
@@ -115,11 +189,30 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[]): stri
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
   }
+  button.small { padding: 3px 10px; font-size: 0.85em; }
   .primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
   .primary:hover { background: var(--vscode-button-hoverBackground); }
   .secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
   .secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .err { color: var(--vscode-errorForeground); }
+  .hint { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
   #paramsWrap { margin-top: 14px; }
+  #listsWrap { margin-top: 14px; }
+  .listItem {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--vscode-input-border, rgba(127,127,127,0.25));
+    border-radius: 4px;
+  }
+  .listRow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .listRow input, .listRow select { width: auto; flex: 1 1 160px; margin: 0; }
+  .listRow .lName { flex: 1 1 160px; }
+  .listRow .lSourceType { flex: 0 0 auto; }
+  .listRow .lSource { flex: 2 1 220px; }
+  .listStatus { margin-top: 6px; }
+  .listAdvanced { margin-top: 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .listAdvanced input { width: auto; flex: 1 1 260px; margin: 0; }
+  .listAdvanced.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -136,6 +229,18 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[]): stri
   <div id="paramsWrap"></div>
   <button class="secondary" id="addParam" type="button" style="margin-top:10px;">+ Add parameter</button>
 
+  <h2>Value lists ${help(
+    'A named list of values (e.g. a test list), discovered from a command\'s stdout or a file, ' +
+      'surfaced as a dropdown in any job\'s Configure form. <b>Attach one to a specific flag</b> from ' +
+      "Tool Setup's per-option \"value source\" column, or a job can attach one for itself only, from its " +
+      "own Configure form — the usual cases. Leave a list unattached for a value with no real CLI flag " +
+      'to attach to (e.g. a plusarg like <code>+UVM_TESTNAME=</code>) — an unattached list keeps its own ' +
+      "row in a job's Configure form, with an insert template controlling exactly how a picked value is " +
+      'written into the Command. Changes here save immediately, unlike the Parameters section above.'
+  )}</h2>
+  <div id="listsWrap"></div>
+  <button class="secondary" id="addList" type="button" style="margin-top:10px;">+ Add value list</button>
+
   <div class="actions">
     <button class="primary" id="save">Save</button>
     <button class="secondary" id="cancel">Cancel</button>
@@ -143,7 +248,9 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[]): stri
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${BROWSE_JS}
     const paramsWrap = document.getElementById('paramsWrap');
+    const listsWrap = document.getElementById('listsWrap');
 
     function addParamRow(name, value) {
       const row = document.createElement('div');
@@ -184,6 +291,145 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[]): stri
       vscode.postMessage({ type: 'save', params });
     });
     document.getElementById('cancel').addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
+
+    // Existing lists render read-only-ish (name locked once saved, matching
+    // the old Tool Setup behavior) with immediate Refresh/Remove; the blank
+    // row at the bottom is the "add a new one" form.
+    function addListRow(list) {
+      const isNew = !list;
+      list = list || { name: '', command: '', file: '', pattern: '', insertTemplate: '', scanDir: '', values: [], scanError: undefined };
+      const row = document.createElement('div');
+      row.className = 'listItem';
+
+      const top = document.createElement('div');
+      top.className = 'listRow';
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'lName';
+      nameInput.placeholder = 'name (e.g. Test)';
+      nameInput.value = list.name || '';
+      nameInput.disabled = !isNew;
+      top.appendChild(nameInput);
+
+      const sourceTypeSelect = document.createElement('select');
+      sourceTypeSelect.className = 'lSourceType';
+      ['command', 'file'].forEach(v => {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = v;
+        sourceTypeSelect.appendChild(o);
+      });
+      sourceTypeSelect.value = list.file ? 'file' : 'command';
+      top.appendChild(sourceTypeSelect);
+
+      const sourceInput = document.createElement('input');
+      sourceInput.type = 'text';
+      sourceInput.className = 'lSource';
+      sourceInput.placeholder = 'source (command to run, or file path)';
+      sourceInput.value = list.command || list.file || '';
+      top.appendChild(sourceInput);
+      // Only a file source is a real path to browse for -- a command isn't.
+      const sourceBrowseBtn = addBrowseButton(sourceInput, 'file');
+      const syncSourceBrowseVisibility = () => {
+        sourceBrowseBtn.style.display = sourceTypeSelect.value === 'file' ? '' : 'none';
+      };
+      sourceTypeSelect.addEventListener('change', syncSourceBrowseVisibility);
+      syncSourceBrowseVisibility();
+
+      const patternInput = document.createElement('input');
+      patternInput.type = 'text';
+      patternInput.className = 'lPattern';
+      patternInput.placeholder = 'pattern (optional regex)';
+      patternInput.value = list.pattern || '';
+      top.appendChild(patternInput);
+
+      const templateInput = document.createElement('input');
+      templateInput.type = 'text';
+      templateInput.className = 'lTemplate';
+      templateInput.placeholder = 'insert template, for an unattached list (default \${value})';
+      templateInput.value = list.insertTemplate || '';
+      top.appendChild(templateInput);
+
+      const advToggle = document.createElement('button');
+      advToggle.type = 'button';
+      advToggle.className = 'secondary small';
+      advToggle.textContent = 'Advanced';
+      top.appendChild(advToggle);
+
+      const actionBtn = document.createElement('button');
+      actionBtn.type = 'button';
+      actionBtn.className = 'primary small';
+      actionBtn.textContent = isNew ? 'Add' : '↻ Refresh';
+      top.appendChild(actionBtn);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'secondary small';
+      removeBtn.textContent = isNew ? 'Clear' : 'Remove';
+      top.appendChild(removeBtn);
+
+      row.appendChild(top);
+
+      const adv = document.createElement('div');
+      adv.className = 'listAdvanced hidden';
+      const scanDirInput = document.createElement('input');
+      scanDirInput.type = 'text';
+      scanDirInput.className = 'lScanDir';
+      scanDirInput.placeholder = "scan directory (leave blank to use the workspace's post-setup working directory)";
+      scanDirInput.value = list.scanDir || '';
+      adv.appendChild(scanDirInput);
+      addBrowseButton(scanDirInput, 'folder');
+      advToggle.addEventListener('click', () => adv.classList.toggle('hidden'));
+      row.appendChild(adv);
+
+      const statusEl = document.createElement('div');
+      statusEl.className = 'hint listStatus';
+      if (!isNew) {
+        if (list.scanError) {
+          const errSpan = document.createElement('span');
+          errSpan.className = 'err';
+          errSpan.textContent = '⚠ ' + list.scanError;
+          statusEl.appendChild(errSpan);
+        } else {
+          const n = (list.values || []).length;
+          let text = n + ' value' + (n === 1 ? '' : 's');
+          if (n > 0) {
+            text += ': ' + list.values.slice(0, 12).join(', ') + (n > 12 ? ', …(+' + (n - 12) + ')' : '');
+          }
+          statusEl.textContent = text;
+        }
+        row.appendChild(statusEl);
+      }
+
+      actionBtn.addEventListener('click', () => {
+        vscode.postMessage({
+          type: isNew ? 'addList' : 'refreshList',
+          name: nameInput.value,
+          sourceType: sourceTypeSelect.value,
+          source: sourceInput.value,
+          pattern: patternInput.value,
+          insertTemplate: templateInput.value,
+          scanDir: scanDirInput.value
+        });
+      });
+      removeBtn.addEventListener('click', () => {
+        if (isNew) {
+          nameInput.value = '';
+          sourceInput.value = '';
+          patternInput.value = '';
+          templateInput.value = '';
+          scanDirInput.value = '';
+          return;
+        }
+        vscode.postMessage({ type: 'removeList', name: list.name });
+      });
+
+      listsWrap.appendChild(row);
+    }
+
+    (${listsJson}).forEach(l => addListRow(l));
+    document.getElementById('addList').addEventListener('click', () => addListRow(null));
   </script>
 </body>
 </html>`;

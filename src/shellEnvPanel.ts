@@ -7,6 +7,7 @@ import { LogManager } from './logManager';
 import { detectVscodeShell } from './shellDetect';
 import { buildShellInvocation, defaultArgsForShell, resolveJobEnv, substituteVars } from './shellInvocation';
 import { HELP_CSS, help } from './webviewHelp';
+import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 
 interface SaveMessage {
   type: 'save';
@@ -41,10 +42,6 @@ interface CancelMessage {
   type: 'cancel';
 }
 
-interface BrowseLogsDirMessage {
-  type: 'browseLogsDir';
-}
-
 interface CleanAllLogsMessage {
   type: 'cleanAllLogs';
 }
@@ -54,8 +51,8 @@ type WebviewMessage =
   | DetectMessage
   | TestMessage
   | CancelMessage
-  | BrowseLogsDirMessage
-  | CleanAllLogsMessage;
+  | CleanAllLogsMessage
+  | BrowseMessage;
 
 const TEST_TIMEOUT_MS = 15000;
 const TEST_OUTPUT_CAP = 64 * 1024;
@@ -135,25 +132,11 @@ export class ShellEnvPanel {
         return this.onTest(msg);
       case 'save':
         return this.onSave(msg);
-      case 'browseLogsDir':
-        return this.onBrowseLogsDir();
       case 'cleanAllLogs':
         return this.onCleanAllLogs();
+      case 'browse':
+        return handleBrowseMessage(msg, this.panel.webview, this.folder);
     }
-  }
-
-  private async onBrowseLogsDir(): Promise<void> {
-    const picked = await vscode.window.showOpenDialog({
-      canSelectFolders: true,
-      canSelectFiles: false,
-      canSelectMany: false,
-      defaultUri: this.folder.uri,
-      openLabel: 'Select logs folder'
-    });
-    if (!picked || picked.length === 0) {
-      return;
-    }
-    void this.panel.webview.postMessage({ type: 'logsDirPicked', path: picked[0].fsPath });
   }
 
   private async onCleanAllLogs(): Promise<void> {
@@ -457,6 +440,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
   label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; }
   label.check input { width: auto; margin-top: 0; }
   ${HELP_CSS}
+  ${BROWSE_CSS}
   .row { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
   .row label { margin-top: 0; }
   .actions { margin-top: 26px; display: flex; gap: 8px; flex-wrap: wrap; }
@@ -565,10 +549,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       '${env:NAME}' +
       '</code>. Leave blank to keep the default. A job can override this individually in its Advanced settings.'
   )}</label>
-  <div class="row">
-    <input id="logsDirectory" type="text" style="flex:1;" value="${esc(state.logsDirectory)}" placeholder=".eda-runner/logs (default)" />
-    <button class="secondary" id="browseLogsDir" type="button">Browse…</button>
-  </div>
+  <input id="logsDirectory" type="text" value="${esc(state.logsDirectory)}" placeholder=".eda-runner/logs (default)" />
 
   <label class="check">
     <input id="limitByCount" type="checkbox" ${state.logRetentionCount > 0 ? 'checked' : ''} />
@@ -604,6 +585,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${BROWSE_JS}
     const $ = id => document.getElementById(id);
     const autoEl = $('shellArgsAuto');
     const argsWrap = $('argsWrap');
@@ -652,8 +634,10 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       vscode.postMessage(Object.assign({ type: 'save' }, collect()));
     });
     $('cancel').addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
-    $('browseLogsDir').addEventListener('click', () => vscode.postMessage({ type: 'browseLogsDir' }));
     $('cleanAllLogs').addEventListener('click', () => vscode.postMessage({ type: 'cleanAllLogs' }));
+    addBrowseButton($('setupScript'), 'file');
+    addBrowseButton($('postSetupCwd'), 'folder');
+    addBrowseButton($('logsDirectory'), 'folder');
 
     window.addEventListener('message', event => {
       const m = event.data;
@@ -686,8 +670,6 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       } else if (m.type === 'saveError') {
         testOut.style.display = 'block';
         testOut.textContent = m.message;
-      } else if (m.type === 'logsDirPicked') {
-        $('logsDirectory').value = m.path;
       }
     });
 

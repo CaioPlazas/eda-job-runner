@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.42.0 — Global value lists, a leaner option builder, and Browse buttons everywhere
+
+**Features:**
+- Value lists are no longer tied to a single tool — they now live in a new
+  "Value lists" section on the Parameters panel, so any job can attach any
+  list to any tool's option, not just a list that happened to belong to
+  the same tool. Each list can optionally set its own scan directory
+  (defaulting to the workspace's post-setup working directory, same
+  fallback chain a tool's own scan directory already used).
+- A native folder/file "Browse…" picker was added to every path-like field
+  across all four panels (job Working Directory / Live log file / Post-setup
+  working directory / Logs directory override, Tool Setup's Command / Scan
+  directory, Shell & Environment's Post-setup working directory / Setup
+  script, and the new Value list's file / scan directory) — 13 fields in
+  total, replacing the one bespoke picker that existed before (Logs
+  Directory) with a shared mechanism.
+
+**Cleanup:**
+- A job's per-option "✎ var" toggle and "which list feeds this dropdown"
+  picker no longer sit inline on every option row — they collapse behind a
+  small ⚙ button that expands them only when needed, so a tool with several
+  value-taking options doesn't turn into a wall of controls.
+
+**Bug fixes:**
+- A job's per-job value-list attachment (`optionListOverrides`, new in
+  0.41.0) was saved correctly but never read back on a window reload —
+  it silently reverted to none. Fixed.
+
 ## 0.41.0 — Value-list visibility fix, per-job list attachment, real-project example
 
 **Features:**

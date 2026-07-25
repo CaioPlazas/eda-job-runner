@@ -1,6 +1,15 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
-import { ToolDefinition, ToolList, ToolsFile, ToolVariant, emptyToolsFile } from './types';
+import { ToolDefinition, ToolsFile, ToolVariant, ValueList, emptyToolsFile } from './types';
+
+/** A pre-global-lists tool's own `lists`, captured at load time so a one-time
+ * startup migration (see `extension.ts`) can move it into `JobsFile.lists`.
+ * Never written back onto a `ToolDefinition` -- that field no longer exists
+ * on the type. */
+export interface LegacyToolLists {
+  toolId: string;
+  lists: ValueList[];
+}
 
 /** Mirrors JobStore: loads/saves/watches a hand-editable, shareable workspace file. */
 export class ToolStore implements vscode.Disposable {
@@ -8,6 +17,7 @@ export class ToolStore implements vscode.Disposable {
   readonly onDidChangeTools = this._onDidChangeTools.event;
 
   private data: ToolsFile = emptyToolsFile();
+  private legacyLists: LegacyToolLists[] = [];
   private readonly disposables: vscode.Disposable[] = [];
   private readonly toolsFileUri: vscode.Uri;
 
@@ -33,10 +43,13 @@ export class ToolStore implements vscode.Disposable {
       const bytes = await vscode.workspace.fs.readFile(this.toolsFileUri);
       const text = Buffer.from(bytes).toString('utf8');
       const parsed = text.trim().length === 0 ? emptyToolsFile() : (JSON.parse(text) as Partial<ToolsFile>);
-      this.data = normalize(parsed);
+      const { toolsFile, legacyLists } = normalize(parsed);
+      this.data = toolsFile;
+      this.legacyLists = legacyLists;
     } catch (err) {
       if (isFileNotFound(err)) {
         this.data = emptyToolsFile();
+        this.legacyLists = [];
       } else {
         vscode.window.showErrorMessage(
           `EDA Job Runner: failed to read .vscode/eda-tools.json (${describeError(err)}). ` +
@@ -54,6 +67,17 @@ export class ToolStore implements vscode.Disposable {
 
   getTool(id: string): ToolDefinition | undefined {
     return this.data.tools.find(t => t.id === id);
+  }
+
+  /** One-time migration hook, consumed once by `extension.ts`'s startup
+   * migration (moving each tool's pre-global-lists `lists` into
+   * `JobsFile.lists`). Clears the returned entries so a caller that also
+   * forces a fresh `persist()` per migrated tool (dropping the now-unused
+   * `lists` key from the JSON file) makes the next `load()` a true no-op. */
+  takeLegacyLists(): LegacyToolLists[] {
+    const taken = this.legacyLists;
+    this.legacyLists = [];
+    return taken;
   }
 
   async addTool(tool: Omit<ToolDefinition, 'id'>): Promise<ToolDefinition> {
@@ -93,32 +117,42 @@ export class ToolStore implements vscode.Disposable {
   }
 }
 
-function normalize(parsed: Partial<ToolsFile> | undefined): ToolsFile {
+function normalize(parsed: Partial<ToolsFile> | undefined): { toolsFile: ToolsFile; legacyLists: LegacyToolLists[] } {
   if (!parsed || !Array.isArray(parsed.tools)) {
-    return emptyToolsFile();
+    return { toolsFile: emptyToolsFile(), legacyLists: [] };
   }
+  const legacyLists: LegacyToolLists[] = [];
   const tools: ToolDefinition[] = parsed.tools
     .filter((t): t is ToolDefinition => typeof t?.id === 'string' && typeof t?.command === 'string')
-    .map(t => ({
-      id: t.id,
-      command: t.command,
-      displayName: typeof t.displayName === 'string' && t.displayName.trim() ? t.displayName.trim() : undefined,
-      scanDir: typeof t.scanDir === 'string' && t.scanDir.trim() ? t.scanDir.trim() : undefined,
-      helpArg: typeof t.helpArg === 'string' && t.helpArg.trim() ? t.helpArg.trim() : undefined,
-      seedPattern: typeof t.seedPattern === 'string' && t.seedPattern.trim() ? t.seedPattern.trim() : undefined,
-      variants: normalizeVariants(t.variants),
-      lists: normalizeLists(t.lists),
-      lastScanned: typeof t.lastScanned === 'number' ? t.lastScanned : undefined
-    }));
-  return { version: 1, tools };
+    .map(t => {
+      // Pre-global-lists tools carried their own `lists` array; that field
+      // no longer exists on `ToolDefinition`, but a workspace's JSON file
+      // may still have it on disk from before this change -- captured here
+      // (not assigned onto the tool) so extension.ts can migrate it once.
+      const legacy = normalizeLegacyLists((t as unknown as { lists?: unknown }).lists);
+      if (legacy && legacy.length > 0) {
+        legacyLists.push({ toolId: t.id, lists: legacy });
+      }
+      return {
+        id: t.id,
+        command: t.command,
+        displayName: typeof t.displayName === 'string' && t.displayName.trim() ? t.displayName.trim() : undefined,
+        scanDir: typeof t.scanDir === 'string' && t.scanDir.trim() ? t.scanDir.trim() : undefined,
+        helpArg: typeof t.helpArg === 'string' && t.helpArg.trim() ? t.helpArg.trim() : undefined,
+        seedPattern: typeof t.seedPattern === 'string' && t.seedPattern.trim() ? t.seedPattern.trim() : undefined,
+        variants: normalizeVariants(t.variants),
+        lastScanned: typeof t.lastScanned === 'number' ? t.lastScanned : undefined
+      };
+    });
+  return { toolsFile: { version: 1, tools }, legacyLists };
 }
 
-function normalizeLists(raw: unknown): ToolList[] | undefined {
+function normalizeLegacyLists(raw: unknown): ValueList[] | undefined {
   if (!Array.isArray(raw)) {
     return undefined;
   }
   const lists = raw
-    .filter((l): l is ToolList => typeof l?.name === 'string' && l.name.trim().length > 0)
+    .filter((l): l is ValueList => typeof l?.name === 'string' && l.name.trim().length > 0)
     .map(l => ({
       name: l.name.trim(),
       command: typeof l.command === 'string' && l.command.trim() ? l.command.trim() : undefined,

@@ -78,25 +78,27 @@ export interface JobDefinition {
   /** Which of `toolId`'s variants (sub-tool) the builder should show. "" is the top-level variant. */
   toolVariantLabel?: string;
   /**
-   * Per-job override of a `toolId` list's insert template, keyed by the
-   * list's `name` (see `ToolList`). Lets one job insert a picked value as
-   * `+UVM_TESTNAME=${value}` and another as `--test ${value}` from the same
-   * shared tool list. Absent keys inherit the tool's own `insertTemplate`.
-   * UI convenience only — `command` remains the single source of truth.
+   * Per-job override of a value list's insert template, keyed by the list's
+   * `name` (see `ValueList`, `JobsFile.lists`). Lets one job insert a picked
+   * value as `+UVM_TESTNAME=${value}` and another as `--test ${value}` from
+   * the same shared, workspace-wide list. Absent keys inherit the list's own
+   * `insertTemplate`. UI convenience only — `command` remains the single
+   * source of truth.
    */
   listInsertOverrides?: Record<string, string>;
   /**
-   * Per-job override of which of `toolId`'s lists supplies a value-taking
-   * option's dropdown values, keyed the same way Tool Setup's own per-option
-   * "value source" attachment is keyed server-side (`flags.join('|')` --
-   * see `toolSetupPanel.ts`'s `setOptionValueSource` handler). Lets one job
-   * attach a shared list to a flag Tool Setup never attached one to (or a
-   * different list than Tool Setup's own universal attachment) without
-   * changing that attachment for every other job using the tool. A key's
-   * value must name an entry in the tool's `lists`; an absent key falls back
-   * to that option's own `ToolOption.valueListName`, then a plain argparse
-   * `{a,b,c}` metavar -- today's behavior, unchanged when no override is set.
-   * UI convenience only -- `command` remains the single source of truth.
+   * Per-job override of which of the workspace's value lists supplies a
+   * value-taking option's dropdown values, keyed the same way Tool Setup's
+   * own per-option "value source" attachment is keyed server-side
+   * (`flags.join('|')` -- see `toolSetupPanel.ts`'s `setOptionValueSource`
+   * handler). Lets one job attach any workspace list to a flag Tool Setup
+   * never attached one to (or a different list than Tool Setup's own
+   * universal attachment) without changing that attachment for every other
+   * job using the tool. A key's value must name an entry in `JobsFile.lists`;
+   * an absent key falls back to that option's own `ToolOption.valueListName`,
+   * then a plain argparse `{a,b,c}` metavar -- today's behavior, unchanged
+   * when no override is set. UI convenience only -- `command` remains the
+   * single source of truth.
    */
   optionListOverrides?: Record<string, string>;
   /**
@@ -171,12 +173,13 @@ export interface ToolOption {
   /** Starred in Tool Setup so it surfaces first in a job's builder, ahead of a long flag list. */
   favorite?: boolean;
   /**
-   * Names a `ToolList` on the same tool/variant that supplies this option's
-   * selectable values. When set, a job's builder renders this option's value
-   * editor as a dropdown of that list's values instead of free text -- the
-   * picked value is inserted as the flag's own argument (flag, then value),
-   * not via a `ToolList.insertTemplate`. Set from Tool Setup's per-option
-   * "value source" control.
+   * Names an entry in the workspace's value lists (`JobsFile.lists`, see
+   * `ValueList`) that supplies this option's selectable values. When set, a
+   * job's builder renders this option's value editor as a dropdown of that
+   * list's values instead of free text -- the picked value is inserted as
+   * the flag's own argument (flag, then value), not via a
+   * `ValueList.insertTemplate`. Set from Tool Setup's per-option "value
+   * source" control.
    */
   valueListName?: string;
 }
@@ -200,24 +203,34 @@ export interface ToolVariant {
 }
 
 /**
- * A named, tool-agnostic "value list" — the source behind a test-list
- * dropdown in the job builder. Its members are discovered from exactly one
- * source (a file, or a command's stdout) and cached in `values`, refreshed
- * whenever the tool's flags are rescanned. `parseListLines`/`discoverList`
- * do the reading; `applyInsertTemplate` turns a picked value into a Command
- * fragment via `insertTemplate` so no tool's flag syntax is assumed.
+ * A named, workspace-wide, tool-agnostic "value list" — the source behind a
+ * test-list dropdown in the job builder, managed from the Parameters panel
+ * (`JobsFile.lists`) so the same list can feed any tool's option, not just
+ * one tool's own. Its members are discovered from exactly one source (a
+ * file, or a command's stdout) and cached in `values`, refreshed on demand.
+ * `parseListLines`/`discoverList` do the reading; `applyInsertTemplate`
+ * turns a picked value into a Command fragment via `insertTemplate` so no
+ * tool's flag syntax is assumed.
  */
-export interface ToolList {
+export interface ValueList {
   /** Label shown next to the dropdown in the builder, e.g. "Test". */
   name: string;
   /** Command whose stdout lines are the values. Exactly one of command/file is set. */
   command?: string;
-  /** File whose lines are the values (absolute, or relative to the tool's cwd). */
+  /** File whose lines are the values (absolute, or relative to `scanDir`). */
   file?: string;
   /** Optional regex applied per line; capture group 1 (or the whole match) is the value. */
   pattern?: string;
   /** How a picked value is inserted into the Command; `${value}` is substituted. Defaults to `${value}`. */
   insertTemplate?: string;
+  /**
+   * Optional directory this list's discovery command/file is resolved
+   * against, overriding the workspace `eda-job-runner.postSetupCwd` setting
+   * -- same fallback chain as `ToolDefinition.scanDir` and
+   * `JobDefinition.postSetupCwd` (this field -> the workspace setting ->
+   * the workspace root). Supports `${workspaceFolder}`/`${env:NAME}`.
+   */
+  scanDir?: string;
   /** Discovered + cached values (like `ToolVariant.options`), refreshed on rescan. */
   values: string[];
   /** Set when the last discovery failed (spawn/read error, or no values found). */
@@ -241,8 +254,6 @@ export interface ToolDefinition {
   /** Flag used to introspect the tool. Defaults to "--help". */
   helpArg?: string;
   variants: ToolVariant[];
-  /** Named value lists (e.g. a test list) surfaced as dropdowns in the job builder. */
-  lists?: ToolList[];
   /** Epoch ms of the last scan attempt (successful or not). */
   lastScanned?: number;
   /**
@@ -294,6 +305,8 @@ export interface JobsFile {
   templates?: JobTemplate[];
   /** Workspace-wide named values referenced as `${var:NAME}`. See `GlobalParam`. */
   params?: GlobalParam[];
+  /** Workspace-wide named value lists surfaced as dropdowns in the job builder. See `ValueList`. */
+  lists?: ValueList[];
   jobs: JobDefinition[];
 }
 
