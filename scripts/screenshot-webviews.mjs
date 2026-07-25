@@ -193,6 +193,15 @@ async function run() {
           if (await allOpts.count()) {
             await allOpts.evaluate(el => { el.open = true; });
           }
+          // The var toggle / list-source select now live in each option's
+          // collapsed "advanced" row, opened by a gear button -- expand
+          // every one so later locators can see/click into them.
+          const advToggles = page.locator('.advToggle');
+          const advCount = await advToggles.count();
+          for (let i = 0; i < advCount; i++) {
+            await advToggles.nth(i).click();
+          }
+          await shoot(page, `${name}-${theme}-advanced-expanded`);
           // Toggle the "--std" flag's choices dropdown to free-text and back,
           // exercising the reversible var/choices toggle end to end. A
           // varToggle now exists (hidden) even for choice-less options (e.g.

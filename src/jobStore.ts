@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
-import { GlobalParam, JobDefinition, JobsFile, JobsFileSetup, JobTemplate, emptyJobsFile } from './types';
+import { GlobalParam, JobDefinition, JobsFile, JobsFileSetup, JobTemplate, ValueList, emptyJobsFile } from './types';
 import { computeReorderedJobs } from './jobOrder';
 import { computeReorderedFolders } from './folderOrder';
 
@@ -219,6 +219,24 @@ export class JobStore implements vscode.Disposable {
     await this.persist();
   }
 
+  getLists(): ValueList[] {
+    return this.data.lists ?? [];
+  }
+
+  /** Replaces the whole list (the Parameters panel edits/saves the full set at once); trims and drops blank names. */
+  async setLists(lists: ValueList[]): Promise<void> {
+    const byName = new Map<string, ValueList>();
+    for (const l of lists) {
+      const name = l.name.trim();
+      if (!name) {
+        continue;
+      }
+      byName.set(name, { ...l, name });
+    }
+    this.data.lists = byName.size > 0 ? [...byName.values()] : undefined;
+    await this.persist();
+  }
+
   /**
    * Replace the workspace-level `setup` block (sourced script + pre-commands)
    * and persist. Passing an empty/blank setup drops the key entirely so the
@@ -395,6 +413,10 @@ function normalize(parsed: Partial<JobsFile> | undefined): JobsFile {
       if (listOverrides) {
         job.listInsertOverrides = listOverrides;
       }
+      const optionListOverrides = normalizeStringRecord(j.optionListOverrides);
+      if (optionListOverrides) {
+        job.optionListOverrides = optionListOverrides;
+      }
       const customArgs = normalizeCustomArgs(j.customArgs);
       if (customArgs) {
         job.customArgs = customArgs;
@@ -423,7 +445,37 @@ function normalize(parsed: Partial<JobsFile> | undefined): JobsFile {
     : undefined;
   const templates = normalizeTemplates(parsed.templates);
   const params = normalizeParams(parsed.params);
-  return { version: 1, setup: parsed.setup, folders, templates, params, jobs };
+  const lists = normalizeLists(parsed.lists);
+  return { version: 1, setup: parsed.setup, folders, templates, params, lists, jobs };
+}
+
+/** Keep only well-formed value lists with a non-empty name, deduped by name (last one wins); undefined if none survive. Mirrors `normalizeParams`. */
+function normalizeLists(raw: unknown): ValueList[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const byName = new Map<string, ValueList>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const l = item as Record<string, unknown>;
+    const name = typeof l.name === 'string' ? l.name.trim() : '';
+    if (!name) {
+      continue;
+    }
+    byName.set(name, {
+      name,
+      command: typeof l.command === 'string' && l.command.trim() ? l.command.trim() : undefined,
+      file: typeof l.file === 'string' && l.file.trim() ? l.file.trim() : undefined,
+      pattern: typeof l.pattern === 'string' && l.pattern.trim() ? l.pattern.trim() : undefined,
+      insertTemplate: typeof l.insertTemplate === 'string' && l.insertTemplate.trim() ? l.insertTemplate : undefined,
+      scanDir: typeof l.scanDir === 'string' && l.scanDir.trim() ? l.scanDir.trim() : undefined,
+      values: Array.isArray(l.values) ? l.values.filter((v: unknown): v is string => typeof v === 'string') : [],
+      scanError: typeof l.scanError === 'string' ? l.scanError : undefined
+    });
+  }
+  return byName.size > 0 ? [...byName.values()] : undefined;
 }
 
 /** Keep only well-formed {name, value} entries with a non-empty name, deduped by name (last one wins); undefined if none survive. */

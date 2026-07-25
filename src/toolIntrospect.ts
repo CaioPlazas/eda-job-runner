@@ -3,7 +3,7 @@ import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { JobStore } from './jobStore';
-import { ToolDefinition, ToolList, ToolOption, ToolVariant } from './types';
+import { ToolDefinition, ToolOption, ToolVariant, ValueList } from './types';
 import { buildShellInvocation, resolveJobEnv, substituteVars } from './shellInvocation';
 import { parseHelpOutput, mergeFavorites } from './toolOptionParser';
 import { parseListLines } from './listSource';
@@ -184,11 +184,11 @@ export async function scanTool(
  * pattern. A list with neither source keeps zero values.
  */
 export async function discoverList(
-  list: ToolList,
+  list: ValueList,
   jobStore: JobStore,
   folder: vscode.WorkspaceFolder,
   scanDir?: string
-): Promise<ToolList> {
+): Promise<ValueList> {
   const command = list.command?.trim();
   const file = list.file?.trim();
 
@@ -232,17 +232,17 @@ async function readCapped(filePath: string): Promise<string> {
   }
 }
 
-/** Re-discover every list on a tool sequentially, returning the refreshed list array. */
-export async function scanLists(
-  tool: ToolDefinition,
+/** Re-discover every list in a workspace-wide list array sequentially, returning the refreshed list array. */
+export async function scanAllLists(
+  lists: ValueList[],
   jobStore: JobStore,
   folder: vscode.WorkspaceFolder
-): Promise<ToolList[]> {
-  const lists: ToolList[] = [];
-  for (const list of tool.lists ?? []) {
-    lists.push(await discoverList(list, jobStore, folder, tool.scanDir));
+): Promise<ValueList[]> {
+  const refreshed: ValueList[] = [];
+  for (const list of lists) {
+    refreshed.push(await discoverList(list, jobStore, folder, list.scanDir));
   }
-  return lists;
+  return refreshed;
 }
 
 /** Resolve a list file path the same way a scan's cwd resolves: against a tool's own scanDir override, then postSetupCwd, then workspace root. */

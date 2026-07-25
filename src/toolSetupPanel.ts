@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
 import { ToolStore } from './toolStore';
 import { JobStore } from './jobStore';
-import { ToolDefinition, ToolList, ToolOption, ToolVariant } from './types';
-import { scanVariant, scanTool, scanLists, discoverList } from './toolIntrospect';
+import { ToolDefinition, ToolOption, ToolVariant, ValueList } from './types';
+import { scanVariant, scanTool } from './toolIntrospect';
 import { detectSubcommandChoices, mergeFavorites, parseChoices } from './toolOptionParser';
 import { HELP_CSS, help } from './webviewHelp';
+import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { BUILTIN_SEED_PATTERNS } from './seedDetect';
 
 interface ScanNewMessage {
@@ -81,25 +82,6 @@ interface SetOptionValueSourceMessage {
   flagsKey: string;
   listName: string;
 }
-interface AddListMessage {
-  type: 'addList';
-  id: string;
-  name: string;
-  sourceType: 'file' | 'command';
-  source: string;
-  pattern: string;
-  insertTemplate: string;
-}
-interface RefreshListMessage {
-  type: 'refreshList';
-  id: string;
-  name: string;
-}
-interface RemoveListMessage {
-  type: 'removeList';
-  id: string;
-  name: string;
-}
 interface CloseMessage {
   type: 'close';
 }
@@ -120,10 +102,8 @@ type WebviewMessage =
   | RemoveVariantMessage
   | ToggleFavoriteMessage
   | SetOptionValueSourceMessage
-  | AddListMessage
-  | RefreshListMessage
-  | RemoveListMessage
-  | CloseMessage;
+  | CloseMessage
+  | BrowseMessage;
 
 interface PendingAdd {
   command: string;
@@ -173,6 +153,7 @@ export class ToolSetupPanel {
     this.panel.webview.html = renderHtml(
       this.panel.webview,
       this.toolStore.getTools(),
+      this.jobStore.getLists(),
       this.pendingAdd,
       this.editingToolId,
       this.addingVariantForToolId
@@ -184,6 +165,9 @@ export class ToolSetupPanel {
       case 'close':
         this.panel.dispose();
         return;
+
+      case 'browse':
+        return handleBrowseMessage(msg, this.panel.webview, this.folder);
 
       case 'scanNew': {
         const command = msg.command.trim();
@@ -260,8 +244,7 @@ export class ToolSetupPanel {
           return;
         }
         const variants = await scanTool(tool, this.jobStore, this.folder);
-        const lists = await scanLists(tool, this.jobStore, this.folder);
-        await this.toolStore.updateTool(msg.id, { variants, lists, lastScanned: Date.now() });
+        await this.toolStore.updateTool(msg.id, { variants, lastScanned: Date.now() });
         this.render();
         return;
       }
@@ -330,8 +313,7 @@ export class ToolSetupPanel {
         const updated = this.toolStore.getTool(msg.id);
         if (updated) {
           const variants = await scanTool(updated, this.jobStore, this.folder);
-          const lists = await scanLists(updated, this.jobStore, this.folder);
-          await this.toolStore.updateTool(msg.id, { variants, lists, lastScanned: Date.now() });
+          await this.toolStore.updateTool(msg.id, { variants, lastScanned: Date.now() });
         }
         this.editingToolId = undefined;
         this.render();
@@ -430,57 +412,6 @@ export class ToolSetupPanel {
         // valueListName, so there's nothing to patch or re-render at all.
         return;
       }
-
-      case 'addList': {
-        const tool = this.toolStore.getTool(msg.id);
-        const name = msg.name.trim();
-        const source = msg.source.trim();
-        if (!tool || !name || !source) {
-          return;
-        }
-        const list: ToolList = {
-          name,
-          command: msg.sourceType === 'command' ? source : undefined,
-          file: msg.sourceType === 'file' ? source : undefined,
-          pattern: msg.pattern.trim() || undefined,
-          insertTemplate: msg.insertTemplate.trim() || undefined,
-          values: []
-        };
-        const discovered = await discoverList(list, this.jobStore, this.folder, tool.scanDir);
-        // Replace any existing list of the same name (edit-in-place), else append.
-        const lists = (tool.lists ?? []).filter(l => l.name !== name);
-        lists.push(discovered);
-        await this.toolStore.updateTool(msg.id, { lists });
-        this.render();
-        return;
-      }
-
-      case 'refreshList': {
-        const tool = this.toolStore.getTool(msg.id);
-        if (!tool || !tool.lists) {
-          return;
-        }
-        const idx = tool.lists.findIndex(l => l.name === msg.name);
-        if (idx === -1) {
-          return;
-        }
-        const lists = tool.lists.slice();
-        lists[idx] = await discoverList(lists[idx], this.jobStore, this.folder, tool.scanDir);
-        await this.toolStore.updateTool(msg.id, { lists });
-        this.render();
-        return;
-      }
-
-      case 'removeList': {
-        const tool = this.toolStore.getTool(msg.id);
-        if (!tool || !tool.lists) {
-          return;
-        }
-        const lists = tool.lists.filter(l => l.name !== msg.name);
-        await this.toolStore.updateTool(msg.id, { lists: lists.length > 0 ? lists : undefined });
-        this.render();
-        return;
-      }
     }
   }
 
@@ -495,6 +426,7 @@ export class ToolSetupPanel {
 export function renderHtml(
   webview: vscode.Webview,
   tools: ToolDefinition[],
+  lists: ValueList[],
   pendingAdd: PendingAdd | undefined,
   editingToolId: string | undefined,
   addingVariantForToolId: string | undefined
@@ -538,7 +470,8 @@ export function renderHtml(
     if (options.length === 0) {
       return '<div class="hint">No options detected.</div>';
     }
-    const lists = tool.lists ?? [];
+    // `lists` here is renderHtml's own parameter (the workspace-wide list
+    // array) via closure -- every tool's options can pick from the same set.
     // Embedded per-row as data-orig-idx (below) so the client-side favorite
     // toggle (see toggleFavorite's wire() handler) can re-sort using this
     // same original-definition order as its tiebreak, exactly like this
@@ -556,7 +489,7 @@ export function renderHtml(
           o.metavar && lists.length > 0
             ? `<td><select class="valueSourceSelect" data-vs-id="${esc(tool.id)}" data-vs-label="${esc(
                 variantLabel
-              )}" data-vs-key="${esc(key)}" title="Where this flag's value comes from">
+              )}" data-vs-key="${esc(key)}" title="Where this flag's value comes from. Manage value lists themselves from the Parameters panel.">
                 <option value="">free text</option>
                 ${lists
                   .map(
@@ -605,46 +538,6 @@ export function renderHtml(
       <input type="text" placeholder="selector args (e.g. --regression)" class="newVariantArgs" style="flex:1;" />
       <button class="primary small" data-confirm-addvariant="${esc(toolId)}" type="button">Add</button>
       <button class="secondary small" id="cancelAddVariant" type="button">Cancel</button>
-    </div>`;
-
-  const renderList = (toolId: string, l: ToolList): string => {
-    const src = l.command ? `command: <code>${esc(l.command)}</code>` : l.file ? `file: <code>${esc(l.file)}</code>` : '<span class="err">no source</span>';
-    const status = l.scanError
-      ? `<span class="err">⚠ ${esc(l.scanError)}</span>`
-      : `${l.values.length} value${l.values.length === 1 ? '' : 's'}`;
-    return `<div class="listItem">
-      <div class="listHeader">
-        <b>${esc(l.name)}</b> <span class="hint">${src}${l.pattern ? ` · pattern <code>${esc(l.pattern)}</code>` : ''} · ${status}</span>
-        <button class="secondary small" data-refresh-list-id="${esc(toolId)}" data-refresh-list-name="${esc(l.name)}" type="button">↻ Refresh</button>
-        <button class="secondary small" data-remove-list-id="${esc(toolId)}" data-remove-list-name="${esc(l.name)}" type="button">Remove</button>
-      </div>
-      ${l.values.length > 0 ? `<div class="hint listValues">${l.values.slice(0, 12).map(esc).join(', ')}${l.values.length > 12 ? `, …(+${l.values.length - 12})` : ''}</div>` : ''}
-    </div>`;
-  };
-
-  const renderLists = (tool: ToolDefinition): string => `
-    <div class="lists">
-      <div class="listsHeading">Value lists ${help(
-        'Discovered values for a dropdown. <b>Attach one to a flag</b> using that ' +
-          "flag's \"value source\" column above (in a variant's option table) to " +
-          "make it that flag's dropdown — the usual case. Leave a list unattached " +
-          'for a value with no real CLI flag to attach to (e.g. a plusarg like ' +
-          '<code>+UVM_TESTNAME=</code>) — an unattached list keeps its own row ' +
-          'below, with an insert template controlling exactly how a picked value ' +
-          'is written into the Command.'
-      )}</div>
-      ${(tool.lists ?? []).map(l => renderList(tool.id, l)).join('')}
-      <div class="listRow">
-        <input type="text" placeholder="name (e.g. Test)" class="newListName" style="flex:1;" />
-        <select class="newListSourceType">
-          <option value="command">command</option>
-          <option value="file">file</option>
-        </select>
-        <input type="text" placeholder="source (command to run, or file path)" class="newListSource" style="flex:2;" />
-        <input type="text" placeholder="pattern (optional regex)" class="newListPattern" style="flex:1;" />
-        <input type="text" placeholder="insert template, for an unattached list (default \${value})" class="newListTemplate" style="flex:1;" />
-        <button class="primary small" data-add-list="${esc(tool.id)}" type="button">Add</button>
-      </div>
     </div>`;
 
   const renderTool = (tool: ToolDefinition): string => {
@@ -698,7 +591,6 @@ export function renderHtml(
           ? renderAddVariantForm(tool.id)
           : `<button class="secondary small" data-start-addvariant="${esc(tool.id)}" type="button" style="margin-top:10px;">+ Add sub-tool</button>`
       }
-      ${renderLists(tool)}
     </div>`;
   };
 
@@ -794,6 +686,7 @@ export function renderHtml(
   label.check input { width: auto; margin-top: 0; }
   .hint { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
   ${HELP_CSS}
+  ${BROWSE_CSS}
   .err { color: var(--vscode-errorForeground); }
   .actions { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
   button {
@@ -847,14 +740,6 @@ export function renderHtml(
   }
   .variantRow { display: flex; gap: 8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
   .variantRow input { margin-top: 0; }
-  .lists { margin-top: 14px; border-top: 1px solid var(--vscode-input-border, rgba(127,127,127,0.2)); padding-top: 8px; }
-  .listsHeading { font-weight: 600; }
-  .listItem { margin-top: 8px; }
-  .listHeader { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .listValues { font-family: var(--vscode-editor-font-family); margin-top: 2px; }
-  .listRow { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
-  .listRow input, .listRow select { margin-top: 0; }
-  .listRow select { width: auto; padding: 6px 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; }
   .seedTester { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--vscode-input-border, rgba(127,127,127,0.25)); border-radius: 4px; }
   .seedTester label { margin-top: 0; font-weight: 400; }
   .seedTester textarea { width: 100%; box-sizing: border-box; margin-top: 4px; font-family: var(--vscode-editor-font-family); font-size: 0.85em; resize: vertical; }
@@ -890,7 +775,16 @@ export function renderHtml(
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${BROWSE_JS}
     const $ = id => document.getElementById(id);
+    addBrowseButton($('newCommand'), 'file');
+    addBrowseButton($('newScanDir'), 'folder');
+    // At most one tool is ever in edit mode at a time -- a class, not an id,
+    // since renderTool re-renders per-tool (see wrap.querySelector('.editCommand') below).
+    const editCommandEl = document.querySelector('.editCommand');
+    if (editCommandEl) { addBrowseButton(editCommandEl, 'file'); }
+    const editScanDirEl = document.querySelector('.editScanDir');
+    if (editScanDirEl) { addBrowseButton(editScanDirEl, 'folder'); }
 
     // Mirrors seedDetect.ts's detectSeed exactly, client-side, so the
     // paste-and-preview tester needs no host round-trip: try the tool's own
@@ -1057,34 +951,6 @@ export function renderHtml(
         });
       });
     });
-    wire('[data-add-list]', btn => {
-      const wrap = btn.closest('.listRow');
-      showBusy();
-      vscode.postMessage({
-        type: 'addList',
-        id: btn.getAttribute('data-add-list'),
-        name: wrap.querySelector('.newListName').value,
-        sourceType: wrap.querySelector('.newListSourceType').value,
-        source: wrap.querySelector('.newListSource').value,
-        pattern: wrap.querySelector('.newListPattern').value,
-        insertTemplate: wrap.querySelector('.newListTemplate').value
-      });
-    });
-    wire('[data-refresh-list-id]', btn => {
-      showBusy();
-      vscode.postMessage({
-        type: 'refreshList',
-        id: btn.getAttribute('data-refresh-list-id'),
-        name: btn.getAttribute('data-refresh-list-name')
-      });
-    });
-    wire('[data-remove-list-id]', btn =>
-      vscode.postMessage({
-        type: 'removeList',
-        id: btn.getAttribute('data-remove-list-id'),
-        name: btn.getAttribute('data-remove-list-name')
-      })
-    );
     wire('[data-save-edit]', btn => {
       const wrap = btn.closest('.tool');
       showBusy();

@@ -35,6 +35,10 @@ const fakeWebview = { cspSource: 'vscode-resource:' };
 
 // ---- Representative sample data, exercising the recently-changed surfaces ----
 
+const lists = [
+  { name: 'Tests', command: 'ls tests/*.sv', values: ['smoke_test', 'regress_full', 'corner_case_1'], insertTemplate: '${value}' }
+];
+
 const tool = {
   id: 'tool-questa',
   command: 'questa_run.sh',
@@ -42,7 +46,6 @@ const tool = {
   helpArg: '--help',
   lastScanned: Date.now() - 3600_000,
   seedPattern: 'MY_SEED=(\\d+)',
-  lists: [{ name: 'Tests', command: 'ls tests/*.sv', values: ['smoke_test', 'regress_full', 'corner_case_1'], insertTemplate: '${value}' }],
   variants: [
     {
       label: '',
@@ -100,18 +103,18 @@ const folders = ['Regression', 'Compile'];
 
 {
   const { renderHtml } = await import(bundle('./src/jobConfigPanel.ts', 'jobConfig'));
-  const html = renderHtml(fakeWebview, job, [tool], folders, undefined, false, globalParams, templates);
+  const html = renderHtml(fakeWebview, job, [tool], folders, undefined, false, globalParams, templates, lists);
   fs.writeFileSync(path.join(outDir, 'jobConfig.html'), html);
 }
 
 {
   const { renderHtml } = await import(bundle('./src/toolSetupPanel.ts', 'toolSetup'));
-  const html = renderHtml(fakeWebview, [tool], undefined, undefined, undefined);
+  const html = renderHtml(fakeWebview, [tool], lists, undefined, undefined, undefined);
   fs.writeFileSync(path.join(outDir, 'toolSetup.html'), html);
   // A separate render with the tool's in-place edit form open -- the Seed
   // pattern field + its paste-and-preview tester only exist in this state
   // (editingToolId set), not the default list view above.
-  const editingHtml = renderHtml(fakeWebview, [tool], undefined, tool.id, undefined);
+  const editingHtml = renderHtml(fakeWebview, [tool], lists, undefined, tool.id, undefined);
   fs.writeFileSync(path.join(outDir, 'toolSetup-editing.html'), editingHtml);
 }
 
@@ -135,7 +138,7 @@ const folders = ['Regression', 'Compile'];
 
 {
   const { renderHtml } = await import(bundle('./src/paramsPanel.ts', 'params'));
-  const html = renderHtml(fakeWebview, globalParams);
+  const html = renderHtml(fakeWebview, globalParams, lists);
   fs.writeFileSync(path.join(outDir, 'params.html'), html);
 }
 

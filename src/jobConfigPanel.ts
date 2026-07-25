@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
-import { GlobalParam, JobDefinition, JobTemplate, ToolDefinition } from './types';
+import { GlobalParam, JobDefinition, JobTemplate, ToolDefinition, ValueList } from './types';
 import { HELP_CSS, help } from './webviewHelp';
+import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 
 interface SaveMessage {
   type: 'save';
@@ -48,7 +49,7 @@ interface DeleteTemplateRequestMessage {
   name: string;
 }
 
-type WebviewMessage = SaveMessage | CancelMessage | SaveTemplateRequestMessage | DeleteTemplateRequestMessage;
+type WebviewMessage = SaveMessage | CancelMessage | SaveTemplateRequestMessage | DeleteTemplateRequestMessage | BrowseMessage;
 
 export class JobConfigPanel {
   private static readonly panels = new Map<string, JobConfigPanel>();
@@ -58,7 +59,13 @@ export class JobConfigPanel {
   /** The job this panel saves to. Undefined until a brand-new job's first Save creates one. */
   private currentJobId: string | undefined;
 
-  static createOrShow(jobStore: JobStore, tools: ToolDefinition[], existingJob?: JobDefinition, presetFolder?: string): void {
+  static createOrShow(
+    jobStore: JobStore,
+    tools: ToolDefinition[],
+    workspaceFolder: vscode.WorkspaceFolder,
+    existingJob?: JobDefinition,
+    presetFolder?: string
+  ): void {
     const key = existingJob?.id ?? '__new__';
     const existing = JobConfigPanel.panels.get(key);
     if (existing) {
@@ -75,7 +82,10 @@ export class JobConfigPanel {
       { enableScripts: true, retainContextWhenHidden: true }
     );
 
-    JobConfigPanel.panels.set(key, new JobConfigPanel(panel, jobStore, key, existingJob, tools, presetFolder));
+    JobConfigPanel.panels.set(
+      key,
+      new JobConfigPanel(panel, jobStore, key, existingJob, tools, presetFolder, workspaceFolder)
+    );
   }
 
   private constructor(
@@ -85,7 +95,8 @@ export class JobConfigPanel {
     private mapKey: string,
     existingJob: JobDefinition | undefined,
     tools: ToolDefinition[],
-    presetFolder: string | undefined
+    presetFolder: string | undefined,
+    private readonly workspaceFolder: vscode.WorkspaceFolder
   ) {
     this.panel = panel;
     this.currentJobId = existingJob?.id;
@@ -100,7 +111,8 @@ export class JobConfigPanel {
       presetFolder,
       autoSave,
       jobStore.getParams(),
-      jobStore.getTemplates()
+      jobStore.getTemplates(),
+      jobStore.getLists()
     );
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
@@ -118,6 +130,9 @@ export class JobConfigPanel {
     }
     if (msg.type === 'deleteTemplateRequest') {
       return this.onDeleteTemplateRequest(msg);
+    }
+    if (msg.type === 'browse') {
+      return handleBrowseMessage(msg, this.panel.webview, this.workspaceFolder);
     }
 
     const name = msg.name.trim();
@@ -264,7 +279,8 @@ export function renderHtml(
   presetFolder: string | undefined,
   autoSave: boolean,
   globalParams: GlobalParam[],
-  templates: JobTemplate[]
+  templates: JobTemplate[],
+  lists: ValueList[]
 ): string {
   const nonce = getNonce();
   const esc = (s: string) =>
@@ -276,11 +292,6 @@ export function renderHtml(
     tools.map(t => ({
       id: t.id,
       command: t.command,
-      lists: (t.lists ?? []).map(l => ({
-        name: l.name,
-        values: Array.isArray(l.values) ? l.values : [],
-        insertTemplate: l.insertTemplate || '${value}'
-      })),
       variants: t.variants.map(v => ({
         label: v.label,
         selectArgs: v.selectArgs,
@@ -298,6 +309,15 @@ export function renderHtml(
   const globalParamsJson = JSON.stringify(globalParams).replace(/</g, '\\u003c');
   const paramOverridesJson = JSON.stringify(job?.paramOverrides ?? {}).replace(/</g, '\\u003c');
   const templatesJson = JSON.stringify(templates).replace(/</g, '\\u003c');
+  // Slim payload, same shape every tool's per-tool `lists` used to embed --
+  // now a single workspace-wide array any tool's options can draw from.
+  const listsJson = JSON.stringify(
+    lists.map(l => ({
+      name: l.name,
+      values: Array.isArray(l.values) ? l.values : [],
+      insertTemplate: l.insertTemplate || '${value}'
+    }))
+  ).replace(/</g, '\\u003c');
   const hasVarRef = /\$\{var:[A-Za-z_][\w-]*\}/.test(job?.command ?? '');
 
   return `<!DOCTYPE html>
@@ -346,10 +366,14 @@ export function renderHtml(
   }
   .hidden { display: none; }
   ${HELP_CSS}
+  ${BROWSE_CSS}
   .optRow { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .optRow label.check { font-weight: 400; flex: 1 1 auto; min-width: 200px; }
   .optRow .optValue { width: auto; flex: 0 1 160px; margin-top: 0; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
-  .optRow .listSourceSelect { width: auto; flex: 0 0 auto; margin-top: 0; padding: 4px 8px; font-size: 0.85em; }
+  .optRow .advToggle { flex: 0 0 auto; padding: 4px 8px; font-size: 0.85em; }
+  .optAdvanced { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0 0 26px; }
+  .optAdvanced.hidden { display: none; }
+  .optAdvanced .listSourceSelect { width: auto; flex: 0 0 auto; margin-top: 0; padding: 4px 8px; font-size: 0.85em; }
   .paramOverrideRow .poName { font-weight: 600; }
   .paramOverrideRow .poNameInput { width: auto; flex: 0 1 180px; margin-top: 0; font-weight: 400; }
   .paramOverrideRow .poValue { width: auto; flex: 0 1 220px; margin-top: 0; }
@@ -575,6 +599,7 @@ export function renderHtml(
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${BROWSE_JS}
     const AUTO_SAVE = ${autoSave ? 'true' : 'false'};
     const nameEl = document.getElementById('name');
     const folderEl = document.getElementById('folder');
@@ -590,6 +615,10 @@ export function renderHtml(
     const runCountEl = document.getElementById('runCount');
     const postRunEnabledEl = document.getElementById('postRunEnabled');
     const postRunCommandEl = document.getElementById('postRunCommand');
+    addBrowseButton(cwdEl, 'folder');
+    addBrowseButton(logFileEl, 'file');
+    addBrowseButton(postSetupCwdEl, 'folder');
+    addBrowseButton(logsDirectoryEl, 'folder');
     postRunEnabledEl.addEventListener('change', () => {
       postRunCommandEl.disabled = !postRunEnabledEl.checked;
     });
@@ -598,6 +627,9 @@ export function renderHtml(
     let savedFlashTimer;
 
     const TOOLS = ${toolsJson};
+    // Workspace-wide value lists -- any tool's option can draw from any of
+    // these, not just ones a specific tool happens to own.
+    const GLOBAL_LISTS = ${listsJson};
     // Mutable (not const): loading a template re-seeds which variant should
     // be pre-selected the next time renderVariantSelect runs, same as a
     // freshly-opened existing job's saved variant would be.
@@ -779,15 +811,15 @@ export function renderHtml(
     // An option can source its value from a list (attached in Tool Setup)
     // instead of a plain argparse choices= metavar -- the attached list wins
     // when both could apply.
-    function optionChoices(opt, tool) {
+    function optionChoices(opt) {
       const key = opt.flags.join('|');
       const overrideName = OPTION_LIST_OVERRIDES[key];
-      if (overrideName && tool && tool.lists) {
-        const list = tool.lists.find(l => l.name === overrideName);
+      if (overrideName) {
+        const list = GLOBAL_LISTS.find(l => l.name === overrideName);
         if (list) { return list.values || []; }
       }
-      if (opt.valueListName && tool && tool.lists) {
-        const list = tool.lists.find(l => l.name === opt.valueListName);
+      if (opt.valueListName) {
+        const list = GLOBAL_LISTS.find(l => l.name === opt.valueListName);
         if (list) { return list.values || []; }
       }
       return parseChoices(opt.metavar);
@@ -813,8 +845,9 @@ export function renderHtml(
       row.appendChild(label);
 
       let valueInput;
+      let advanced;
       if (opt.metavar) {
-        let choices = optionChoices(opt, tool);
+        let choices = optionChoices(opt);
         const existing = opt.flags.map(f => extractValue(f, text)).find(v => v);
         // A choices dropdown only actually applies when the existing value (if
         // any) is one of its fixed choices -- an existing value that ISN'T
@@ -861,36 +894,52 @@ export function renderHtml(
         valueInput.disabled = !checkbox.checked;
         row.appendChild(valueInput);
 
-        // A fixed-choices dropdown can't hold a \${var:NAME} reference -- this
-        // toggle swaps the active editor between the dropdown and a free-text
-        // field (with the same varOptions autocomplete as any other builder
-        // value field), relabeling itself and preserving the value across the
-        // swap whenever it still fits, in both directions.
-        const varToggle = document.createElement('button');
-        varToggle.type = 'button';
-        varToggle.className = choices ? 'secondary varToggle' : 'secondary varToggle hidden';
-        const syncToggleLabel = () => {
-          const isDropdown = valueInput.tagName === 'SELECT';
-          varToggle.textContent = isDropdown ? '✎ var' : '◀ choices';
-          varToggle.title = isDropdown
-            ? 'Use a parameter (\${var:NAME}) instead of one of the fixed choices'
-            : 'Switch back to the fixed-choices dropdown';
-        };
-        varToggle.addEventListener('click', () => {
-          const currentValue = valueInput.value;
-          const wasDisabled = valueInput.disabled;
-          const next = valueInput.tagName === 'SELECT' ? buildFree(currentValue) : buildSelect(currentValue);
-          next.disabled = wasDisabled;
-          next.addEventListener(next.tagName === 'SELECT' ? 'change' : 'input', () => { syncTitle(next); onBuilderChange(); });
-          valueInput.replaceWith(next);
-          valueInput = next;
-          syncToggleLabel();
-          onBuilderChange();
-        });
-        syncToggleLabel();
-        row.appendChild(varToggle);
+        // Per-option advanced controls (the var/choices toggle, and which
+        // list feeds this dropdown for this job) live in a collapsed row
+        // below the option instead of stacking inline -- only worth
+        // showing at all when the workspace has lists to offer in the
+        // first place (matches the list-source select's own gating below).
+        if (GLOBAL_LISTS.length > 0) {
+          const advToggle = document.createElement('button');
+          advToggle.type = 'button';
+          advToggle.className = 'secondary advToggle';
+          advToggle.textContent = '⚙';
+          advToggle.title = 'Advanced: parameter / value-list options for this field';
+          row.appendChild(advToggle);
 
-        if (tool && tool.lists && tool.lists.length > 0) {
+          advanced = document.createElement('div');
+          advanced.className = 'optAdvanced hidden';
+          advToggle.addEventListener('click', () => advanced.classList.toggle('hidden'));
+
+          // A fixed-choices dropdown can't hold a \${var:NAME} reference -- this
+          // toggle swaps the active editor between the dropdown and a free-text
+          // field (with the same varOptions autocomplete as any other builder
+          // value field), relabeling itself and preserving the value across the
+          // swap whenever it still fits, in both directions.
+          const varToggle = document.createElement('button');
+          varToggle.type = 'button';
+          varToggle.className = choices ? 'secondary varToggle' : 'secondary varToggle hidden';
+          const syncToggleLabel = () => {
+            const isDropdown = valueInput.tagName === 'SELECT';
+            varToggle.textContent = isDropdown ? '✎ var' : '◀ choices';
+            varToggle.title = isDropdown
+              ? 'Use a parameter (\${var:NAME}) instead of one of the fixed choices'
+              : 'Switch back to the fixed-choices dropdown';
+          };
+          varToggle.addEventListener('click', () => {
+            const currentValue = valueInput.value;
+            const wasDisabled = valueInput.disabled;
+            const next = valueInput.tagName === 'SELECT' ? buildFree(currentValue) : buildSelect(currentValue);
+            next.disabled = wasDisabled;
+            next.addEventListener(next.tagName === 'SELECT' ? 'change' : 'input', () => { syncTitle(next); onBuilderChange(); });
+            valueInput.replaceWith(next);
+            valueInput = next;
+            syncToggleLabel();
+            onBuilderChange();
+          });
+          syncToggleLabel();
+          advanced.appendChild(varToggle);
+
           const key = opt.flags.join('|');
           const listSourceSelect = document.createElement('select');
           listSourceSelect.className = 'listSourceSelect';
@@ -899,7 +948,7 @@ export function renderHtml(
           blankOpt.value = '';
           blankOpt.textContent = '(default)';
           listSourceSelect.appendChild(blankOpt);
-          tool.lists.forEach(l => {
+          GLOBAL_LISTS.forEach(l => {
             const o = document.createElement('option');
             o.value = l.name;
             o.textContent = l.name;
@@ -909,7 +958,7 @@ export function renderHtml(
           listSourceSelect.addEventListener('change', () => {
             if (listSourceSelect.value) { OPTION_LIST_OVERRIDES[key] = listSourceSelect.value; }
             else { delete OPTION_LIST_OVERRIDES[key]; }
-            choices = optionChoices(opt, tool);
+            choices = optionChoices(opt);
             const currentValue = valueInput.value;
             const wasDisabled = valueInput.disabled;
             const next = choices ? buildSelect(currentValue) : buildFree(currentValue);
@@ -922,7 +971,7 @@ export function renderHtml(
             onBuilderChange();
             renderLists(tool);
           });
-          row.appendChild(listSourceSelect);
+          advanced.appendChild(listSourceSelect);
         }
       }
 
@@ -934,6 +983,13 @@ export function renderHtml(
         valueInput.addEventListener(valueInput.tagName === 'SELECT' ? 'change' : 'input', () => { syncTitle(valueInput); onBuilderChange(); });
       }
 
+      if (advanced) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'optEntry';
+        wrapper.appendChild(row);
+        wrapper.appendChild(advanced);
+        return wrapper;
+      }
       return row;
     }
 
@@ -1036,14 +1092,14 @@ export function renderHtml(
 
     function renderLists(tool) {
       listsWrap.innerHTML = '';
-      if (!tool || !tool.lists || tool.lists.length === 0) { return; }
+      if (!tool || GLOBAL_LISTS.length === 0) { return; }
       // A list attached to an option (see optionChoices) already shows as
       // that option's own dropdown -- don't also show it as a free-floating
       // one. Only an unattached list (e.g. a plusarg with no real CLI flag
       // to attach to) still needs its own row + insert-template control.
       const variant = currentVariant(tool);
       const attached = new Set((variant ? variant.options : []).map(o => OPTION_LIST_OVERRIDES[o.flags.join('|')] || o.valueListName).filter(Boolean));
-      const unattached = tool.lists.filter(l => !attached.has(l.name));
+      const unattached = GLOBAL_LISTS.filter(l => !attached.has(l.name));
       if (unattached.length === 0) { return; }
       const text = commandEl.value;
       const heading = document.createElement('div');

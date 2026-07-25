@@ -7,6 +7,18 @@
     "Compile",
     "PicoRV32 (real project)"
   ],
+  "lists": [
+    {
+      "name": "test",
+      "file": "/home/eng/rtl-project/examples/test.flist",
+      "values": [
+        "test1",
+        "test2",
+        "test3",
+        "test4"
+      ]
+    }
+  ],
   "jobs": [
     {
       "id": "c0adb71a-85b5-4e05-af81-fa11d3e634b8",

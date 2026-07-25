@@ -22,10 +22,10 @@ import {
   JobTreeProvider,
   formatDuration
 } from './treeProvider';
-import { JobDefinition, JobTemplate } from './types';
+import { JobDefinition, JobTemplate, ValueList } from './types';
 import { ToolStore } from './toolStore';
 import { ToolSetupPanel } from './toolSetupPanel';
-import { scanTool, scanLists } from './toolIntrospect';
+import { scanTool } from './toolIntrospect';
 
 export function activate(context: vscode.ExtensionContext): void {
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -96,9 +96,9 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('eda-job-runner.addJob', () => addJob(jobStore, toolStore)),
+    vscode.commands.registerCommand('eda-job-runner.addJob', () => addJob(jobStore, toolStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.configureJob', (item: EdaTreeElement) =>
-      item ? JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), item.job) : undefined
+      item ? JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), folder, item.job) : undefined
     ),
     vscode.commands.registerCommand('eda-job-runner.deleteJob', (item: EdaTreeElement) => deleteJob(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.saveJobAsTemplate', (item: EdaTreeElement) => saveJobAsTemplate(jobStore, item)),
@@ -108,11 +108,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('eda-job-runner.refresh', () => jobStore.load()),
     vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, folder, logManager, jobRunner)),
     vscode.commands.registerCommand('eda-job-runner.configureTools', () => ToolSetupPanel.createOrShow(toolStore, jobStore, folder)),
-    vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore)),
+    vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.openLogViewer', () => LogViewerPanel.createOrShow(jobStore, logManager, toolStore)),
     vscode.commands.registerCommand('eda-job-runner.addFolder', () => addFolder(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.addJobInFolder', (item: FolderTreeItem) =>
-      item ? JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), undefined, item.folderName) : undefined
+      item ? JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), folder, undefined, item.folderName) : undefined
     ),
     vscode.commands.registerCommand('eda-job-runner.renameFolder', (item: FolderTreeItem) => renameFolder(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.deleteFolder', (item: FolderTreeItem) => deleteFolder(jobStore, item)),
@@ -186,8 +186,12 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  void jobStore.load().then(() => jobRunner.beginReattachment(id => jobStore.getJob(id)));
-  void toolStore.load().then(() => rescanAllTools(toolStore, jobStore, folder));
+  void (async () => {
+    await Promise.all([jobStore.load(), toolStore.load()]);
+    jobRunner.beginReattachment(id => jobStore.getJob(id));
+    await migrateLegacyToolLists(toolStore, jobStore);
+    await rescanAllTools(toolStore, jobStore, folder);
+  })();
 }
 
 /**
@@ -198,8 +202,37 @@ export function activate(context: vscode.ExtensionContext): void {
 async function rescanAllTools(toolStore: ToolStore, jobStore: JobStore, folder: vscode.WorkspaceFolder): Promise<void> {
   for (const tool of toolStore.getTools()) {
     const variants = await scanTool(tool, jobStore, folder);
-    const lists = await scanLists(tool, jobStore, folder);
-    await toolStore.updateTool(tool.id, { variants, lists, lastScanned: Date.now() });
+    await toolStore.updateTool(tool.id, { variants, lastScanned: Date.now() });
+  }
+}
+
+/**
+ * One-time migration for a pre-global-lists workspace: a tool registered
+ * before value lists moved to `JobsFile.lists` may still have its own
+ * `lists` sitting in `.vscode/eda-tools.json` (captured by `ToolStore.load`
+ * but no longer part of `ToolDefinition`). Move any such entries into the
+ * new global list array (deduped by name, last tool wins on a collision --
+ * rare, and this only ever runs once per stale entry), then force a fresh
+ * persist of each migrated tool so the stale key is dropped from disk and
+ * the next load finds nothing left to migrate.
+ */
+async function migrateLegacyToolLists(toolStore: ToolStore, jobStore: JobStore): Promise<void> {
+  const legacy = toolStore.takeLegacyLists();
+  if (legacy.length === 0) {
+    return;
+  }
+  const merged = new Map<string, ValueList>();
+  for (const existing of jobStore.getLists()) {
+    merged.set(existing.name, existing);
+  }
+  for (const { lists } of legacy) {
+    for (const list of lists) {
+      merged.set(list.name, list);
+    }
+  }
+  await jobStore.setLists([...merged.values()]);
+  for (const { toolId } of legacy) {
+    await toolStore.updateTool(toolId, {});
   }
 }
 
@@ -222,8 +255,8 @@ async function deleteJob(jobStore: JobStore, item: EdaTreeElement): Promise<void
 // from a dropdown inside the panel itself instead of a QuickPick shown
 // before it existed, so they're visible/reachable without having to
 // remember to pick one before the form was even on screen.
-function addJob(jobStore: JobStore, toolStore: ToolStore): void {
-  JobConfigPanel.createOrShow(jobStore, toolStore.getTools());
+function addJob(jobStore: JobStore, toolStore: ToolStore, folder: vscode.WorkspaceFolder): void {
+  JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), folder);
 }
 
 async function saveJobAsTemplate(jobStore: JobStore, item: EdaTreeElement): Promise<void> {
