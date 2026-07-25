@@ -86,6 +86,20 @@ export interface JobDefinition {
    */
   listInsertOverrides?: Record<string, string>;
   /**
+   * Per-job override of which of `toolId`'s lists supplies a value-taking
+   * option's dropdown values, keyed the same way Tool Setup's own per-option
+   * "value source" attachment is keyed server-side (`flags.join('|')` --
+   * see `toolSetupPanel.ts`'s `setOptionValueSource` handler). Lets one job
+   * attach a shared list to a flag Tool Setup never attached one to (or a
+   * different list than Tool Setup's own universal attachment) without
+   * changing that attachment for every other job using the tool. A key's
+   * value must name an entry in the tool's `lists`; an absent key falls back
+   * to that option's own `ToolOption.valueListName`, then a plain argparse
+   * `{a,b,c}` metavar -- today's behavior, unchanged when no override is set.
+   * UI convenience only -- `command` remains the single source of truth.
+   */
+  optionListOverrides?: Record<string, string>;
+  /**
    * Which sidebar folder this job is grouped under (must match an entry in
    * `JobsFile.folders`). Undefined, or a name no longer in that list, means
    * ungrouped -- shown flat at the top level, today's behavior. A job

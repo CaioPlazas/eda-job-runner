@@ -1,16 +1,65 @@
 # EDA Job Runner — test workspace
 
 A self-contained workspace for trying out the EDA Job Runner extension.
-Most jobs here are bash scripts that mimic real tool behavior (including
-colorized, UVM-shaped output) closely enough to exercise every feature
-end to end without any EDA tool installed. Several jobs run **real**
-tools — Icarus Verilog and Questa-Altera FPGA Starter Edition each split
-into a Compile job and a Test job against a trivial counter design,
-Verilator linting the same design (compile-only, no sim), and Altair
-DSim running genuine UVM 1.2 (real `UVM_INFO`/`UVM_WARNING`/`UVM_ERROR`
-output, not a mock). See [docs/eda-tools-setup.md](../docs/eda-tools-setup.md)
-for installing these yourself — DSim and Questa's simulator both need a
-free license from your own account; Questa's compiler needs no license.
+It has two kinds of jobs, in two different folders:
+
+- **`PicoRV32 (real project)`** — a real, well-known open-source RISC-V
+  CPU ([PicoRV32](https://github.com/YosysHQ/picorv32)) with a genuine
+  self-checking testbench, compiled and simulated by four different real
+  tools. Start here if you want to see what actually using this
+  extension on a real design looks like. See
+  [projects/picorv32](projects/picorv32) below.
+- **Everything else** — mock/fixture jobs (bash scripts that mimic real
+  tool output, plus a trivial hand-written counter) built to exercise
+  specific extension behaviors in isolation (Stop, log truncation, log
+  history, ...). Good for testing the extension itself; not
+  representative of a real project's command lines. See
+  [Dev-testing fixtures](#dev-testing-fixtures) below.
+
+See [docs/eda-tools-setup.md](../docs/eda-tools-setup.md) for installing
+Icarus Verilog, Verilator, Questa-Altera FPGA Starter Edition, and Altair
+DSim yourself — DSim and Questa's simulator both need a free license from
+your own account; Questa's compiler and both Icarus and Verilator need
+no license at all.
+
+## Real project: PicoRV32
+
+[`projects/picorv32`](projects/picorv32) vendors the actual
+[PicoRV32](https://github.com/YosysHQ/picorv32) RV32I RISC-V CPU core
+(`rtl/picorv32.v`, unmodified, ISC license — see
+[`projects/picorv32/rtl/NOTICE.md`](projects/picorv32/rtl/NOTICE.md) for
+the pinned commit) alongside an original, self-checking testbench
+(`tb/smoke_tb.v`) that preloads a small hand-assembled RV32I program (no
+RISC-V cross-compiler needed) and watches for it to write the right
+result to a memory-mapped address. It prints `TEST PASSED: ...` or
+`TEST FAILED: ...`, real pass/fail output from a real CPU core actually
+executing instructions — not a canned message.
+
+The `PicoRV32 (real project)` folder in the sidebar runs that same
+design through four different tools, each split into a Compile job and a
+Test job (see [why they're split](#compiletest-job-pairs-depend-on-each-other-running-in-order)
+below — the same reasoning applies here):
+
+| Job | What it exercises |
+| --- | --- |
+| `Icarus Compile` / `Icarus Test` | Real `iverilog`/`vvp` — no license needed |
+| `Verilator Compile` / `Verilator Test` | Real Verilator, built with `--binary` for an actual simulation run (not just `--lint-only`) |
+| `Questa Compile` / `Questa Test` | Real Questa-Altera FPGA Starter Edition `vlog`/`vsim` — compiler needs no license |
+| `DSim Compile+Test` | Real Altair DSim — needs a license (DSim combines compile+elaborate+run into one invocation, so it isn't split) |
+
+Run any tool's Compile job then its matching Test job (in that order) —
+the log should end with `TEST PASSED: RV32I loop wrote result=10 to
+0x400`.
+
+## Dev-testing fixtures
+
+The rest of this workspace: mock scripts that mimic real tool behavior
+(including colorized, UVM-shaped output) closely enough to exercise
+every feature end to end without any EDA tool installed, plus a trivial
+hand-written counter design run through the same four real tools as
+PicoRV32 above (kept as a smaller/faster fixture for extension
+development — prefer the PicoRV32 jobs above if you want a realistic
+example to point someone at).
 
 ### Compile/Test job pairs depend on each other running in order
 
@@ -29,11 +78,11 @@ here is lint-only, with no sim counterpart.)
 1. Install the extension (`.vsix` from the latest GitHub release, or F5
    from the main repo to launch an Extension Development Host).
 2. Open **this folder** (`examples/`) as its own VS Code workspace —
-   not the repo root. `.vscode/eda-jobs.json` here defines the jobs
-   below.
+   not the repo root. `.vscode/eda-jobs.json` here defines every job in
+   both this section and the PicoRV32 section above.
 3. Open the "EDA Jobs" view in the activity bar and click ▶ on a job.
 
-## Jobs
+## Fixture jobs
 
 | Job | What it exercises |
 | --- | --- |

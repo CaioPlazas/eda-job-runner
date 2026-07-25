@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.41.0 — Value-list visibility fix, per-job list attachment, real-project example
+
+**Features:**
+- A job's Configure form can now attach any of a tool's value lists to any
+  value-taking option, for that job only — without touching Tool Setup's
+  own (workspace-wide) attachment. Mirrors the existing "✎ var" toggle
+  pattern.
+- Truncated option/list values now show their full text in a native hover
+  tooltip.
+- New real-project example: a vendored, unmodified copy of the
+  [PicoRV32](https://github.com/YosysHQ/picorv32) RISC-V core with an
+  original self-checking testbench, runnable through Icarus, Verilator,
+  Questa-FSE, and DSim — see `examples/README.md`.
+
+**Bug fixes:**
+- Tool Setup's per-option "value source" dropdown had invisible text in
+  dark themes (a missing `background`/`color` on that one `<select>`).
+
 ## 0.40.0 — Bug fixes, performance, and a visual-test harness
 
 A focused code-review pass, plus a new internal tool: a headless-Chromium

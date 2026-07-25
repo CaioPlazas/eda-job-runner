@@ -4,7 +4,8 @@
     "script": "scripts/env_setup.sh"
   },
   "folders": [
-    "Compile"
+    "Compile",
+    "PicoRV32 (real project)"
   ],
   "jobs": [
     {
@@ -80,6 +81,55 @@
       "name": "Questa Test",
       "command": "vsim -c -do \"run -all; quit\" counter_tb",
       "cwd": "."
+    },
+    {
+      "id": "4d113816-3eca-47b7-b8c4-274b6f4ece18",
+      "name": "Icarus Compile",
+      "command": "mkdir -p build && iverilog -o build/picorv32_sim tb/smoke_tb.v rtl/picorv32.v",
+      "cwd": "projects/picorv32",
+      "folder": "PicoRV32 (real project)"
+    },
+    {
+      "id": "2e7a7a72-6416-40c4-ac8e-3621765ebb33",
+      "name": "Icarus Test",
+      "command": "vvp build/picorv32_sim",
+      "cwd": "projects/picorv32",
+      "folder": "PicoRV32 (real project)"
+    },
+    {
+      "id": "bb920539-7089-417f-af2f-9d1a426acea0",
+      "name": "Verilator Compile",
+      "command": "mkdir -p build/verilator && verilator --binary --top-module smoke_tb -Wno-fatal -Wall tb/smoke_tb.v rtl/picorv32.v --Mdir build/verilator -o smoke_sim",
+      "cwd": "projects/picorv32",
+      "folder": "PicoRV32 (real project)"
+    },
+    {
+      "id": "96fe4830-80de-4fbe-9e21-694dbbb75db2",
+      "name": "Verilator Test",
+      "command": "./build/verilator/smoke_sim",
+      "cwd": "projects/picorv32",
+      "folder": "PicoRV32 (real project)"
+    },
+    {
+      "id": "2bc90e93-83b7-4b1e-89f4-d6cf1b3e3587",
+      "name": "Questa Compile",
+      "command": "vlog tb/smoke_tb.v rtl/picorv32.v",
+      "cwd": "projects/picorv32",
+      "folder": "PicoRV32 (real project)"
+    },
+    {
+      "id": "53bc7778-26e1-4ac8-9a98-95fec36a61e7",
+      "name": "Questa Test",
+      "command": "vsim -c -do \"run -all; quit\" smoke_tb",
+      "cwd": "projects/picorv32",
+      "folder": "PicoRV32 (real project)"
+    },
+    {
+      "id": "27ada150-3b88-4735-b98c-c2d46a2fc3a8",
+      "name": "DSim Compile+Test",
+      "command": "dsim tb/smoke_tb.v rtl/picorv32.v -top smoke_tb",
+      "cwd": "projects/picorv32",
+      "folder": "PicoRV32 (real project)"
     }
   ]
 }
