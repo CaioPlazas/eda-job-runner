@@ -789,6 +789,7 @@ export function renderHtml(
     font-size: var(--vscode-editor-font-size);
   }
   input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+  option { background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
   label.check { display: flex; align-items: center; gap: 8px; font-weight: 400; margin-top: 6px; }
   label.check input { width: auto; margin-top: 0; }
   .hint { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
@@ -822,7 +823,13 @@ export function renderHtml(
   .optFilterTool { margin-top: 8px; }
   table.opts { border-collapse: collapse; margin-top: 8px; width: 100%; }
   table.opts td { padding: 2px 10px 2px 0; vertical-align: top; font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
-  table.opts select.valueSourceSelect { width: auto; margin-top: 0; padding: 2px 6px; font-size: 0.85em; }
+  table.opts select.valueSourceSelect {
+    width: auto; margin-top: 0; padding: 2px 6px; font-size: 0.85em;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 2px;
+  }
   .favBtn {
     background: none; border: none; cursor: pointer; padding: 0 4px 0 0; font-size: 1em;
     color: var(--vscode-descriptionForeground);

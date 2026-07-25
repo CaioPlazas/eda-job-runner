@@ -7,15 +7,18 @@ out/
 *.log
 # but keep the committed parser test fixtures (captured real tool output)
 !test-fixtures/*.log
-examples/build/
+examples/**/build/
 dsim_work/
 dsim.env
 metrics.db
-examples/work/
+examples/**/work/
 transcript
 vsim.wlf
 
 .claude/
+
+# Local SystemVerilog language-server config -- editor tooling, not project source.
+.slang/
 
 # Visual-test harness output (scripts/render-webviews.mjs + screenshot-webviews.mjs) -- regenerated, not committed.
 .webview-preview/

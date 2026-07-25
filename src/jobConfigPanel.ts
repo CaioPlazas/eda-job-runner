@@ -21,6 +21,7 @@ interface SaveMessage {
   toolId: string;
   toolVariantLabel: string;
   listInsertOverrides: Record<string, string>;
+  optionListOverrides: Record<string, string>;
   folder: string;
   customArgs: { arg: string; value?: string }[];
   paramOverrides: Record<string, string>;
@@ -139,6 +140,7 @@ export class JobConfigPanel {
     const toolVariantLabel = toolId ? msg.toolVariantLabel : undefined;
     // Overrides only mean anything alongside a tool's lists — drop orphans.
     const listInsertOverrides = toolId ? sanitizeOverrides(msg.listInsertOverrides) : undefined;
+    const optionListOverrides = toolId ? sanitizeOverrides(msg.optionListOverrides) : undefined;
     const folder = msg.folder.trim() || undefined;
     const customArgs = sanitizeCustomArgs(msg.customArgs);
     const paramOverrides = sanitizeParamOverrides(msg.paramOverrides);
@@ -168,6 +170,7 @@ export class JobConfigPanel {
       toolId,
       toolVariantLabel,
       listInsertOverrides,
+      optionListOverrides,
       folder,
       customArgs,
       paramOverrides
@@ -329,6 +332,7 @@ export function renderHtml(
     outline: 1px solid var(--vscode-focusBorder);
     outline-offset: -1px;
   }
+  option { background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
   textarea { min-height: 64px; resize: vertical; }
   label.check {
     display: flex;
@@ -344,13 +348,14 @@ export function renderHtml(
   ${HELP_CSS}
   .optRow { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .optRow label.check { font-weight: 400; flex: 1 1 auto; min-width: 200px; }
-  .optRow .optValue { width: auto; flex: 0 1 160px; margin-top: 0; }
+  .optRow .optValue { width: auto; flex: 0 1 160px; margin-top: 0; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+  .optRow .listSourceSelect { width: auto; flex: 0 0 auto; margin-top: 0; padding: 4px 8px; font-size: 0.85em; }
   .paramOverrideRow .poName { font-weight: 600; }
   .paramOverrideRow .poNameInput { width: auto; flex: 0 1 180px; margin-top: 0; font-weight: 400; }
   .paramOverrideRow .poValue { width: auto; flex: 0 1 220px; margin-top: 0; }
   .listRow { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .listRow > label { font-weight: 400; margin-top: 0; flex: 1 1 auto; min-width: 200px; }
-  .listRow .listValue { width: auto; flex: 0 1 200px; margin-top: 0; }
+  .listRow .listValue { width: auto; flex: 0 1 200px; margin-top: 0; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
   .listRow .tmplBtn { flex: 0 0 auto; padding: 4px 8px; }
   .listRow .listTemplate { flex: 1 1 100%; margin-top: 4px; }
   .listGroupHeading { margin-top: 14px; font-weight: 600; font-size: 0.85em; color: var(--vscode-descriptionForeground); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -599,6 +604,7 @@ export function renderHtml(
     let SAVED_TOOL_VARIANT = ${JSON.stringify(job?.toolVariantLabel ?? '')};
     // Per-job insert-template overrides for a tool's value lists, keyed by list name.
     let LIST_OVERRIDES = ${JSON.stringify(job?.listInsertOverrides ?? {})};
+    let OPTION_LIST_OVERRIDES = ${JSON.stringify(job?.optionListOverrides ?? {})};
     const GLOBAL_PARAMS = ${globalParamsJson};
     const SAVED_PARAM_OVERRIDES = ${paramOverridesJson};
     let TEMPLATES = ${templatesJson};
@@ -768,10 +774,18 @@ export function renderHtml(
       }
     }
 
+    function syncTitle(el) { el.title = el.value || ''; }
+
     // An option can source its value from a list (attached in Tool Setup)
     // instead of a plain argparse choices= metavar -- the attached list wins
     // when both could apply.
     function optionChoices(opt, tool) {
+      const key = opt.flags.join('|');
+      const overrideName = OPTION_LIST_OVERRIDES[key];
+      if (overrideName && tool && tool.lists) {
+        const list = tool.lists.find(l => l.name === overrideName);
+        if (list) { return list.values || []; }
+      }
       if (opt.valueListName && tool && tool.lists) {
         const list = tool.lists.find(l => l.name === opt.valueListName);
         if (list) { return list.values || []; }
@@ -800,7 +814,7 @@ export function renderHtml(
 
       let valueInput;
       if (opt.metavar) {
-        const choices = optionChoices(opt, tool);
+        let choices = optionChoices(opt, tool);
         const existing = opt.flags.map(f => extractValue(f, text)).find(v => v);
         // A choices dropdown only actually applies when the existing value (if
         // any) is one of its fixed choices -- an existing value that ISN'T
@@ -829,6 +843,7 @@ export function renderHtml(
           // (leaves it on the blank option) -- exactly what should happen when
           // swapping back from a \${var:...}/unmatched free-text value.
           if (value && choices.includes(value)) { el.value = value; }
+          syncTitle(el);
           return el;
         };
         const buildFree = value => {
@@ -838,6 +853,7 @@ export function renderHtml(
           el.placeholder = choices ? '\${var:NAME}' : opt.metavar;
           el.setAttribute('list', 'varOptions');
           if (value) { el.value = value; }
+          syncTitle(el);
           return el;
         };
 
@@ -850,30 +866,63 @@ export function renderHtml(
         // field (with the same varOptions autocomplete as any other builder
         // value field), relabeling itself and preserving the value across the
         // swap whenever it still fits, in both directions.
-        if (choices) {
-          const varToggle = document.createElement('button');
-          varToggle.type = 'button';
-          varToggle.className = 'secondary varToggle';
-          const syncToggleLabel = () => {
-            const isDropdown = valueInput.tagName === 'SELECT';
-            varToggle.textContent = isDropdown ? '✎ var' : '◀ choices';
-            varToggle.title = isDropdown
-              ? 'Use a parameter (\${var:NAME}) instead of one of the fixed choices'
-              : 'Switch back to the fixed-choices dropdown';
-          };
-          varToggle.addEventListener('click', () => {
+        const varToggle = document.createElement('button');
+        varToggle.type = 'button';
+        varToggle.className = choices ? 'secondary varToggle' : 'secondary varToggle hidden';
+        const syncToggleLabel = () => {
+          const isDropdown = valueInput.tagName === 'SELECT';
+          varToggle.textContent = isDropdown ? '✎ var' : '◀ choices';
+          varToggle.title = isDropdown
+            ? 'Use a parameter (\${var:NAME}) instead of one of the fixed choices'
+            : 'Switch back to the fixed-choices dropdown';
+        };
+        varToggle.addEventListener('click', () => {
+          const currentValue = valueInput.value;
+          const wasDisabled = valueInput.disabled;
+          const next = valueInput.tagName === 'SELECT' ? buildFree(currentValue) : buildSelect(currentValue);
+          next.disabled = wasDisabled;
+          next.addEventListener(next.tagName === 'SELECT' ? 'change' : 'input', () => { syncTitle(next); onBuilderChange(); });
+          valueInput.replaceWith(next);
+          valueInput = next;
+          syncToggleLabel();
+          onBuilderChange();
+        });
+        syncToggleLabel();
+        row.appendChild(varToggle);
+
+        if (tool && tool.lists && tool.lists.length > 0) {
+          const key = opt.flags.join('|');
+          const listSourceSelect = document.createElement('select');
+          listSourceSelect.className = 'listSourceSelect';
+          listSourceSelect.title = 'Which value list feeds this option\\'s dropdown, for this job only';
+          const blankOpt = document.createElement('option');
+          blankOpt.value = '';
+          blankOpt.textContent = '(default)';
+          listSourceSelect.appendChild(blankOpt);
+          tool.lists.forEach(l => {
+            const o = document.createElement('option');
+            o.value = l.name;
+            o.textContent = l.name;
+            listSourceSelect.appendChild(o);
+          });
+          if (OPTION_LIST_OVERRIDES[key]) { listSourceSelect.value = OPTION_LIST_OVERRIDES[key]; }
+          listSourceSelect.addEventListener('change', () => {
+            if (listSourceSelect.value) { OPTION_LIST_OVERRIDES[key] = listSourceSelect.value; }
+            else { delete OPTION_LIST_OVERRIDES[key]; }
+            choices = optionChoices(opt, tool);
             const currentValue = valueInput.value;
             const wasDisabled = valueInput.disabled;
-            const next = valueInput.tagName === 'SELECT' ? buildFree(currentValue) : buildSelect(currentValue);
+            const next = choices ? buildSelect(currentValue) : buildFree(currentValue);
             next.disabled = wasDisabled;
-            next.addEventListener(next.tagName === 'SELECT' ? 'change' : 'input', onBuilderChange);
+            next.addEventListener(next.tagName === 'SELECT' ? 'change' : 'input', () => { syncTitle(next); onBuilderChange(); });
             valueInput.replaceWith(next);
             valueInput = next;
+            varToggle.classList.toggle('hidden', !choices);
             syncToggleLabel();
             onBuilderChange();
+            renderLists(tool);
           });
-          syncToggleLabel();
-          row.appendChild(varToggle);
+          row.appendChild(listSourceSelect);
         }
       }
 
@@ -882,7 +931,7 @@ export function renderHtml(
         onBuilderChange();
       });
       if (valueInput) {
-        valueInput.addEventListener(valueInput.tagName === 'SELECT' ? 'change' : 'input', onBuilderChange);
+        valueInput.addEventListener(valueInput.tagName === 'SELECT' ? 'change' : 'input', () => { syncTitle(valueInput); onBuilderChange(); });
       }
 
       return row;
@@ -954,7 +1003,8 @@ export function renderHtml(
       // Pre-select the value whose templated fragment is already in the command.
       const preset = (list.values || []).find(v => text.indexOf(applyInsertTemplate(row.dataset.template, v)) !== -1);
       if (preset) { select.value = preset; }
-      select.addEventListener('change', onBuilderChange);
+      syncTitle(select);
+      select.addEventListener('change', () => { syncTitle(select); onBuilderChange(); });
       row.appendChild(select);
 
       // Advanced: an override for how a picked value is inserted, per job.
@@ -992,7 +1042,7 @@ export function renderHtml(
       // one. Only an unattached list (e.g. a plusarg with no real CLI flag
       // to attach to) still needs its own row + insert-template control.
       const variant = currentVariant(tool);
-      const attached = new Set((variant ? variant.options : []).map(o => o.valueListName).filter(Boolean));
+      const attached = new Set((variant ? variant.options : []).map(o => OPTION_LIST_OVERRIDES[o.flags.join('|')] || o.valueListName).filter(Boolean));
       const unattached = tool.lists.filter(l => !attached.has(l.name));
       if (unattached.length === 0) { return; }
       const text = commandEl.value;
@@ -1173,6 +1223,7 @@ export function renderHtml(
       customArgsWrap.innerHTML = '';
       paramOverridesWrap.innerHTML = '';
       LIST_OVERRIDES = {};
+      OPTION_LIST_OVERRIDES = {};
       initParamOverrides({});
       // Sync the builder's selects/checkboxes from the just-applied Command
       // text BEFORE possibly opening the builder -- so if opening it does
@@ -1222,6 +1273,7 @@ export function renderHtml(
         toolId: toolSelectEl.value,
         toolVariantLabel: variantSelectEl.value,
         listInsertOverrides: LIST_OVERRIDES,
+        optionListOverrides: OPTION_LIST_OVERRIDES,
         customArgs: Array.from(customArgsWrap.querySelectorAll('.customArgRow')).map(row => ({
           arg: row.querySelector('.caArg').value,
           value: row.querySelector('.caVal').value

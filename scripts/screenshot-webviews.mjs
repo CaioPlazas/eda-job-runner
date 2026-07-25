@@ -194,13 +194,23 @@ async function run() {
             await allOpts.evaluate(el => { el.open = true; });
           }
           // Toggle the "--std" flag's choices dropdown to free-text and back,
-          // exercising the reversible var/choices toggle end to end.
-          const toggleBtn = page.locator('.varToggle').first();
+          // exercising the reversible var/choices toggle end to end. A
+          // varToggle now exists (hidden) even for choice-less options (e.g.
+          // "--seed"), so scope to a visible one rather than `.first()`.
+          const toggleBtn = page.locator('.varToggle:not(.hidden)').first();
           if (await toggleBtn.count()) {
             await toggleBtn.click();
             await shoot(page, `${name}-${theme}-var-toggled`);
-            await page.locator('.varToggle').first().click();
+            await page.locator('.varToggle:not(.hidden)').first().click();
             await shoot(page, `${name}-${theme}-var-toggled-back`);
+          }
+          // Attach a per-job value list to an option that has no Tool-Setup
+          // list attachment ("--seed"), exercising the new listSourceSelect
+          // control end to end.
+          const listSourceSelect = page.locator('.listSourceSelect').first();
+          if (await listSourceSelect.count()) {
+            await listSourceSelect.selectOption({ label: 'Tests' });
+            await shoot(page, `${name}-${theme}-list-source-picked`);
           }
           // Load a template and confirm it doesn't leave the page in a broken state.
           const templateSelect = page.locator('#templateSelect');
