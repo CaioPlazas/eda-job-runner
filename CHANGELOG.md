@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.43.0 — Value-list editing, migration collisions, a browser-free CI gate
+
+**Bug fixes:**
+- Editing an existing value list's source, pattern, insert template, or
+  scan directory silently reverted on the next open — the edit was never
+  actually applied, only re-discovery from the unchanged stored record.
+  Fixed; an edit or refresh no longer moves the list to the bottom either.
+- Adding, refreshing, or removing a value list silently discarded any
+  parameter row you'd typed but not yet saved. Fixed.
+- Two different tools' value lists sharing the same name could silently
+  collide during the one-time migration to global value lists, with one
+  tool's option quietly starting to offer the other tool's values. Fixed:
+  the second list is now renamed to a unique name, and every reference to
+  it (that tool's own option, and any job's per-option override) is
+  rewritten to match.
+
+**Features:**
+- New "EDA: Refresh Value Lists" command (and a matching "↻ Refresh all"
+  button in the Parameters panel), for re-discovering every workspace
+  value list at once instead of one at a time.
+- A panel that fails to initialize now shows a visible notification
+  instead of silently doing nothing — the exact failure mode behind the
+  0.42.1 hotfix now always produces a signal, even for a future,
+  different bug.
+
+**Under the hood:**
+- A second, browser-free crash gate (`test-fixtures/run-webview-smoke-tests.mjs`)
+  now runs in CI on every push — it needs no locally-cached Chromium, so
+  unlike `npm run webview-check` it actually runs unattended.
+
 ## 0.42.1 — Fix: Tool Setup became unresponsive after scanning a tool
 
 **Bug fixes:**

@@ -4,6 +4,7 @@ import { GlobalParam, ValueList } from './types';
 import { HELP_CSS, help } from './webviewHelp';
 import { discoverList } from './toolIntrospect';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
+import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 
 interface SaveMessage {
   type: 'save';
@@ -20,23 +21,50 @@ interface AddListMessage {
   pattern: string;
   insertTemplate: string;
   scanDir: string;
+  params: { name: string; value: string }[];
 }
 interface RefreshListMessage {
   type: 'refreshList';
   name: string;
+  sourceType: 'file' | 'command';
+  source: string;
+  pattern: string;
+  insertTemplate: string;
+  scanDir: string;
+  params: { name: string; value: string }[];
 }
 interface RemoveListMessage {
   type: 'removeList';
   name: string;
+  params: { name: string; value: string }[];
+}
+interface RefreshAllListsMessage {
+  type: 'refreshAllLists';
+  params: { name: string; value: string }[];
 }
 
-type WebviewMessage = SaveMessage | CancelMessage | AddListMessage | RefreshListMessage | RemoveListMessage | BrowseMessage;
+type WebviewMessage =
+  | SaveMessage
+  | CancelMessage
+  | AddListMessage
+  | RefreshListMessage
+  | RemoveListMessage
+  | RefreshAllListsMessage
+  | BrowseMessage
+  | ClientErrorMessage;
 
 export class ParamsPanel {
   private static current: ParamsPanel | undefined;
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
+  /**
+   * Unsaved parameter rows carried across a list add/refresh/remove, which
+   * otherwise reload the whole webview (`render()`) and silently discard
+   * anything typed-but-not-yet-Saved -- params only persist via the
+   * explicit Save button. Cleared once an actual Save happens.
+   */
+  private draftParams: GlobalParam[] | undefined;
 
   static createOrShow(jobStore: JobStore, folder: vscode.WorkspaceFolder): void {
     if (ParamsPanel.current) {
@@ -64,7 +92,11 @@ export class ParamsPanel {
   }
 
   private render(): void {
-    this.panel.webview.html = renderHtml(this.panel.webview, this.jobStore.getParams(), this.jobStore.getLists());
+    this.panel.webview.html = renderHtml(
+      this.panel.webview,
+      this.draftParams ?? this.jobStore.getParams(),
+      this.jobStore.getLists()
+    );
   }
 
   private async onMessage(msg: WebviewMessage): Promise<void> {
@@ -77,16 +109,21 @@ export class ParamsPanel {
           .map(p => ({ name: p.name.trim(), value: p.value }))
           .filter(p => p.name.length > 0);
         await this.jobStore.setParams(params);
+        this.draftParams = undefined;
         void vscode.window.showInformationMessage('EDA Job Runner: parameters saved.');
         this.panel.dispose();
         return;
       }
-      case 'addList': {
+      case 'addList':
+      case 'refreshList': {
         const name = msg.name.trim();
         const source = msg.source.trim();
         if (!name || !source) {
+          // True no-op (e.g. the blank "add new" row): no render, so this
+          // incomplete list row itself isn't discarded either.
           return;
         }
+        this.draftParams = msg.params;
         const scanDir = msg.scanDir.trim() || undefined;
         const list: ValueList = {
           name,
@@ -98,33 +135,37 @@ export class ParamsPanel {
           values: []
         };
         const discovered = await discoverList(list, this.jobStore, this.folder, scanDir);
-        // Replace any existing list of the same name (edit-in-place), else append.
-        const lists = this.jobStore.getLists().filter(l => l.name !== name);
-        lists.push(discovered);
-        await this.jobStore.setLists(lists);
-        this.render();
-        return;
-      }
-      case 'refreshList': {
+        // Index-preserving upsert -- an edit (Add over an existing name, or
+        // Refresh) replaces in place instead of moving to the bottom.
         const lists = this.jobStore.getLists();
-        const idx = lists.findIndex(l => l.name === msg.name);
+        const idx = lists.findIndex(l => l.name === name);
+        const next = lists.slice();
         if (idx === -1) {
-          return;
+          next.push(discovered);
+        } else {
+          next[idx] = discovered;
         }
-        const refreshed = lists.slice();
-        refreshed[idx] = await discoverList(refreshed[idx], this.jobStore, this.folder, refreshed[idx].scanDir);
-        await this.jobStore.setLists(refreshed);
+        await this.jobStore.setLists(next);
         this.render();
         return;
       }
       case 'removeList': {
+        this.draftParams = msg.params;
         const lists = this.jobStore.getLists().filter(l => l.name !== msg.name);
         await this.jobStore.setLists(lists);
         this.render();
         return;
       }
+      case 'refreshAllLists': {
+        this.draftParams = msg.params;
+        await vscode.commands.executeCommand('eda-job-runner.refreshValueLists');
+        this.render();
+        return;
+      }
       case 'browse':
         return handleBrowseMessage(msg, this.panel.webview, this.folder);
+      case 'clientError':
+        return handleClientErrorMessage(msg);
     }
   }
 
@@ -240,6 +281,7 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[], lists
   )}</h2>
   <div id="listsWrap"></div>
   <button class="secondary" id="addList" type="button" style="margin-top:10px;">+ Add value list</button>
+  <button class="secondary" id="refreshAllLists" type="button" style="margin-top:10px;">↻ Refresh all</button>
 
   <div class="actions">
     <button class="primary" id="save">Save</button>
@@ -248,6 +290,7 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[], lists
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
     const paramsWrap = document.getElementById('paramsWrap');
     const listsWrap = document.getElementById('listsWrap');
@@ -283,12 +326,15 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[], lists
     document.getElementById('addParam').addEventListener('click', () => addParamRow());
     (${paramsJson}).forEach(p => addParamRow(p.name, p.value));
 
-    document.getElementById('save').addEventListener('click', () => {
-      const params = Array.from(paramsWrap.querySelectorAll('.paramRow')).map(row => ({
+    function collectParams() {
+      return Array.from(paramsWrap.querySelectorAll('.paramRow')).map(row => ({
         name: row.querySelector('.pName').value,
         value: row.querySelector('.pValue').value
       }));
-      vscode.postMessage({ type: 'save', params });
+    }
+
+    document.getElementById('save').addEventListener('click', () => {
+      vscode.postMessage({ type: 'save', params: collectParams() });
     });
     document.getElementById('cancel').addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
 
@@ -410,7 +456,8 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[], lists
           source: sourceInput.value,
           pattern: patternInput.value,
           insertTemplate: templateInput.value,
-          scanDir: scanDirInput.value
+          scanDir: scanDirInput.value,
+          params: collectParams()
         });
       });
       removeBtn.addEventListener('click', () => {
@@ -422,7 +469,7 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[], lists
           scanDirInput.value = '';
           return;
         }
-        vscode.postMessage({ type: 'removeList', name: list.name });
+        vscode.postMessage({ type: 'removeList', name: list.name, params: collectParams() });
       });
 
       listsWrap.appendChild(row);
@@ -430,6 +477,9 @@ export function renderHtml(webview: vscode.Webview, params: GlobalParam[], lists
 
     (${listsJson}).forEach(l => addListRow(l));
     document.getElementById('addList').addEventListener('click', () => addListRow(null));
+    document.getElementById('refreshAllLists').addEventListener('click', () => {
+      vscode.postMessage({ type: 'refreshAllLists', params: collectParams() });
+    });
   </script>
 </body>
 </html>`;

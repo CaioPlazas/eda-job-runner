@@ -7,6 +7,7 @@ import { ToolStore } from './toolStore';
 import { JobDefinition } from './types';
 import { parseLogHeader, parseLogTrailer, parseLogFilename, searchMatches } from './logIndex';
 import { detectSeed } from './seedDetect';
+import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 
 interface OpenLogMessage {
   type: 'openLog';
@@ -24,7 +25,7 @@ interface CloseMessage {
   type: 'close';
 }
 
-type WebviewMessage = OpenLogMessage | RefreshMessage | SearchMessage | CloseMessage;
+type WebviewMessage = OpenLogMessage | RefreshMessage | SearchMessage | CloseMessage | ClientErrorMessage;
 
 interface LogRow {
   jobId: string;
@@ -108,6 +109,8 @@ export class LogViewerPanel {
       case 'search':
         await this.search(msg.query, msg.logPaths);
         return;
+      case 'clientError':
+        return handleClientErrorMessage(msg);
     }
   }
 
@@ -384,7 +387,9 @@ export function renderHtml(webview: vscode.Webview): string {
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${CLIENT_ERROR_JS}
     const $ = id => document.getElementById(id);
+    const $req = id => { const el = $(id); if (!el) { throw new Error('missing element #' + id); } return el; };
     const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     let ROWS = [];
@@ -411,8 +416,8 @@ export function renderHtml(webview: vscode.Webview): string {
     function refreshFilterOptions() {
       const jobs = [...new Set(ROWS.map(r => r.jobName))].sort();
       const folders = [...new Set(ROWS.map(r => r.folder || ''))].sort();
-      populateSelect($('filterJob'), jobs, '(unnamed)');
-      populateSelect($('filterFolder'), folders, '(no folder)');
+      populateSelect(\$req('filterJob'), jobs, '(unnamed)');
+      populateSelect(\$req('filterFolder'), folders, '(no folder)');
     }
 
     function selectedValues(sel) {
@@ -420,12 +425,12 @@ export function renderHtml(webview: vscode.Webview): string {
     }
 
     function applyFilters() {
-      const jobSel = selectedValues($('filterJob'));
-      const folderSel = selectedValues($('filterFolder'));
+      const jobSel = selectedValues(\$req('filterJob'));
+      const folderSel = selectedValues(\$req('filterFolder'));
       const statuses = new Set(Array.from(document.querySelectorAll('.statusCheck:checked')).map(c => c.value));
-      const seedQ = $('seedFilter').value.trim().toLowerCase();
-      const dateFrom = $('dateFrom').value;
-      const dateTo = $('dateTo').value;
+      const seedQ = \$req('seedFilter').value.trim().toLowerCase();
+      const dateFrom = \$req('dateFrom').value;
+      const dateTo = \$req('dateTo').value;
 
       return ROWS.filter(row => {
         if (jobSel.size > 0 && !jobSel.has(row.jobName)) { return false; }
@@ -480,7 +485,7 @@ export function renderHtml(webview: vscode.Webview): string {
 
     function render() {
       const visible = sortedByDateDesc(applyFilters());
-      const groupsEl = $('groups');
+      const groupsEl = \$req('groups');
 
       let html = '<details open><summary>All logs (' + visible.length + ')</summary>' + tableHtml(visible) + '</details>';
 
@@ -508,37 +513,37 @@ export function renderHtml(webview: vscode.Webview): string {
     }
 
     document.querySelectorAll('.statusCheck').forEach(c => c.addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); }));
-    $('filterJob').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
-    $('filterFolder').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
-    $('seedFilter').addEventListener('input', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
-    $('dateFrom').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
-    $('dateTo').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
+    \$req('filterJob').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
+    \$req('filterFolder').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
+    \$req('seedFilter').addEventListener('input', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
+    \$req('dateFrom').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
+    \$req('dateTo').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
 
-    $('clearFilters').addEventListener('click', () => {
-      Array.from($('filterJob').options).forEach(o => o.selected = false);
-      Array.from($('filterFolder').options).forEach(o => o.selected = false);
+    \$req('clearFilters').addEventListener('click', () => {
+      Array.from(\$req('filterJob').options).forEach(o => o.selected = false);
+      Array.from(\$req('filterFolder').options).forEach(o => o.selected = false);
       document.querySelectorAll('.statusCheck').forEach(c => c.checked = true);
-      $('seedFilter').value = '';
-      $('dateFrom').value = '';
-      $('dateTo').value = '';
+      \$req('seedFilter').value = '';
+      \$req('dateFrom').value = '';
+      \$req('dateTo').value = '';
       SEARCH_MATCHED = null;
-      $('searchQuery').value = '';
+      \$req('searchQuery').value = '';
       updateSearchStatus();
       render();
     });
 
-    $('refresh').addEventListener('click', () => {
+    \$req('refresh').addEventListener('click', () => {
       // A stale SEARCH_MATCHED (a Set of logPaths from before the refresh)
       // would otherwise silently hide every newly-appeared run -- its
       // logPath was never actually searched, so it can't be in the set.
       SEARCH_MATCHED = null;
       updateSearchStatus();
-      $('loadingState').style.display = '';
+      \$req('loadingState').style.display = '';
       vscode.postMessage({ type: 'refresh' });
     });
 
     function updateSearchStatus() {
-      const el = $('searchStatus');
+      const el = \$req('searchStatus');
       if (SEARCH_MATCHED === null) { el.textContent = ''; return; }
       let note = '';
       if (SEARCH_TRUNCATED) { note += ' (search stopped early — narrow the filters first for a full scan)'; }
@@ -547,7 +552,7 @@ export function renderHtml(webview: vscode.Webview): string {
     }
 
     function runSearch() {
-      const query = $('searchQuery').value;
+      const query = \$req('searchQuery').value;
       if (!query.trim()) {
         SEARCH_MATCHED = null;
         updateSearchStatus();
@@ -557,13 +562,13 @@ export function renderHtml(webview: vscode.Webview): string {
       // Search only what's already filtered (job/folder/status/seed/date) --
       // scoping down first makes a full-content scan both faster and more relevant.
       const scoped = applyFilters();
-      $('searchStatus').textContent = 'Searching ' + scoped.length + ' log(s)…';
+      \$req('searchStatus').textContent = 'Searching ' + scoped.length + ' log(s)…';
       vscode.postMessage({ type: 'search', query, logPaths: scoped.map(r => r.logPath) });
     }
-    $('searchBtn').addEventListener('click', runSearch);
-    $('searchQuery').addEventListener('keydown', e => { if (e.key === 'Enter') { runSearch(); } });
-    $('clearSearch').addEventListener('click', () => {
-      $('searchQuery').value = '';
+    \$req('searchBtn').addEventListener('click', runSearch);
+    \$req('searchQuery').addEventListener('keydown', e => { if (e.key === 'Enter') { runSearch(); } });
+    \$req('clearSearch').addEventListener('click', () => {
+      \$req('searchQuery').value = '';
       SEARCH_MATCHED = null;
       updateSearchStatus();
       render();
@@ -574,8 +579,8 @@ export function renderHtml(webview: vscode.Webview): string {
       if (!m) { return; }
       if (m.type === 'rows') {
         ROWS = m.rows;
-        $('loadingState').style.display = 'none';
-        $('emptyState').style.display = ROWS.length === 0 ? '' : 'none';
+        \$req('loadingState').style.display = 'none';
+        \$req('emptyState').style.display = ROWS.length === 0 ? '' : 'none';
         refreshFilterOptions();
         render();
       } else if (m.type === 'searchResult') {

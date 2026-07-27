@@ -6,6 +6,7 @@ import { scanVariant, scanTool } from './toolIntrospect';
 import { detectSubcommandChoices, mergeFavorites, parseChoices } from './toolOptionParser';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
+import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 import { BUILTIN_SEED_PATTERNS } from './seedDetect';
 
 interface ScanNewMessage {
@@ -103,7 +104,8 @@ type WebviewMessage =
   | ToggleFavoriteMessage
   | SetOptionValueSourceMessage
   | CloseMessage
-  | BrowseMessage;
+  | BrowseMessage
+  | ClientErrorMessage;
 
 interface PendingAdd {
   command: string;
@@ -168,6 +170,9 @@ export class ToolSetupPanel {
 
       case 'browse':
         return handleBrowseMessage(msg, this.panel.webview, this.folder);
+
+      case 'clientError':
+        return handleClientErrorMessage(msg);
 
       case 'scanNew': {
         const command = msg.command.trim();
@@ -775,9 +780,11 @@ export function renderHtml(
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
     const $ = id => document.getElementById(id);
-    $('close').addEventListener('click', () => vscode.postMessage({ type: 'close' }));
+    const $req = id => { const el = $(id); if (!el) { throw new Error('missing element #' + id); } return el; };
+    $req('close').addEventListener('click', () => vscode.postMessage({ type: 'close' }));
     // At most one tool is ever in edit mode at a time -- a class, not an id,
     // since renderTool re-renders per-tool (see wrap.querySelector('.editCommand') below).
     const editCommandEl = document.querySelector('.editCommand');
