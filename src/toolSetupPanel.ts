@@ -777,8 +777,7 @@ export function renderHtml(
     const vscode = acquireVsCodeApi();
     ${BROWSE_JS}
     const $ = id => document.getElementById(id);
-    addBrowseButton($('newCommand'), 'file');
-    addBrowseButton($('newScanDir'), 'folder');
+    $('close').addEventListener('click', () => vscode.postMessage({ type: 'close' }));
     // At most one tool is ever in edit mode at a time -- a class, not an id,
     // since renderTool re-renders per-tool (see wrap.querySelector('.editCommand') below).
     const editCommandEl = document.querySelector('.editCommand');
@@ -982,6 +981,8 @@ export function renderHtml(
     }
 
     if ($('scanNew')) {
+      addBrowseButton($('newCommand'), 'file');
+      addBrowseButton($('newScanDir'), 'folder');
       $('scanNew').addEventListener('click', () => {
         showBusy();
         vscode.postMessage({
@@ -1029,7 +1030,6 @@ export function renderHtml(
       $('cancelAdd').addEventListener('click', () => vscode.postMessage({ type: 'cancelAdd' }));
     }
 
-    $('close').addEventListener('click', () => vscode.postMessage({ type: 'close' }));
   </script>
 </body>
 </html>`;

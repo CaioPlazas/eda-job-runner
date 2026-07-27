@@ -45,6 +45,9 @@ For *current* state (not architecture, which barely changes):
    npx vsce package --no-dependencies -o /tmp/dry-run.vsix
    ```
    All four should be clean. This is the whole verification bar for this repo.
+   If you changed any webview panel's HTML or its inline script, also run
+   `npm run webview-check` (needs a locally cached Chromium — see
+   `ARCHITECTURE.md` §8.3) and confirm it exits 0.
 3. **The entry point is `src/extension.ts`'s `activate()`.** Every command
    is registered there. If you're not sure how a feature is wired together
    end-to-end, start by grepping for its command name in that file.

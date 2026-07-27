@@ -274,34 +274,18 @@ export class JobStore implements vscode.Disposable {
   }
 
   async updateJob(id: string, updates: Omit<JobDefinition, 'id'>): Promise<void> {
-    const job = this.data.jobs.find(j => j.id === id);
-    if (!job) {
+    const idx = this.data.jobs.findIndex(j => j.id === id);
+    if (idx === -1) {
       return;
     }
-    job.name = updates.name;
-    job.command = updates.command;
-    job.cwd = updates.cwd;
-    job.default = updates.default;
-    job.parseProblems = updates.parseProblems;
-    job.failPattern = updates.failPattern;
-    job.passPattern = updates.passPattern;
-    job.logFile = updates.logFile;
-    job.postSetupCwd = updates.postSetupCwd;
-    job.logsDirectory = updates.logsDirectory;
-    job.runCount = updates.runCount;
-    job.toolId = updates.toolId;
-    job.toolVariantLabel = updates.toolVariantLabel;
-    job.listInsertOverrides = updates.listInsertOverrides;
-    job.customArgs = updates.customArgs;
-    job.paramOverrides = updates.paramOverrides;
-    job.postRunEnabled = updates.postRunEnabled;
-    job.postRunCommand = updates.postRunCommand;
     if (updates.folder) {
       this.ensureFolder(updates.folder);
-      job.folder = updates.folder;
-    } else {
-      delete job.folder;
     }
+    const next: JobDefinition = { id, ...updates };
+    if (!updates.folder) {
+      delete next.folder;
+    }
+    this.data.jobs[idx] = next;
     if (updates.default) {
       this.clearDefaultExcept(id);
     }
@@ -319,26 +303,8 @@ export class JobStore implements vscode.Disposable {
       return undefined;
     }
     // A duplicate is never the default — only one job can hold that.
-    return this.addJob({
-      name: `${job.name} (copy)`,
-      command: job.command,
-      cwd: job.cwd,
-      parseProblems: job.parseProblems,
-      failPattern: job.failPattern,
-      passPattern: job.passPattern,
-      logFile: job.logFile,
-      postSetupCwd: job.postSetupCwd,
-      logsDirectory: job.logsDirectory,
-      runCount: job.runCount,
-      toolId: job.toolId,
-      toolVariantLabel: job.toolVariantLabel,
-      listInsertOverrides: job.listInsertOverrides,
-      customArgs: job.customArgs,
-      paramOverrides: job.paramOverrides,
-      postRunEnabled: job.postRunEnabled,
-      postRunCommand: job.postRunCommand,
-      folder: job.folder
-    });
+    const { id: _id, default: _d, ...rest } = job;
+    return this.addJob({ ...rest, name: `${job.name} (copy)` });
   }
 
   /** Enforces the "at most one default" invariant by clearing the flag elsewhere. */

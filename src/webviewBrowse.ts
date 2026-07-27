@@ -62,6 +62,7 @@ export const BROWSE_JS = `
     }
   });
   function addBrowseButton(inputEl, kind) {
+    if (!inputEl) { throw new Error('addBrowseButton: target field is not in this panel state'); }
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'secondary browseBtn';

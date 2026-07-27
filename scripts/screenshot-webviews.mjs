@@ -105,6 +105,13 @@ function themeStyleTag(theme) {
   return `:root { ${body} } html, body { background: var(--vscode-editor-background); }`;
 }
 
+// Console errors that are expected/harmless and shouldn't fail the gate.
+// Every entry here needs its own justification -- this is an explicit
+// allowlist, never a blanket "ignore all console errors."
+const IGNORED_CONSOLE = [];
+
+const failures = [];
+
 const SAMPLE_LOG_VIEWER_ROWS = [
   {
     jobId: 'job-1',
@@ -180,6 +187,13 @@ async function run() {
       for (const htmlFile of fs.readdirSync(htmlDir).filter(f => f.endsWith('.html'))) {
         const name = path.basename(htmlFile, '.html');
         const page = await context.newPage();
+        const pageErrors = [];
+        page.on('pageerror', err => pageErrors.push(`[pageerror] ${err.message}`));
+        page.on('console', msg => {
+          if (msg.type() !== 'error') { return; }
+          if (IGNORED_CONSOLE.some(re => re.test(msg.text()))) { return; }
+          pageErrors.push(`[console.error] ${msg.text()}`);
+        });
         await page.goto(`file://${path.join(htmlDir, htmlFile)}`);
         await page.addStyleTag({ content: themeStyleTag(theme) });
         console.log(`${name} (${theme}):`);
@@ -287,12 +301,22 @@ async function run() {
           await shoot(page, `${name}-${theme}-with-rows`);
         }
 
+        if (pageErrors.length > 0) {
+          failures.push(`${name} (${theme}): ${pageErrors.join('; ')}`);
+        }
         await page.close();
       }
       await context.close();
     }
   } finally {
     await browser.close();
+  }
+  if (failures.length > 0) {
+    console.error('\nWebview script errors detected:');
+    for (const f of failures) {
+      console.error('  -', f);
+    }
+    process.exitCode = 1;
   }
   console.log('\nDone. Screenshots in', shotDir);
 }

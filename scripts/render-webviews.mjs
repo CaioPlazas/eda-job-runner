@@ -9,6 +9,14 @@
 // directly; nothing else in the vscode import is ever touched by the code
 // path this harness exercises.
 //
+// Coverage rule: every branch of a `renderHtml` conditional that changes
+// WHICH TOP-LEVEL ELEMENT IDS EXIST must have its own rendered state here.
+// The panels' inline scripts look ids up unconditionally in many places; a
+// branch with no rendered state is a branch whose script has never actually
+// been executed by this harness -- exactly how a past crash (an unguarded
+// DOM lookup only reachable when Tool Setup's `pendingAdd` state was set)
+// went undetected for a full release.
+//
 // Usage: node scripts/render-webviews.mjs
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -36,7 +44,8 @@ const fakeWebview = { cspSource: 'vscode-resource:' };
 // ---- Representative sample data, exercising the recently-changed surfaces ----
 
 const lists = [
-  { name: 'Tests', command: 'ls tests/*.sv', values: ['smoke_test', 'regress_full', 'corner_case_1'], insertTemplate: '${value}' }
+  { name: 'Tests', command: 'ls tests/*.sv', values: ['smoke_test', 'regress_full', 'corner_case_1'], insertTemplate: '${value}' },
+  { name: 'a</script>b', values: ['x', 'y'] }
 ];
 
 const tool = {
@@ -105,6 +114,12 @@ const folders = ['Regression', 'Compile'];
   const { renderHtml } = await import(bundle('./src/jobConfigPanel.ts', 'jobConfig'));
   const html = renderHtml(fakeWebview, job, [tool], folders, undefined, false, globalParams, templates, lists);
   fs.writeFileSync(path.join(outDir, 'jobConfig.html'), html);
+  // "Add Job" state where job is undefined
+  const newJobHtml = renderHtml(fakeWebview, undefined, [tool], folders, undefined, false, globalParams, templates, lists);
+  fs.writeFileSync(path.join(outDir, 'jobConfig-new.html'), newJobHtml);
+  // Same as normal but with empty lists array (exercises var-toggle-gate fix)
+  const nolistsHtml = renderHtml(fakeWebview, job, [tool], folders, undefined, false, globalParams, templates, []);
+  fs.writeFileSync(path.join(outDir, 'jobConfig-nolists.html'), nolistsHtml);
 }
 
 {
@@ -116,6 +131,27 @@ const folders = ['Regression', 'Compile'];
   // (editingToolId set), not the default list view above.
   const editingHtml = renderHtml(fakeWebview, [tool], lists, undefined, tool.id, undefined);
   fs.writeFileSync(path.join(outDir, 'toolSetup-editing.html'), editingHtml);
+  // Pending add state -- exercises the branch where #newCommand/#newScanDir
+  // don't exist in the DOM (the exact branch that caused a past crash bug).
+  const pendingAdd = {
+    command: 'questa_run.sh',
+    helpArg: '--help',
+    displayName: 'Questa Runner',
+    scanDir: '',
+    topLevel: {
+      options: tool.variants[0].options,
+      rawHelp: '(sample --help output)'
+    },
+    suggestedChoices: []
+  };
+  const pendingHtml = renderHtml(fakeWebview, [tool], lists, pendingAdd, undefined, undefined);
+  fs.writeFileSync(path.join(outDir, 'toolSetup-pending.html'), pendingHtml);
+  // Add-variant state for an existing tool
+  const addVariantHtml = renderHtml(fakeWebview, [tool], lists, undefined, undefined, tool.id);
+  fs.writeFileSync(path.join(outDir, 'toolSetup-addvariant.html'), addVariantHtml);
+  // Empty state: zero tools, zero lists
+  const emptyHtml = renderHtml(fakeWebview, [], [], undefined, undefined, undefined);
+  fs.writeFileSync(path.join(outDir, 'toolSetup-empty.html'), emptyHtml);
 }
 
 {
@@ -140,6 +176,9 @@ const folders = ['Regression', 'Compile'];
   const { renderHtml } = await import(bundle('./src/paramsPanel.ts', 'params'));
   const html = renderHtml(fakeWebview, globalParams, lists);
   fs.writeFileSync(path.join(outDir, 'params.html'), html);
+  // Empty state: zero params, zero lists
+  const emptyParamsHtml = renderHtml(fakeWebview, [], []);
+  fs.writeFileSync(path.join(outDir, 'params-empty.html'), emptyParamsHtml);
 }
 
 {
@@ -148,4 +187,4 @@ const folders = ['Regression', 'Compile'];
   fs.writeFileSync(path.join(outDir, 'logViewer.html'), html);
 }
 
-console.log('Rendered 5 panels to', outDir);
+console.log('Rendered 12 states to', outDir);

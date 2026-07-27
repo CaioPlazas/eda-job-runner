@@ -285,6 +285,11 @@ export function renderHtml(
   const nonce = getNonce();
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Same '<' escape as every other JSON.stringify(...) interpolated into the
+  // <script> block below -- needed here too since these three are also raw
+  // user-editable strings (a variant label, list/option names) that could
+  // contain "</script>" and hard-break the panel.
+  const jsonLit = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 
   // Slim payload for the builder script -- id/command/variants/options only, no rawHelp/scanError.
   // '<' escaped so a tool's own text can never break out of the <script> tag.
@@ -633,10 +638,10 @@ export function renderHtml(
     // Mutable (not const): loading a template re-seeds which variant should
     // be pre-selected the next time renderVariantSelect runs, same as a
     // freshly-opened existing job's saved variant would be.
-    let SAVED_TOOL_VARIANT = ${JSON.stringify(job?.toolVariantLabel ?? '')};
+    let SAVED_TOOL_VARIANT = ${jsonLit(job?.toolVariantLabel ?? '')};
     // Per-job insert-template overrides for a tool's value lists, keyed by list name.
-    let LIST_OVERRIDES = ${JSON.stringify(job?.listInsertOverrides ?? {})};
-    let OPTION_LIST_OVERRIDES = ${JSON.stringify(job?.optionListOverrides ?? {})};
+    let LIST_OVERRIDES = ${jsonLit(job?.listInsertOverrides ?? {})};
+    let OPTION_LIST_OVERRIDES = ${jsonLit(job?.optionListOverrides ?? {})};
     const GLOBAL_PARAMS = ${globalParamsJson};
     const SAVED_PARAM_OVERRIDES = ${paramOverridesJson};
     let TEMPLATES = ${templatesJson};
@@ -896,10 +901,13 @@ export function renderHtml(
 
         // Per-option advanced controls (the var/choices toggle, and which
         // list feeds this dropdown for this job) live in a collapsed row
-        // below the option instead of stacking inline -- only worth
-        // showing at all when the workspace has lists to offer in the
-        // first place (matches the list-source select's own gating below).
-        if (GLOBAL_LISTS.length > 0) {
+        // below the option instead of stacking inline. Shown whenever either
+        // sub-control has something to offer: the var toggle needs fixed
+        // choices to toggle away from, the list-source select needs at least
+        // one workspace list -- so the gear itself must appear if EITHER is
+        // true, while the list-source select still gates on lists alone,
+        // inside this block.
+        if (GLOBAL_LISTS.length > 0 || choices) {
           const advToggle = document.createElement('button');
           advToggle.type = 'button';
           advToggle.className = 'secondary advToggle';
@@ -940,38 +948,40 @@ export function renderHtml(
           syncToggleLabel();
           advanced.appendChild(varToggle);
 
-          const key = opt.flags.join('|');
-          const listSourceSelect = document.createElement('select');
-          listSourceSelect.className = 'listSourceSelect';
-          listSourceSelect.title = 'Which value list feeds this option\\'s dropdown, for this job only';
-          const blankOpt = document.createElement('option');
-          blankOpt.value = '';
-          blankOpt.textContent = '(default)';
-          listSourceSelect.appendChild(blankOpt);
-          GLOBAL_LISTS.forEach(l => {
-            const o = document.createElement('option');
-            o.value = l.name;
-            o.textContent = l.name;
-            listSourceSelect.appendChild(o);
-          });
-          if (OPTION_LIST_OVERRIDES[key]) { listSourceSelect.value = OPTION_LIST_OVERRIDES[key]; }
-          listSourceSelect.addEventListener('change', () => {
-            if (listSourceSelect.value) { OPTION_LIST_OVERRIDES[key] = listSourceSelect.value; }
-            else { delete OPTION_LIST_OVERRIDES[key]; }
-            choices = optionChoices(opt);
-            const currentValue = valueInput.value;
-            const wasDisabled = valueInput.disabled;
-            const next = choices ? buildSelect(currentValue) : buildFree(currentValue);
-            next.disabled = wasDisabled;
-            next.addEventListener(next.tagName === 'SELECT' ? 'change' : 'input', () => { syncTitle(next); onBuilderChange(); });
-            valueInput.replaceWith(next);
-            valueInput = next;
-            varToggle.classList.toggle('hidden', !choices);
-            syncToggleLabel();
-            onBuilderChange();
-            renderLists(tool);
-          });
-          advanced.appendChild(listSourceSelect);
+          if (GLOBAL_LISTS.length > 0) {
+            const key = opt.flags.join('|');
+            const listSourceSelect = document.createElement('select');
+            listSourceSelect.className = 'listSourceSelect';
+            listSourceSelect.title = 'Which value list feeds this option\\'s dropdown, for this job only';
+            const blankOpt = document.createElement('option');
+            blankOpt.value = '';
+            blankOpt.textContent = '(default)';
+            listSourceSelect.appendChild(blankOpt);
+            GLOBAL_LISTS.forEach(l => {
+              const o = document.createElement('option');
+              o.value = l.name;
+              o.textContent = l.name;
+              listSourceSelect.appendChild(o);
+            });
+            if (OPTION_LIST_OVERRIDES[key]) { listSourceSelect.value = OPTION_LIST_OVERRIDES[key]; }
+            listSourceSelect.addEventListener('change', () => {
+              if (listSourceSelect.value) { OPTION_LIST_OVERRIDES[key] = listSourceSelect.value; }
+              else { delete OPTION_LIST_OVERRIDES[key]; }
+              choices = optionChoices(opt);
+              const currentValue = valueInput.value;
+              const wasDisabled = valueInput.disabled;
+              const next = choices ? buildSelect(currentValue) : buildFree(currentValue);
+              next.disabled = wasDisabled;
+              next.addEventListener(next.tagName === 'SELECT' ? 'change' : 'input', () => { syncTitle(next); onBuilderChange(); });
+              valueInput.replaceWith(next);
+              valueInput = next;
+              varToggle.classList.toggle('hidden', !choices);
+              syncToggleLabel();
+              onBuilderChange();
+              renderLists(tool);
+            });
+            advanced.appendChild(listSourceSelect);
+          }
         }
       }
 
@@ -1030,7 +1040,8 @@ export function renderHtml(
       optionsWrap.querySelectorAll('.optRow').forEach(row => {
         const label = row.querySelector('label.check');
         const text = (label ? label.textContent + ' ' + (label.title || '') : '').toLowerCase();
-        row.style.display = !q || text.includes(q) ? '' : 'none';
+        const entry = row.closest('.optEntry') || row;
+        entry.style.display = !q || text.includes(q) ? '' : 'none';
       });
     });
 

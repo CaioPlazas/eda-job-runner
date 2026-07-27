@@ -211,8 +211,11 @@ async function rescanAllTools(toolStore: ToolStore, jobStore: JobStore, folder: 
  * before value lists moved to `JobsFile.lists` may still have its own
  * `lists` sitting in `.vscode/eda-tools.json` (captured by `ToolStore.load`
  * but no longer part of `ToolDefinition`). Move any such entries into the
- * new global list array (deduped by name, last tool wins on a collision --
- * rare, and this only ever runs once per stale entry), then force a fresh
+ * new global list array, inheriting the owning tool's `scanDir` if the list
+ * doesn't already have one of its own (it used to resolve relative
+ * file/discovery paths against the tool, not `postSetupCwd`). Deduped by
+ * name -- an existing global (already migrated, or hand-created) always
+ * wins and is never clobbered by a repeat migration -- then force a fresh
  * persist of each migrated tool so the stale key is dropped from disk and
  * the next load finds nothing left to migrate.
  */
@@ -225,9 +228,14 @@ async function migrateLegacyToolLists(toolStore: ToolStore, jobStore: JobStore):
   for (const existing of jobStore.getLists()) {
     merged.set(existing.name, existing);
   }
-  for (const { lists } of legacy) {
+  for (const { toolId, lists } of legacy) {
+    const toolScanDir = toolStore.getTool(toolId)?.scanDir;
     for (const list of lists) {
-      merged.set(list.name, list);
+      const migrated = list.scanDir ? list : { ...list, scanDir: toolScanDir };
+      if (merged.has(migrated.name)) {
+        continue; // never clobber an existing global list
+      }
+      merged.set(migrated.name, migrated);
     }
   }
   await jobStore.setLists([...merged.values()]);

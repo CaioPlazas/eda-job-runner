@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.42.1 — Fix: Tool Setup became unresponsive after scanning a tool
+
+**Bug fixes:**
+- Tool Setup became completely unresponsive right after a tool's command
+  was scanned: the confirmation screen rendered, but Add, Cancel, and even
+  Close all silently did nothing, so no new tool could be registered at
+  all. Fixed.
+- A job's per-option value-list attachment (`optionListOverrides`) could be
+  set and saved on a brand-new job, but editing an *existing* job silently
+  dropped it on save, and it could never be cleared back to "(default)"
+  once set. Fixed — both directions now persist correctly, including
+  through Duplicate Job.
+- In a workspace with zero value lists, a fixed-choices flag's "✎ var"
+  toggle (letting you swap in a `${var:NAME}` reference) was unreachable —
+  the only workaround was creating a dummy list. Fixed.
+- Expanding an option's ⚙ advanced row and then typing into the flag
+  filter could leave that row on screen after its own option scrolled out
+  of the filtered list. Fixed.
+- If a value list that used to work now reports it cannot find its file or
+  command after upgrading from a pre-0.42 workspace, set its scan
+  directory in the Parameters panel's Advanced row — it previously
+  inherited that directory from the tool it belonged to, and the one-time
+  migration to global value lists didn't carry that over. (No automatic
+  repair — see this release's notes for why.)
+- A value list or job field containing `</script>` could break the
+  Configure panel entirely. Fixed.
+
 ## 0.42.0 — Global value lists, a leaner option builder, and Browse buttons everywhere
 
 **Features:**
