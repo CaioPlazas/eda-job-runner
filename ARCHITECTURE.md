@@ -1085,6 +1085,45 @@ in the Tool Setup favorite-toggle patch (section 6.3) — both fixed, see
 new under `scripts/` or any new generated-output directory — this is the
 exact category of mistake that already happened once.
 
+**The crash gate (added v0.42.1).** For a full release, the harness only
+*produced* screenshots — nothing actually asserted the panel's inline
+script ran without throwing, so a v0.42.0 regression (an unguarded DOM
+lookup, only reachable in a branch of Tool Setup's HTML this harness had
+never rendered) shipped with every screenshot looking pixel-identical to a
+healthy panel. `screenshot-webviews.mjs` now attaches `page.on('pageerror',
+...)` and `page.on('console', ...)` listeners **before** `page.goto(...)`
+(the panels' scripts are inline and run *during* navigation, so listeners
+registered afterwards would miss the failure), collects failures into a
+module-scope array keyed `name (theme)`, and sets `process.exitCode = 1` —
+never `process.exit()`, since the `finally { browser.close() }` block must
+still run. Console errors are gated too, not just uncaught exceptions: a
+CSP violation blocking the whole inline script surfaces only as a
+`console.error`, never a `pageerror`, and produces an equally inert panel.
+`IGNORED_CONSOLE` is an explicit allowlist (empty by default) for any
+console error that's expected/harmless — every entry needs its own
+justification, never a blanket silence.
+
+**State-coverage rule.** Every branch of a `renderHtml` conditional that
+changes *which top-level element ids exist* must have its own rendered
+state in `render-webviews.mjs`. A branch with no rendered state is a
+branch whose script has never actually been executed by this harness —
+exactly how the v0.42.0 crash went undetected. `render-webviews.mjs` now
+renders 12 states across the 5 panels (up from 5), including
+`toolSetup-pending` (the exact branch that crashed), `toolSetup-addvariant`
+and `toolSetup-empty` (other never-rendered branches), `jobConfig-new` and
+`jobConfig-nolists`, and `params-empty`. One of the sample value lists is
+deliberately named `a</script>b` so the script-escaping fix (`jsonLit` in
+`jobConfigPanel.ts`) stays covered permanently, not just at the moment it
+was fixed.
+
+**Usage as a gate**: `npm run webview-check` runs both scripts in sequence
+and exits non-zero on any page error, in any rendered state, in either
+theme. **Test the test before trusting it**: temporarily reintroduce an
+unguarded `addBrowseButton($('nonexistent'), 'file')` at the top of
+`toolSetupPanel.ts`'s inline script, confirm `webview-check` fails and
+names `toolSetup-pending` among the failing states, then revert. A gate
+never observed failing is not a gate.
+
 ### 8.4 CI / Release workflows
 
 - **`.github/workflows/ci.yml`** (every push to any branch + every PR):

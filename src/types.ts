@@ -231,7 +231,7 @@ export interface ValueList {
    * the workspace root). Supports `${workspaceFolder}`/`${env:NAME}`.
    */
   scanDir?: string;
-  /** Discovered + cached values (like `ToolVariant.options`), refreshed on rescan. */
+  /** Discovered + cached values (like `ToolVariant.options`), refreshed on demand (Parameters panel, or the Refresh Value Lists command). */
   values: string[];
   /** Set when the last discovery failed (spawn/read error, or no values found). */
   scanError?: string;
