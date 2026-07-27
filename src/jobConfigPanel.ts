@@ -3,6 +3,7 @@ import { JobStore } from './jobStore';
 import { GlobalParam, JobDefinition, JobTemplate, ToolDefinition, ValueList } from './types';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
+import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 
 interface SaveMessage {
   type: 'save';
@@ -49,7 +50,13 @@ interface DeleteTemplateRequestMessage {
   name: string;
 }
 
-type WebviewMessage = SaveMessage | CancelMessage | SaveTemplateRequestMessage | DeleteTemplateRequestMessage | BrowseMessage;
+type WebviewMessage =
+  | SaveMessage
+  | CancelMessage
+  | SaveTemplateRequestMessage
+  | DeleteTemplateRequestMessage
+  | BrowseMessage
+  | ClientErrorMessage;
 
 export class JobConfigPanel {
   private static readonly panels = new Map<string, JobConfigPanel>();
@@ -133,6 +140,9 @@ export class JobConfigPanel {
     }
     if (msg.type === 'browse') {
       return handleBrowseMessage(msg, this.panel.webview, this.workspaceFolder);
+    }
+    if (msg.type === 'clientError') {
+      return handleClientErrorMessage(msg);
     }
 
     const name = msg.name.trim();
@@ -604,6 +614,7 @@ export function renderHtml(
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
     const AUTO_SAVE = ${autoSave ? 'true' : 'false'};
     const nameEl = document.getElementById('name');

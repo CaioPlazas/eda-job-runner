@@ -836,6 +836,31 @@ signature was made `export`able specifically to support that.
   text or attribute value. `help()`'s `html` argument is the one deliberate
   exception (never escaped) because it must always be this extension's own
   static copy, never user/workspace data.
+- **Shared client-side snippets, embedded via a `${CONST}` template
+  interpolation right inside each panel's own `<script>` block** (never a
+  separate `<script src>`, since CSP only allows the one nonced inline
+  block): `src/webviewBrowse.ts`'s `BROWSE_JS` (a folder/file "Browse…"
+  button, correlated to the host by an incrementing request id) and
+  `src/webviewError.ts`'s `CLIENT_ERROR_JS` (posts any uncaught
+  `window.onerror` back to the host as a `clientError` message, shown as a
+  generic "a panel failed to initialize" notification — added after a
+  v0.42.0 regression left an entire panel silently inert for a full
+  release with zero signal anywhere). `CLIENT_ERROR_JS` is always the
+  **very first** thing after `const vscode = acquireVsCodeApi();` in every
+  panel, ahead of even `BROWSE_JS` — an error-reporting bridge that isn't
+  wired before everything else it's meant to catch is much less useful.
+- **`$req` convention**, in the three panels that already have a
+  `const $ = id => document.getElementById(id);` shorthand
+  (`toolSetupPanel.ts`, `shellEnvPanel.ts`, `logViewerPanel.ts` —
+  `jobConfigPanel.ts`/`paramsPanel.ts` call `document.getElementById`
+  directly with no such helper): `$req(id)` throws a named
+  `missing element #<id>` error instead of silently returning `null`, and
+  is used at every unconditional lookup site. `$(id)` stays the nullable
+  form, still required for `toolSetupPanel.ts`'s several `if ($('x'))`
+  presence checks (its HTML has multiple mutually-exclusive rendered
+  states, unlike the other two panels, which always render one full form
+  and so have no legitimate use for the nullable form at all). Do not make
+  `$()` itself throw — that would break those presence checks.
 
 ### 6.2 `jobConfigPanel.ts` deep dive (the largest, most stateful panel)
 
@@ -1020,9 +1045,13 @@ Run the whole suite (what CI does): loop over `test-fixtures/run-*-tests.mjs`
 — **this is glob-discovered, not a hardcoded list**, so a newly-added test
 file needs no CI/workflow edit, just the file itself. When adding a new pure
 module, **always add its own `run-<name>-tests.mjs`** following this exact
-shape — it's the only real regression coverage this codebase has (the
-webview panels and `jobRunner.ts`'s actual spawn/IO plumbing are not
-unit-tested this way; see 8.3 for how those get verified instead).
+shape — it's the primary regression coverage this codebase has.
+`jobRunner.ts`'s actual spawn/IO plumbing isn't unit-tested this way (see
+8.3 for how the webview panels get covered instead — as of Phase 16, one
+of those two harnesses, `run-webview-smoke-tests.mjs`, *is* itself
+glob-discovered and runs in this exact loop, so it's really a
+`test-fixtures/run-*-tests.mjs` file that happens to test webview panels
+rather than a pure decision module).
 
 Some `test-fixtures/*.log` files are **captured real tool output** (DSim,
 Icarus, Questa, Verilator) checked in specifically to ground
@@ -1123,6 +1152,38 @@ unguarded `addBrowseButton($('nonexistent'), 'file')` at the top of
 `toolSetupPanel.ts`'s inline script, confirm `webview-check` fails and
 names `toolSetup-pending` among the failing states, then revert. A gate
 never observed failing is not a gate.
+
+**The browser-free sibling gate (added Phase 16, v0.43.0):**
+`test-fixtures/run-webview-smoke-tests.mjs` applies the exact same
+principle — bundle each panel with the same `--alias:vscode` shim trick,
+execute its real `renderHtml` output's inline `<script>` for real, fail on
+any uncaught error — but inside `jsdom` instead of headless Chromium, so
+it needs no locally-cached browser and can run as a real, unattended CI
+gate (`ci.yml`'s regression step already globs
+`test-fixtures/run-*-tests.mjs`, so this needed zero workflow changes).
+`acquireVsCodeApi` and a `window.addEventListener('error', ...)` collector
+are stubbed via jsdom's `beforeParse(window)` option — the only hook that
+runs before a classic inline `<script>` executes during
+`runScripts: 'dangerously'` parsing (setting them after `new JSDOM(...)`
+returns would be too late, same ordering constraint as
+`screenshot-webviews.mjs`'s `page.on('pageerror')` needing to be
+registered before `page.goto`). `jsdom` reports its own "not implemented"
+browser-API stubs (e.g. `window.scrollTo`) as a `jsdomError` on a
+`VirtualConsole` — filtered out by message text, since that's a jsdom
+limitation, not a real script bug; a genuine thrown error still reaches
+the `window` `error` event exactly like it would in a real browser, which
+is what this gate actually asserts on. `jsdom` is a dev-only dependency
+(`node_modules/**` is already vscodeignored, so nothing new ships).
+Covers the same 12 states as `render-webviews.mjs`, verified as a real gate
+the identical way: reintroduce the crash, confirm all five `toolSetup-*`
+states fail and name the exact error, revert, confirm green.
+
+This gate and the Playwright one are deliberately **not** merged into one:
+the Playwright harness also produces the screenshots a human (or a
+vision-capable model) inspects for actual visual regressions, which jsdom
+fundamentally cannot do (no real layout/rendering engine) — jsdom only
+ever proves the script didn't throw. Keep both; they check different
+things.
 
 ### 8.4 CI / Release workflows
 

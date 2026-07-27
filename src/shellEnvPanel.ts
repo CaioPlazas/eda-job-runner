@@ -8,6 +8,7 @@ import { detectVscodeShell } from './shellDetect';
 import { buildShellInvocation, defaultArgsForShell, resolveJobEnv, substituteVars } from './shellInvocation';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
+import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 
 interface SaveMessage {
   type: 'save';
@@ -52,7 +53,8 @@ type WebviewMessage =
   | TestMessage
   | CancelMessage
   | CleanAllLogsMessage
-  | BrowseMessage;
+  | BrowseMessage
+  | ClientErrorMessage;
 
 const TEST_TIMEOUT_MS = 15000;
 const TEST_OUTPUT_CAP = 64 * 1024;
@@ -136,6 +138,8 @@ export class ShellEnvPanel {
         return this.onCleanAllLogs();
       case 'browse':
         return handleBrowseMessage(msg, this.panel.webview, this.folder);
+      case 'clientError':
+        return handleClientErrorMessage(msg);
     }
   }
 
@@ -585,16 +589,18 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
     const $ = id => document.getElementById(id);
-    const autoEl = $('shellArgsAuto');
-    const argsWrap = $('argsWrap');
-    const testOut = $('testOut');
-    const detectNote = $('detectNote');
-    const limitByCountEl = $('limitByCount');
-    const logRetentionCountEl = $('logRetentionCount');
-    const limitBySizeEl = $('limitBySize');
-    const logRetentionMaxSizeMBEl = $('logRetentionMaxSizeMB');
+    const $req = id => { const el = $(id); if (!el) { throw new Error('missing element #' + id); } return el; };
+    const autoEl = $req('shellArgsAuto');
+    const argsWrap = $req('argsWrap');
+    const testOut = $req('testOut');
+    const detectNote = $req('detectNote');
+    const limitByCountEl = $req('limitByCount');
+    const logRetentionCountEl = $req('logRetentionCount');
+    const limitBySizeEl = $req('limitBySize');
+    const logRetentionMaxSizeMBEl = $req('logRetentionMaxSizeMB');
 
     autoEl.addEventListener('change', () => {
       argsWrap.classList.toggle('hidden', autoEl.checked);
@@ -608,36 +614,36 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
 
     function collect() {
       return {
-        shellPath: $('shellPath').value,
+        shellPath: $req('shellPath').value,
         shellArgsAuto: autoEl.checked,
-        shellArgs: $('shellArgs').value,
-        env: $('env').value,
-        setupScript: $('setupScript').value,
-        setupCommands: $('setupCommands').value,
-        postSetupCwd: $('postSetupCwd').value,
-        logsDirectory: $('logsDirectory').value,
+        shellArgs: $req('shellArgs').value,
+        env: $req('env').value,
+        setupScript: $req('setupScript').value,
+        setupCommands: $req('setupCommands').value,
+        postSetupCwd: $req('postSetupCwd').value,
+        logsDirectory: $req('logsDirectory').value,
         logRetentionCount: limitByCountEl.checked ? logRetentionCountEl.value : '0',
         logRetentionMaxSizeMB: limitBySizeEl.checked ? logRetentionMaxSizeMBEl.value : '0'
       };
     }
 
-    $('detect').addEventListener('click', () => {
+    $req('detect').addEventListener('click', () => {
       detectNote.textContent = 'Detecting…';
       vscode.postMessage({ type: 'detect' });
     });
-    $('test').addEventListener('click', () => {
+    $req('test').addEventListener('click', () => {
       testOut.style.display = 'block';
       testOut.textContent = 'Running…';
       vscode.postMessage(Object.assign({ type: 'test' }, collect()));
     });
-    $('save').addEventListener('click', () => {
+    $req('save').addEventListener('click', () => {
       vscode.postMessage(Object.assign({ type: 'save' }, collect()));
     });
-    $('cancel').addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
-    $('cleanAllLogs').addEventListener('click', () => vscode.postMessage({ type: 'cleanAllLogs' }));
-    addBrowseButton($('setupScript'), 'file');
-    addBrowseButton($('postSetupCwd'), 'folder');
-    addBrowseButton($('logsDirectory'), 'folder');
+    $req('cancel').addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
+    $req('cleanAllLogs').addEventListener('click', () => vscode.postMessage({ type: 'cleanAllLogs' }));
+    addBrowseButton($req('setupScript'), 'file');
+    addBrowseButton($req('postSetupCwd'), 'folder');
+    addBrowseButton($req('logsDirectory'), 'folder');
 
     window.addEventListener('message', event => {
       const m = event.data;
@@ -647,16 +653,16 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
         // content different from what was just detected -- an empty field,
         // or one that already matches, needs no confirmation.
         const wouldOverwrite =
-          ($('shellPath').value && $('shellPath').value !== m.shellPath) ||
-          ($('shellArgs').value && $('shellArgs').value !== m.shellArgs) ||
-          (m.env && $('env').value && $('env').value !== m.env);
+          ($req('shellPath').value && $req('shellPath').value !== m.shellPath) ||
+          ($req('shellArgs').value && $req('shellArgs').value !== m.shellArgs) ||
+          (m.env && $req('env').value && $req('env').value !== m.env);
         if (wouldOverwrite && !confirm('This will replace your current Shell path/arguments/environment fields with the detected values. Continue?')) {
           detectNote.textContent = 'Detection cancelled -- your current fields were left as-is.';
           return;
         }
-        $('shellPath').value = m.shellPath;
-        $('shellArgs').value = m.shellArgs;
-        if (m.env) { $('env').value = m.env; }
+        $req('shellPath').value = m.shellPath;
+        $req('shellArgs').value = m.shellArgs;
+        if (m.env) { $req('env').value = m.env; }
         // Only safe to check Auto when the detected args ARE the generic
         // per-shell default -- otherwise Save would discard these detected
         // args entirely (shellArgsAuto true -> onSave persists no override)
@@ -673,7 +679,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       }
     });
 
-    $('shellPath').focus();
+    $req('shellPath').focus();
   </script>
 </body>
 </html>`;

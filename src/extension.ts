@@ -22,10 +22,11 @@ import {
   JobTreeProvider,
   formatDuration
 } from './treeProvider';
-import { JobDefinition, JobTemplate, ValueList } from './types';
+import { JobDefinition, JobTemplate } from './types';
 import { ToolStore } from './toolStore';
 import { ToolSetupPanel } from './toolSetupPanel';
-import { scanTool } from './toolIntrospect';
+import { scanTool, scanAllLists } from './toolIntrospect';
+import { planListMigration } from './listMigration';
 
 export function activate(context: vscode.ExtensionContext): void {
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -109,6 +110,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, folder, logManager, jobRunner)),
     vscode.commands.registerCommand('eda-job-runner.configureTools', () => ToolSetupPanel.createOrShow(toolStore, jobStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore, folder)),
+    vscode.commands.registerCommand('eda-job-runner.refreshValueLists', () => refreshValueLists(jobStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.openLogViewer', () => LogViewerPanel.createOrShow(jobStore, logManager, toolStore)),
     vscode.commands.registerCommand('eda-job-runner.addFolder', () => addFolder(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.addJobInFolder', (item: FolderTreeItem) =>
@@ -211,34 +213,55 @@ async function rescanAllTools(toolStore: ToolStore, jobStore: JobStore, folder: 
  * before value lists moved to `JobsFile.lists` may still have its own
  * `lists` sitting in `.vscode/eda-tools.json` (captured by `ToolStore.load`
  * but no longer part of `ToolDefinition`). Move any such entries into the
- * new global list array, inheriting the owning tool's `scanDir` if the list
- * doesn't already have one of its own (it used to resolve relative
- * file/discovery paths against the tool, not `postSetupCwd`). Deduped by
- * name -- an existing global (already migrated, or hand-created) always
- * wins and is never clobbered by a repeat migration -- then force a fresh
- * persist of each migrated tool so the stale key is dropped from disk and
- * the next load finds nothing left to migrate.
+ * new global list array via the pure `planListMigration` (inherits the
+ * owning tool's `scanDir` when the list doesn't have its own; an existing
+ * global always wins over a colliding legacy list; two legacy tools
+ * colliding with EACH OTHER get the second one renamed instead of one
+ * silently winning -- see that module's own doc comment for why the two
+ * cases are handled differently). A rename requires rewriting the owning
+ * tool's own `ToolOption.valueListName` occurrences and every job using
+ * that tool's `optionListOverrides` values, both done below, before a
+ * fresh persist of each migrated tool drops the stale key from disk so the
+ * next load finds nothing left to migrate.
  */
 async function migrateLegacyToolLists(toolStore: ToolStore, jobStore: JobStore): Promise<void> {
   const legacy = toolStore.takeLegacyLists();
   if (legacy.length === 0) {
     return;
   }
-  const merged = new Map<string, ValueList>();
-  for (const existing of jobStore.getLists()) {
-    merged.set(existing.name, existing);
-  }
-  for (const { toolId, lists } of legacy) {
-    const toolScanDir = toolStore.getTool(toolId)?.scanDir;
-    for (const list of lists) {
-      const migrated = list.scanDir ? list : { ...list, scanDir: toolScanDir };
-      if (merged.has(migrated.name)) {
-        continue; // never clobber an existing global list
+  const { lists, renames } = planListMigration(
+    jobStore.getLists(),
+    legacy.map(({ toolId, lists: toolLists }) => ({ toolId, toolScanDir: toolStore.getTool(toolId)?.scanDir, lists: toolLists }))
+  );
+  await jobStore.setLists(lists);
+
+  for (const rename of renames) {
+    const tool = toolStore.getTool(rename.toolId);
+    if (tool) {
+      const variants = tool.variants.map(v => ({
+        ...v,
+        options: v.options.map(o => (o.valueListName === rename.from ? { ...o, valueListName: rename.to } : o))
+      }));
+      await toolStore.updateTool(rename.toolId, { variants });
+    }
+    for (const job of jobStore.getJobs()) {
+      if (job.toolId !== rename.toolId || !job.optionListOverrides) {
+        continue;
       }
-      merged.set(migrated.name, migrated);
+      const overrides = { ...job.optionListOverrides };
+      let changed = false;
+      for (const key of Object.keys(overrides)) {
+        if (overrides[key] === rename.from) {
+          overrides[key] = rename.to;
+          changed = true;
+        }
+      }
+      if (changed) {
+        await jobStore.updateJob(job.id, { ...job, optionListOverrides: overrides });
+      }
     }
   }
-  await jobStore.setLists([...merged.values()]);
+
   for (const { toolId } of legacy) {
     await toolStore.updateTool(toolId, {});
   }
@@ -307,6 +330,25 @@ async function saveJobAsTemplate(jobStore: JobStore, item: EdaTreeElement): Prom
   };
   await jobStore.addTemplate(template);
   void vscode.window.showInformationMessage(`Saved template "${template.name}".`);
+}
+
+/**
+ * Re-discovers every workspace-wide value list on demand -- lists stay
+ * on-demand-only by design (see `toolIntrospect.ts`'s `scanAllLists` doc
+ * comment): now that lists are workspace-global rather than tool-owned,
+ * refreshing them inside a tool's own rescan would be the wrong axis, and
+ * an activation-time refresh would spawn one arbitrary user command per
+ * list on every window reload. This command, and the Parameters panel's
+ * per-list ↻, are the only two refresh paths.
+ */
+async function refreshValueLists(jobStore: JobStore, folder: vscode.WorkspaceFolder): Promise<void> {
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'EDA Job Runner: refreshing value lists…' },
+    async () => {
+      const refreshed = await scanAllLists(jobStore.getLists(), jobStore, folder);
+      await jobStore.setLists(refreshed);
+    }
+  );
 }
 
 async function addFolder(jobStore: JobStore): Promise<void> {

@@ -2,7 +2,7 @@
   "name": "eda-job-runner",
   "displayName": "EDA Job Runner",
   "description": "Tool-agnostic sidebar for running and tracking EDA compile/simulation jobs (Xcelium, Questa, or any custom script) without leaving VS Code.",
-  "version": "0.42.1",
+  "version": "0.43.0",
   "publisher": "CaioPlazas",
   "license": "GPL-3.0",
   "icon": "media/icon.png",
@@ -121,6 +121,11 @@
         "command": "eda-job-runner.configureParams",
         "title": "EDA: Configure Parameters",
         "icon": "$(symbol-variable)"
+      },
+      {
+        "command": "eda-job-runner.refreshValueLists",
+        "title": "EDA: Refresh Value Lists",
+        "icon": "$(refresh)"
       },
       {
         "command": "eda-job-runner.openLogViewer",
@@ -628,6 +633,7 @@
     "@types/vscode": "^1.74.0",
     "@vscode/vsce": "^2.32.0",
     "esbuild": "^0.23.0",
+    "jsdom": "^29.1.1",
     "playwright-core": "^1.61.1",
     "typescript": "^5.5.0"
   }
