@@ -1,0 +1,20 @@
+# vsim -sv_seed 123456789 -c -do "run -all; quit" work.tb_top
+# //  Questa Sim-64
+# //  Version 2024.1 linux_x86_64
+# Loading work.tb_top(fast)
+# run -all
+# UVM_INFO tb/uvm_smoke_test.sv(15) @ 0: reporter [RNTST] Running test uvm_smoke_test...
+# UVM_ERROR tb/uvm_smoke_test.sv(22) @ 20: uvm_test_top [SMOKE] Data mismatch: expected 10, got 5
+# UVM_FATAL tb/uvm_smoke_test.sv(30) @ 25: uvm_test_top [SMOKE] Unrecoverable condition, aborting
+# --- UVM Report Summary ---
+#
+# ** Report counts by severity
+# UVM_INFO :    3
+# UVM_WARNING :    0
+# UVM_ERROR :    1
+# UVM_FATAL :    1
+# ** Report counts by id
+# [RNTST]     1
+# [SMOKE]     2
+# quit -f
+End time: 12:34:56 on Jul 29,2026, Elapsed time: 0:00:02

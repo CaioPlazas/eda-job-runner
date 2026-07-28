@@ -266,6 +266,16 @@ export interface ToolDefinition {
    * Setup's Advanced section, with a live paste-and-preview tester.
    */
   seedPattern?: string;
+  /**
+   * Custom regex tested against every line of a run's output. A match counts
+   * as an error (added to this tool's error count / Problems panel), for tool
+   * output that doesn't match any of the built-in structured formats
+   * (UVM/Questa/Icarus/DSim/Verilator). Unlike `seedPattern`, no capture group
+   * is used — a match anywhere in the line is the whole signal. Case-insensitive.
+   * Set via Tool Setup's Advanced section. Leave unset to rely on built-in
+   * parsing only.
+   */
+  errorPattern?: string;
 }
 
 export interface ToolsFile {
