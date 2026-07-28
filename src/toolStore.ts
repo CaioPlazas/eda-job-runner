@@ -140,6 +140,7 @@ function normalize(parsed: Partial<ToolsFile> | undefined): { toolsFile: ToolsFi
         scanDir: typeof t.scanDir === 'string' && t.scanDir.trim() ? t.scanDir.trim() : undefined,
         helpArg: typeof t.helpArg === 'string' && t.helpArg.trim() ? t.helpArg.trim() : undefined,
         seedPattern: typeof t.seedPattern === 'string' && t.seedPattern.trim() ? t.seedPattern.trim() : undefined,
+        errorPattern: typeof t.errorPattern === 'string' && t.errorPattern.trim() ? t.errorPattern.trim() : undefined,
         variants: normalizeVariants(t.variants),
         lastScanned: typeof t.lastScanned === 'number' ? t.lastScanned : undefined
       };

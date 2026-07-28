@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { GlobalParam, JobDefinition, JobsFileSetup } from './types';
+import { GlobalParam, JobDefinition, JobsFileSetup, ToolDefinition } from './types';
 import { LogManager } from './logManager';
 import { ensureGitignoreEntry } from './gitignoreManager';
 import { LogDiagnostics } from './logDiagnostics';
@@ -247,6 +247,7 @@ export class JobRunner implements vscode.Disposable {
     private readonly logManager: LogManager,
     private readonly getSetup: () => JobsFileSetup | undefined,
     private readonly getParams: () => GlobalParam[],
+    private readonly getTool: (toolId: string) => ToolDefinition | undefined,
     private readonly memento: vscode.Memento,
     private readonly diagnostics: LogDiagnostics
   ) {
@@ -588,7 +589,7 @@ export class JobRunner implements vscode.Disposable {
       maxParseBytes: maxBytes,
       killRequested: false,
       cwdAbs,
-      parseState: newParseState(),
+      parseState: newParseState(job.toolId ? compilePattern(this.getTool(job.toolId)?.errorPattern) : undefined),
       lineCarry: '',
       parseProblems: job.parseProblems !== false,
       jobId: job.id,
@@ -1058,7 +1059,7 @@ export class JobRunner implements vscode.Disposable {
       logPath,
       cwdAbs: this.resolveCwdAbs(job, globalPostSetupCwd),
       tailer: new FileTailer(logPath, chunk => this.feedReattachChunk(run, chunk)),
-      parseState: newParseState(),
+      parseState: newParseState(job.toolId ? compilePattern(this.getTool(job.toolId)?.errorPattern) : undefined),
       lineCarry: '',
       parseProblems: job.parseProblems !== false,
       failRegex: compilePattern(job.failPattern),

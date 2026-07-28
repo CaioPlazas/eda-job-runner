@@ -9,7 +9,11 @@ import { JobDefinition } from './types';
 // log viewer's table -- only the header (first block) and trailer (last
 // block) ever carry the structured fields it needs (see logIndex.ts); the
 // bulk of a run's captured output in between is never read just to list it.
-const HEAD_TAIL_CAP = 4 * 1024;
+// A real EDA tool's startup banner (license checkout messages, version/library-
+// load text) can easily run several KB before any useful content (e.g. a seed
+// line) appears, so 4 KB could miss it; 16 KB gives real tools more room while
+// still being a tiny, bounded read compared to a multi-MB log.
+const HEAD_TAIL_CAP = 16 * 1024;
 
 // Cap on how many distinct log paths' head/tail text stays cached (see
 // readHeadTail) -- retention already bounds how many log files exist on

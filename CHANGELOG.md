@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2.0 — Questa's silent false-pass, and Tool Setup rough edges
+
+**Fixes:**
+- A real, previously-silent bug: Questa's `vsim`, run in batch/console mode,
+  prefixes every transcript line with `# ` — so the parser's `UVM_ERROR`/
+  `UVM_FATAL` matchers (anchored to the start of the line) never matched, and
+  a genuinely failed Questa UVM test showed as passed. Fixed, with a
+  regression test built from real captured `vsim` batch output.
+- Enlarged the log viewer's head/tail read cap so a slow-to-print startup
+  banner (license checkout, library loads) can't push a run's seed/header
+  line out of the captured head.
+
+**Tool Setup:**
+- Scan failures now distinguish "command not found" from other launch
+  failures, with a specific remedy (check the path, `chmod +x`, or invoke
+  through its interpreter).
+- A free-text "Retry with this" help-arg input, for a tool whose flag list
+  needs a help argument other than `-h`/`--help`.
+- New per-tool **Error pattern** (Advanced section): a custom, case-insensitive
+  regex tested against every output line — a match counts toward that tool's
+  error count and the Problems panel, for tool output that doesn't match any
+  of the built-in UVM/Questa/Icarus/DSim/Verilator formats.
+
 ## 1.1.1 — Trim back to what earns its keep day to day
 
 v1.1.0's setup-flow overhaul was built for a new user's first run. Used

@@ -54,6 +54,7 @@ interface SaveEditMessage {
   displayName: string;
   scanDir: string;
   seedPattern: string;
+  errorPattern: string;
 }
 interface StartAddVariantMessage {
   type: 'startAddVariant';
@@ -391,12 +392,14 @@ export class ToolSetupPanel {
         const displayName = msg.displayName.trim();
         const scanDir = msg.scanDir.trim();
         const seedPattern = msg.seedPattern.trim();
+        const errorPattern = msg.errorPattern.trim();
         await this.toolStore.updateTool(msg.id, {
           command,
           helpArg,
           displayName: displayName || undefined,
           scanDir: scanDir || undefined,
-          seedPattern: seedPattern || undefined
+          seedPattern: seedPattern || undefined,
+          errorPattern: errorPattern || undefined
         });
         const updated = this.toolStore.getTool(msg.id);
         if (updated) {
@@ -527,13 +530,17 @@ export function renderHtml(
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const effectiveRoot = workspaceRoot ?? '';
 
-  /** Distinguishes the three scan outcomes so the remedy shown matches the actual cause (T1.3 item 7). */
-  const classifyOutcome = (v: { rawHelp?: string; scanError?: string; options?: unknown[] }): 'launchFailed' | 'printedNothing' | 'nothingParsed' | 'ok' => {
+  /** Distinguishes the scan outcomes so the remedy shown matches the actual cause (T1.3 item 7). */
+  const EXEC_FAILURE = /command not found|is not recognized as an internal or external command|no such file or directory|permission denied/i;
+  const classifyOutcome = (v: { rawHelp?: string; scanError?: string; options?: unknown[] }): 'launchFailed' | 'commandNotFound' | 'printedNothing' | 'nothingParsed' | 'ok' => {
     if (!v.scanError) {
       return 'ok';
     }
     if (v.scanError.startsWith('Failed to launch shell')) {
       return 'launchFailed';
+    }
+    if (v.rawHelp && EXEC_FAILURE.test(v.rawHelp)) {
+      return 'commandNotFound';
     }
     if (!v.rawHelp || v.rawHelp.trim().length === 0) {
       return 'printedNothing';
@@ -541,12 +548,15 @@ export function renderHtml(
     return 'nothingParsed';
   };
 
-  const outcomeMessage = (outcome: 'launchFailed' | 'printedNothing' | 'nothingParsed' | 'ok', scanError: string): string => {
+  const outcomeMessage = (outcome: 'launchFailed' | 'commandNotFound' | 'printedNothing' | 'nothingParsed' | 'ok', scanError: string): string => {
     if (outcome === 'launchFailed' || outcome === 'ok') {
       return scanError;
     }
     if (outcome === 'printedNothing') {
       return 'The command ran but printed nothing. It may need a different help argument.';
+    }
+    if (outcome === 'commandNotFound') {
+      return `This command doesn't seem to run in your configured shell (${scanError}) — check the path is correct, and that a script is executable (chmod +x) or invoked through its interpreter (e.g. \`python script.py\`, not the script alone).`;
     }
     return `Ran and produced output, but no recognisable flags were found (${scanError}).`;
   };
@@ -639,6 +649,8 @@ export function renderHtml(
         ? `<div class="actions">
              <button class="secondary small" data-try-helparg-id="${esc(tool.id)}" data-try-helparg-label="${esc(v.label)}" data-try-helparg="-help" type="button">Try -help</button>
              <button class="secondary small" data-try-helparg-id="${esc(tool.id)}" data-try-helparg-label="${esc(v.label)}" data-try-helparg="-h" type="button">Try -h</button>
+             <input type="text" class="tryHelpArgCustom" placeholder="e.g. -help all" data-custom-helparg-id="${esc(tool.id)}" data-custom-helparg-label="${esc(v.label)}" />
+             <button class="secondary small" data-try-helparg-custom-id="${esc(tool.id)}" data-try-helparg-custom-label="${esc(v.label)}" type="button">Retry with this</button>
            </div>`
         : '';
     return `<details class="variant" open>
@@ -697,6 +709,10 @@ export function renderHtml(
           <textarea class="seedTesterSample" rows="2" placeholder="paste a line from a real run's output here"></textarea>
           <div class="hint seedTesterResult">Detected seed: <i>(nothing pasted yet)</i></div>
         </div>
+        <label>Error pattern (regex, optional) ${help(
+          "Treat any output line matching this as an error, added to this tool's error count and the Problems panel -- for output that doesn't match a built-in error format (UVM/Questa/Icarus/DSim/Verilator). Case-insensitive. Leave blank to rely on built-in parsing only."
+        )}</label>
+        <input type="text" class="editErrorPattern" value="${esc(tool.errorPattern ?? '')}" placeholder="e.g. FAILED|Error:" />
       </details>
     </div>`;
     }
@@ -737,6 +753,8 @@ export function renderHtml(
           ? `<div class="actions">
                <button class="secondary small" id="tryHelpArgDash" data-pending-command="${esc(pendingAdd.command)}" data-pending-displayname="${esc(pendingAdd.displayName)}" data-pending-scandir="${esc(pendingAdd.scanDir)}">Try -help</button>
                <button class="secondary small" id="tryHelpArgH" data-pending-command="${esc(pendingAdd.command)}" data-pending-displayname="${esc(pendingAdd.displayName)}" data-pending-scandir="${esc(pendingAdd.scanDir)}">Try -h</button>
+               <input type="text" id="tryHelpArgCustomInput" placeholder="e.g. -help all" />
+               <button class="secondary small" id="tryHelpArgCustomBtn" data-pending-command="${esc(pendingAdd.command)}" data-pending-displayname="${esc(pendingAdd.displayName)}" data-pending-scandir="${esc(pendingAdd.scanDir)}">Retry with this</button>
              </div>`
           : ''
       }
@@ -990,6 +1008,15 @@ export function renderHtml(
         helpArg: btn.getAttribute('data-try-helparg')
       });
     });
+    wire('[data-try-helparg-custom-id]', btn => {
+      const id = btn.getAttribute('data-try-helparg-custom-id');
+      const label = btn.getAttribute('data-try-helparg-custom-label');
+      const input = document.querySelector('.tryHelpArgCustom[data-custom-helparg-id="' + CSS.escape(id) + '"][data-custom-helparg-label="' + CSS.escape(label) + '"]');
+      const helpArg = input ? input.value.trim() : '';
+      if (!helpArg) { return; }
+      showBusy();
+      vscode.postMessage({ type: 'tryHelpArg', id, helpArg });
+    });
     function wirePendingHelpArgRetry(id, helpArg) {
       const btn = $(id);
       if (!btn) { return; }
@@ -1006,6 +1033,24 @@ export function renderHtml(
     }
     wirePendingHelpArgRetry('tryHelpArgDash', '-help');
     wirePendingHelpArgRetry('tryHelpArgH', '-h');
+    {
+      const customBtn = $('tryHelpArgCustomBtn');
+      const customInput = $('tryHelpArgCustomInput');
+      if (customBtn && customInput) {
+        customBtn.addEventListener('click', () => {
+          const helpArg = customInput.value.trim();
+          if (!helpArg) { return; }
+          showBusy();
+          vscode.postMessage({
+            type: 'scanNew',
+            command: customBtn.getAttribute('data-pending-command'),
+            helpArg,
+            displayName: customBtn.getAttribute('data-pending-displayname'),
+            scanDir: customBtn.getAttribute('data-pending-scandir')
+          });
+        });
+      }
+    }
     // At most one tool is ever in edit mode at a time -- a class, not an id,
     // since renderTool re-renders per-tool (see wrap.querySelector('.editCommand') below).
     const editCommandEl = document.querySelector('.editCommand');
@@ -1188,7 +1233,8 @@ export function renderHtml(
         helpArg: wrap.querySelector('.editHelpArg').value,
         displayName: wrap.querySelector('.editDisplayName').value,
         scanDir: wrap.querySelector('.editScanDir').value,
-        seedPattern: wrap.querySelector('.editSeedPattern').value
+        seedPattern: wrap.querySelector('.editSeedPattern').value,
+        errorPattern: wrap.querySelector('.editErrorPattern').value
       });
     });
     wire('[data-confirm-addvariant]', btn => {

@@ -43,10 +43,12 @@ export interface ParseState {
    * flag we'd wrongly flag every library-internal warning location.
    */
   dsimErrorBlock: boolean;
+  /** Compiled from a tool's `ToolDefinition.errorPattern`, if set — see `newParseState`. */
+  customErrorPattern?: RegExp;
 }
 
-export function newParseState(): ParseState {
-  return { issues: [], errorCount: 0, warningCount: 0, dsimErrorBlock: false };
+export function newParseState(customErrorPattern?: RegExp): ParseState {
+  return { issues: [], errorCount: 0, warningCount: 0, dsimErrorBlock: false, customErrorPattern };
 }
 
 // UVM end-of-run summary rows: "UVM_ERROR :    1". Matched first and skipped so
@@ -100,6 +102,11 @@ const VERILATOR = /^%(Error|Warning|Fatal)(?:-[A-Z0-9_]+)?:\s+(\S+?):(\d+):(\d+)
 export function parseLine(line: string, state: ParseState): void {
   const trimmedEnd = line.replace(/\s+$/, '');
 
+  // Questa's vsim, run in batch/console mode, prefixes every transcript line
+  // with "# ", so UVM/Questa matching needs to tolerate it while other tools'
+  // matchers don't need to (they never see this prefix).
+  const vsimUnprefixed = trimmedEnd.replace(/^#\s*/, '');
+
   // Track DSim diagnostic-block context first. A header line opens (or closes)
   // an error block; a non-indented, non-header line ends any open block.
   const header = DSIM_HEADER.exec(trimmedEnd);
@@ -109,13 +116,13 @@ export function parseLine(line: string, state: ParseState): void {
     state.dsimErrorBlock = false;
   }
 
-  if (UVM_SUMMARY.test(trimmedEnd)) {
+  if (UVM_SUMMARY.test(vsimUnprefixed)) {
     return; // report-summary row — never an issue
   }
 
   let m: RegExpMatchArray | null;
 
-  if ((m = UVM_LOCATED.exec(trimmedEnd))) {
+  if ((m = UVM_LOCATED.exec(vsimUnprefixed))) {
     add(state, {
       severity: m[1] === 'WARNING' ? 'warning' : 'error',
       file: m[2],
@@ -127,7 +134,7 @@ export function parseLine(line: string, state: ParseState): void {
     return;
   }
 
-  if ((m = UVM_UNLOCATED.exec(trimmedEnd))) {
+  if ((m = UVM_UNLOCATED.exec(vsimUnprefixed))) {
     add(state, {
       severity: m[1] === 'WARNING' ? 'warning' : 'error',
       message: trimmedEnd,
@@ -137,7 +144,7 @@ export function parseLine(line: string, state: ParseState): void {
     return;
   }
 
-  if ((m = QUESTA.exec(trimmedEnd))) {
+  if ((m = QUESTA.exec(vsimUnprefixed))) {
     const severity: IssueSeverity = m[1] === 'Warning' ? 'warning' : 'error';
     const loc = FILE_LINE_TOKEN.exec(m[2]);
     add(state, {
@@ -191,6 +198,15 @@ export function parseLine(line: string, state: ParseState): void {
       source: 'icarus'
     });
     return;
+  }
+
+  if (state.customErrorPattern && state.customErrorPattern.test(vsimUnprefixed)) {
+    add(state, {
+      severity: 'error',
+      message: trimmedEnd,
+      raw: line,
+      source: 'custom'
+    });
   }
 }
 

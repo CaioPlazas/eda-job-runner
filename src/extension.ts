@@ -49,6 +49,7 @@ export function activate(context: vscode.ExtensionContext): void {
     logManager,
     () => jobStore.getSetup(),
     () => jobStore.getParams(),
+    id => toolStore.getTool(id),
     context.workspaceState,
     logDiagnostics
   );

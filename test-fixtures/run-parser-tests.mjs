@@ -69,5 +69,35 @@ const vWarn = parseFile('./test-fixtures/verilator_warn.log');
 check(vWarn.warningCount === 3, `verilator warningCount=3 (got ${vWarn.warningCount})`);
 check(vWarn.errorCount === 0, `verilator errorCount=0 -- warning-summary row excluded (got ${vWarn.errorCount})`);
 
+// --- Questa vsim # prefix fix: vsim prefixes every transcript line with "# ".
+//     The parser must strip this prefix for UVM/Questa matching. We expect
+//     2 errors (UVM_ERROR + UVM_FATAL), and the "# UVM_ERROR : 1" /
+//     "# UVM_FATAL : 1" summary rows must NOT be double-counted. ---
+const questaUvmFail = parseFile('./test-fixtures/questa_uvm_fail.log');
+check(questaUvmFail.errorCount === 2, `questa_uvm_fail errorCount=2 (got ${questaUvmFail.errorCount})`);
+check(questaUvmFail.issues.some(i => i.source === 'uvm' && i.file === 'tb/uvm_smoke_test.sv' && i.line === 22),
+      'questa_uvm_fail UVM_ERROR located at tb/uvm_smoke_test.sv:22');
+check(questaUvmFail.issues.some(i => i.source === 'uvm' && i.file === 'tb/uvm_smoke_test.sv' && i.line === 30),
+      'questa_uvm_fail UVM_FATAL located at tb/uvm_smoke_test.sv:30');
+
+// --- Custom errorPattern (per-tool, for output that doesn't match any
+//     built-in format): a compiled RegExp passed into newParseState() should
+//     count a matching line as an error, tagged source 'custom'. A line
+//     already recognized by a built-in matcher must NOT also be counted by
+//     the custom pattern (no double-counting). ---
+{
+  const st = newParseState(/FAILED/i);
+  parseLine('Test result: FAILED (mismatch on sig_a)', st);
+  parseLine('Test result: passed', st);
+  check(st.errorCount === 1, `custom errorPattern: errorCount=1 (got ${st.errorCount})`);
+  check(st.issues.some(i => i.source === 'custom' && i.severity === 'error'), 'custom errorPattern: issue tagged source=custom');
+
+  // Same pattern, but the line is also a real UVM_ERROR -- must count once, as 'uvm', not twice.
+  const st2 = newParseState(/mismatch/i);
+  parseLine('UVM_ERROR tb/foo.sv(1) @ 0: uvm_test_top [X] mismatch detected', st2);
+  check(st2.errorCount === 1, `custom errorPattern: no double-count with built-in uvm match (got ${st2.errorCount})`);
+  check(st2.issues.length === 1 && st2.issues[0].source === 'uvm', 'custom errorPattern: built-in match wins, not tagged custom');
+}
+
 console.log(failures === 0 ? '\nALL PARSER ASSERTIONS PASSED' : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);
