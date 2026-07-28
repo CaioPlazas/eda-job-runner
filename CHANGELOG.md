@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0 — Stable release
+
+No functional changes from 0.43.0. This release promotes the extension from
+the pre-release channel to the stable Marketplace channel: the feature set,
+architecture, and test coverage built up over the 0.x series (27 commands, 5
+webview panels, process-group job control, log parsing, value lists,
+parameters, and a rendered-screenshot regression harness) are considered
+stable enough for general use.
+
 ## 0.43.0 — Value-list editing, migration collisions, a browser-free CI gate
 
 **Bug fixes:**
