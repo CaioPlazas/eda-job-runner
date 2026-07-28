@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { JobStore } from './jobStore';
-import { JobRunner, JobRunStatus } from './jobRunner';
+import { JobRunner, JobRunStatus, BatchSummary } from './jobRunner';
 import { LogManager } from './logManager';
 import { LogDiagnostics } from './logDiagnostics';
 import { LogFollowController } from './logFollow';
@@ -27,6 +27,7 @@ import { ToolStore } from './toolStore';
 import { ToolSetupPanel } from './toolSetupPanel';
 import { scanTool, scanAllLists } from './toolIntrospect';
 import { planListMigration } from './listMigration';
+import { createExampleJobs } from './exampleJobs';
 
 export function activate(context: vscode.ExtensionContext): void {
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -67,14 +68,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const logFollow = new LogFollowController(jobRunner);
   context.subscriptions.push(logFollow);
 
+  void migrateMaxConcurrentJobs(folder);
+
   const updateContextKeys = () => {
-    const anyRunning = jobStore.getJobs().some(j => jobRunner.getStatus(j.id).state === 'running');
-    const multiRunsEnabled = vscode.workspace
-      .getConfiguration('eda-job-runner', folder.uri)
-      .get<boolean>('experimentalMultipleRuns', false);
-    // The legacy one-job-at-a-time gate (hides/disables other Run buttons)
-    // only actually applies when multiple runs aren't opted into.
-    void vscode.commands.executeCommand('setContext', 'edaJobRunner.anyJobRunning', anyRunning && !multiRunsEnabled);
     // Gates the F5 keybinding: F5 only runs the default EDA job when this
     // workspace actually has one set, so debugging is unaffected otherwise.
     void vscode.commands.executeCommand('setContext', 'edaJobRunner.hasDefaultJob', !!jobStore.getDefaultJob());
@@ -84,22 +80,17 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     jobStore.onDidChangeJobs(updateContextKeys),
     jobRunner.onDidChangeStatus(jobId => {
-      updateContextKeys();
       if (jobId) {
         notifyOnCompletion(jobStore, jobRunner, jobId);
       }
     }),
-    vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('eda-job-runner.experimentalMultipleRuns', folder.uri)) {
-        updateContextKeys();
-      }
-    })
+    jobRunner.onDidCompleteBatch(summary => notifyOnBatchCompletion(summary))
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('eda-job-runner.addJob', () => addJob(jobStore, toolStore, folder)),
+    vscode.commands.registerCommand('eda-job-runner.addJob', () => addJob(jobStore, toolStore, folder, jobRunner, context)),
     vscode.commands.registerCommand('eda-job-runner.configureJob', (item: EdaTreeElement) =>
-      item ? JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), folder, item.job) : undefined
+      item ? JobConfigPanel.createOrShow(jobStore, toolStore, folder, jobRunner, context, item.job) : undefined
     ),
     vscode.commands.registerCommand('eda-job-runner.deleteJob', (item: EdaTreeElement) => deleteJob(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.saveJobAsTemplate', (item: EdaTreeElement) => saveJobAsTemplate(jobStore, item)),
@@ -107,14 +98,15 @@ export function activate(context: vscode.ExtensionContext): void {
       jobStore.duplicateJob(item.job.id)
     ),
     vscode.commands.registerCommand('eda-job-runner.refresh', () => jobStore.load()),
-    vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, folder, logManager, jobRunner)),
-    vscode.commands.registerCommand('eda-job-runner.configureTools', () => ToolSetupPanel.createOrShow(toolStore, jobStore, folder)),
-    vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore, folder)),
+    vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, toolStore, folder, logManager, jobRunner, context)),
+    vscode.commands.registerCommand('eda-job-runner.configureTools', () => ToolSetupPanel.createOrShow(toolStore, jobStore, folder, jobRunner, context)),
+    vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore, toolStore, folder, jobRunner, context)),
     vscode.commands.registerCommand('eda-job-runner.refreshValueLists', () => refreshValueLists(jobStore, folder)),
+    vscode.commands.registerCommand('eda-job-runner.createExampleJobs', () => createExampleJobs(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.openLogViewer', () => LogViewerPanel.createOrShow(jobStore, logManager, toolStore)),
     vscode.commands.registerCommand('eda-job-runner.addFolder', () => addFolder(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.addJobInFolder', (item: FolderTreeItem) =>
-      item ? JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), folder, undefined, item.folderName) : undefined
+      item ? JobConfigPanel.createOrShow(jobStore, toolStore, folder, jobRunner, context, undefined, item.folderName) : undefined
     ),
     vscode.commands.registerCommand('eda-job-runner.renameFolder', (item: FolderTreeItem) => renameFolder(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.deleteFolder', (item: FolderTreeItem) => deleteFolder(jobStore, item)),
@@ -169,9 +161,12 @@ export function activate(context: vscode.ExtensionContext): void {
       item ? jobRunner.clearLanes(item.job.id) : undefined
     ),
     // Opens this specific row's own log — the primary's latest run, or one
-    // exact lane's log when invoked on a run inside a job group.
-    vscode.commands.registerCommand('eda-job-runner.openLog', (item: JobTreeItem) =>
-      item ? openLogForJob(item.job, item.status.logPath) : undefined
+    // exact lane's log when invoked on a run inside a job group. `quiet`
+    // (D1) is set by a plain click on a never-run row's default command --
+    // it just selects the row instead of popping a "run it first" toast;
+    // an explicit context-menu invocation always keeps the toast.
+    vscode.commands.registerCommand('eda-job-runner.openLog', (item: JobTreeItem, options?: { quiet?: boolean }) =>
+      item ? openLogForJob(item.job, item.status.logPath, options?.quiet ?? false) : undefined
     ),
     vscode.commands.registerCommand('eda-job-runner.openLogHistory', (item: EdaTreeElement) =>
       openLogHistory(logManager, item)
@@ -286,8 +281,46 @@ async function deleteJob(jobStore: JobStore, item: EdaTreeElement): Promise<void
 // from a dropdown inside the panel itself instead of a QuickPick shown
 // before it existed, so they're visible/reachable without having to
 // remember to pick one before the form was even on screen.
-function addJob(jobStore: JobStore, toolStore: ToolStore, folder: vscode.WorkspaceFolder): void {
-  JobConfigPanel.createOrShow(jobStore, toolStore.getTools(), folder);
+/**
+ * One-time migration (T3.1): `experimentalMultipleRuns` is deprecated in
+ * favor of `maxConcurrentJobs`, but only derives a value when the user
+ * actually set the old boolean *and* hasn't touched the new setting --
+ * nobody's current behavior changes silently just because they upgraded.
+ * `false` (the old one-job-at-a-time default) -> `1`; `true` -> `0`
+ * (unlimited), matching what each used to mean.
+ */
+async function migrateMaxConcurrentJobs(folder: vscode.WorkspaceFolder): Promise<void> {
+  const config = vscode.workspace.getConfiguration('eda-job-runner', folder.uri);
+  const maxConcurrentInspect = config.inspect<number>('maxConcurrentJobs');
+  const maxConcurrentUntouched =
+    maxConcurrentInspect?.workspaceValue === undefined &&
+    maxConcurrentInspect?.globalValue === undefined &&
+    maxConcurrentInspect?.workspaceFolderValue === undefined;
+  if (!maxConcurrentUntouched) {
+    return;
+  }
+  const legacyInspect = config.inspect<boolean>('experimentalMultipleRuns');
+  const legacyValue = legacyInspect?.workspaceFolderValue ?? legacyInspect?.workspaceValue ?? legacyInspect?.globalValue;
+  if (legacyValue === undefined) {
+    return;
+  }
+  const target =
+    legacyInspect?.workspaceFolderValue !== undefined
+      ? vscode.ConfigurationTarget.WorkspaceFolder
+      : legacyInspect?.workspaceValue !== undefined
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+  await config.update('maxConcurrentJobs', legacyValue ? 0 : 1, target);
+}
+
+function addJob(
+  jobStore: JobStore,
+  toolStore: ToolStore,
+  folder: vscode.WorkspaceFolder,
+  jobRunner: JobRunner,
+  context: vscode.ExtensionContext
+): void {
+  JobConfigPanel.createOrShow(jobStore, toolStore, folder, jobRunner, context);
 }
 
 async function saveJobAsTemplate(jobStore: JobStore, item: EdaTreeElement): Promise<void> {
@@ -342,8 +375,12 @@ async function saveJobAsTemplate(jobStore: JobStore, item: EdaTreeElement): Prom
  * per-list ↻, are the only two refresh paths.
  */
 async function refreshValueLists(jobStore: JobStore, folder: vscode.WorkspaceFolder): Promise<void> {
+  // T4.3: housekeeping shouldn't outrank the main event -- a 40-minute job
+  // run gets no progress notification at all, so refreshing a few value
+  // lists doesn't deserve a modal-adjacent popup either. Window-location
+  // progress renders as a quiet status-bar message instead.
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'EDA Job Runner: refreshing value lists…' },
+    { location: vscode.ProgressLocation.Window, title: 'EDA Job Runner: refreshing value lists…' },
     async () => {
       const refreshed = await scanAllLists(jobStore.getLists(), jobStore, folder);
       await jobStore.setLists(refreshed);
@@ -460,9 +497,11 @@ function openLiveLog(jobRunner: JobRunner, folder: vscode.WorkspaceFolder, job: 
   LogLiveView.show(job.name, filePath);
 }
 
-async function openLogForJob(job: JobDefinition, logPath: string | undefined): Promise<void> {
+async function openLogForJob(job: JobDefinition, logPath: string | undefined, quiet = false): Promise<void> {
   if (!logPath) {
-    void vscode.window.showInformationMessage(`No logs yet for "${job.name}" — run it first.`);
+    if (!quiet) {
+      void vscode.window.showInformationMessage(`No logs yet for "${job.name}" — run it first.`);
+    }
     return;
   }
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(logPath));
@@ -502,11 +541,14 @@ function notifyOnCompletion(jobStore: JobStore, jobRunner: JobRunner, jobId: str
   if (!job) {
     return;
   }
+  // T3.3: a repeat-count batch gets one summary toast (onDidCompleteBatch)
+  // instead of one per lane -- 10 back-to-back toasts was never the fix for
+  // 10 back-to-back toasts, however distinguishable each one reads.
+  if (status.laneLabel) {
+    return;
+  }
 
-  // Include the batch/lane label ("3/10") when this completion is one run
-  // within a sequential repeat-count batch, so 10 back-to-back toasts read
-  // as distinguishable results instead of 10 identical-looking messages.
-  const name = status.laneLabel ? `${job.name} — ${status.laneLabel}` : job.name;
+  const name = job.name;
   const warns = status.warningCount ?? 0;
   const errs = status.errorCount ?? 0;
 
@@ -529,6 +571,16 @@ function notifyOnCompletion(jobStore: JobStore, jobRunner: JobRunner, jobId: str
       });
   }
   // 'killed' is always user-initiated (they just clicked Stop) — no toast needed.
+}
+
+function notifyOnBatchCompletion(summary: BatchSummary): void {
+  const message = `"${summary.jobName}" finished — ${summary.passed} passed, ${summary.failed} failed.`;
+  const notify = summary.failed > 0 ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
+  void notify(message, 'Open Log Viewer').then(choice => {
+    if (choice === 'Open Log Viewer') {
+      void vscode.commands.executeCommand('eda-job-runner.openLogViewer');
+    }
+  });
 }
 
 function describeElapsed(status: JobRunStatus): string {

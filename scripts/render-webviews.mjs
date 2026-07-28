@@ -166,10 +166,24 @@ const folders = ['Regression', 'Compile'];
     postSetupCwd: '',
     logsDirectory: '',
     logRetentionCount: 20,
-    logRetentionMaxSizeMB: 0
+    logRetentionMaxSizeMB: 0,
+    maxConcurrentJobs: 0,
+    setupChecks: '',
+    registeredTools: [{ name: 'xrun', command: 'xrun' }],
+    detectedShellMatches: true,
+    detectedShellPath: 'bash',
+    detectedShellSource: 'vscode.env.shell',
+    status: { env: 'todo', tool: 'ok', job: 'ok', params: 'todo' },
+    doneLine: undefined
   };
   const html = renderHtml(fakeWebview, state);
   fs.writeFileSync(path.join(outDir, 'shellEnv.html'), html);
+  const testedHtml = renderHtml(fakeWebview, {
+    ...state,
+    status: { env: 'ok', tool: 'ok', job: 'ok', params: 'ok' },
+    doneLine: '✓ Shell setup tested.'
+  });
+  fs.writeFileSync(path.join(outDir, 'shellEnv-tested.html'), testedHtml);
 }
 
 {

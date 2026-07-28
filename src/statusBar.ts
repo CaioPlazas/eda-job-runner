@@ -37,7 +37,31 @@ export class StatusBarController implements vscode.Disposable {
     }
 
     if (running.length === 0) {
-      this.item.hide();
+      // T4.3: the bar is now a persistent anchor, not just a running
+      // indicator -- it hides only when the workspace truly has no jobs
+      // at all, and otherwise always shows something (the last result, or
+      // a neutral placeholder before anything has ever run).
+      const jobs = this.jobStore.getJobs();
+      if (jobs.length === 0) {
+        this.item.hide();
+        return;
+      }
+      let last: { job: JobDefinition; status: JobRunStatus } | undefined;
+      for (const job of jobs) {
+        const status = this.jobRunner.getStatus(job.id);
+        if ((status.state === 'passed' || status.state === 'failed') && (last === undefined || (status.endTime ?? 0) > (last.status.endTime ?? 0))) {
+          last = { job, status };
+        }
+      }
+      if (!last) {
+        this.item.text = '$(circle-outline) EDA Jobs';
+        this.item.tooltip = 'EDA Job Runner — click to open the sidebar';
+      } else {
+        const icon = last.status.state === 'passed' ? '$(pass)' : '$(error)';
+        this.item.text = `${icon} EDA: ${last.job.name} ${last.status.state}`;
+        this.item.tooltip = `EDA Job Runner: "${last.job.name}" last ${last.status.state} — click to open the sidebar`;
+      }
+      this.item.show();
       return;
     }
     if (running.length > 1) {
