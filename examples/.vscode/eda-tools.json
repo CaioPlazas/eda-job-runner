@@ -781,7 +781,8 @@
                 "-run-top"
               ],
               "metavar": "name",
-              "description": "Enable top-level module(s) at run time"
+              "description": "Enable top-level module(s) at run time",
+              "favorite": true
             },
             {
               "flags": [
@@ -918,7 +919,612 @@
           "rawHelp": "[env_setup] example environment loaded\nActivating DSim version: 2026\n\nAltair tool usage: dsim [option(s)] [file(s)]\n\nvalid options:\n\n=============================== General options ===============================\n\n  -error MsgName                 Promote severity of MsgName (or \"info\" / \"warning\") to the \"error\" level\n  -help                          Print summary of generally available command line options\n  -info MsgName                  Demote severity of MsgName (or \"warning\" / \"error\") to the \"info\" level\n  -io_dir ...                    Record read/written files and put reports in given directory.\n  -l dsim.log                    Specify log file (compile/run)\n  -meter-env-vars ...            Specify environment variables, an optional values, to pass to licensing system\n  -repro dsim.env                Reproduce compile/run from file\n  -suppress MsgName              Suppress emission of MsgName (or \"info\" / \"warning\" / \"error\")\n  -warn MsgName                  Change severity of MsgName (or \"info\" / \"error\") to the \"warning\" level\n\n=================== Classic Verilog compile-time arguments ====================\n\n  +define+name[=value]...        Define macros\n  -gen-proto                     Generate prototypes for VHDL direct instantiation\n  +ignore+item[+...]             Set 'item as ignored if it is not defined or a supported directive\n  +incdir+dir[+...]              Set search path for include files\n  +libext+.v[+...]               Set extension(s) for library files\n  -v lib.v                       Set library file to search for modules\n  -y dir                         Set directory to search for modules\n\n============================= Manifest arguments ==============================\n\n  -f manifest.f                  Read options relative to invocation directory\n  -F manifest.f                  Read options relative to manifest file\n\n==================== DSim-specific compile-time arguments =====================\n\n  +acc[+rwcbfsWF]                Generate support for waveform dump, VPI, and toggle coverage\n  -acc-specs file                Specify file from which detailed +acc specs are read\n  -all-class-spec                Create default class specializations\n  -all-pkgs                      Compile all packages, even if unreferenced\n  -allow-ext-vif                 Allow use of implicitly-specialized interfaces as virtual interfaces\n  -allow-fwd-pkg                 Allow references to items in packages declared later in the code\n  -allow-int-enum-assign         Allow assignment from integers to enums without explicit cast\n  -allow-self-vif                Allow use of bare interface identifier as self virtual interface reference\n  -allow-string-int-assign       Allow assignment between strings and integers without explicit cast\n  -build-all                     Build all modules (not incremental)\n  -c-opts options                Additional options to pass to the C compiler.\n  -cc cmd                        The C/C++ compiler (default: gcc)\n  -cc-verbose                    Elevate verbosity when compiling C/C++ files\n  -comp-maxdelays                Compile maximum delays\n  -comp-mindelays                Compile minimum delays\n  -comp-typdelays                Compile typical delays\n  -compile-top name              Specify top-level module(s) to compile and optionally enable at run time\n  -debug-verbose ...             Verbose debugging information for pp=pre-processing lib=libmap, hier=module, config and instance hierarchy\n  -dedupe-all                    Force deduplication flow for all non-library cells\n  -define name[=value]           name...:Define macros\n  -defparam name=value           Override parameters for top-level modules or paths\n  +delay_mode_distributed        Remove path delays simulate with distributed delays\n  +delay_mode_path               For modules with path delays, remove distributed delays simulate with path delays\n  +delay_mode_unit               Use 1 time unit for distributed delays & remove path delays and timing checks\n  +delay_mode_zero               Remove distributed delays, path delays and timing checks\n  -dpiheader ...                 Generate C header for DPI export\n  -expr-cov-row-limit n           Set row limit for focused expression coverage (default: 256)\n  -g                             Generate info for GDB debugging\n  -gen-profile                   Instrument code to track call counts when profiling\n  -genimage image                Generate compiled code; do not run\n  -heed-synth-on-off             respect synthesis translate_off/on in comments\n  -implicit-bitstream-assign     Allow assignment between bitstream types without explicit cast\n  -incdir dir[...]               Set search path for include files\n  -initial-var-assign            Force Verilog-2005 semantics for variable initialization in SystemVerilog\n  -int-time-literal              Treat time literals as integers where possible\n  -j N                           Specify number of parallel compile jobs (default: 1)\n  -L ...                         Compiled library search order\n  -ld-opts options               Additional options to pass to the linker.\n  -lib name                      Sets default design library name (default: work)\n  -libmap name                   Specify name of lib.map file\n  -max-inst-depth n               Specify maximum depth of instance tree (default: DEFAULT_INST_DEPTH)\n  -no-incr-compile               Do not perform overhead tasks required for incremental compile\n  -no-sva                        Disables concurrent assertions\n  -nonegtchk                     Turn off negative timing check limits by setting negatives to 0\n  +nonegtchk                     Turn off negative timing check limits by setting negatives to 0\n  -noopt                         Disable high-level optimizations\n  -noopt-comb-shadow             Disable combinational shadowing\n  -nospecify                     Turn off specify blocks, including timing checks, excluding specparams\n  +nospecify                     Turn off specify blocks, including timing checks, excluding specparams\n  -notimingchecks                Turn off timing checks\n  +notimingchecks                Turn off timing checks\n  -opt-comb-glitch               Enable combinational glitch mitigation\n  -opt-switch-allow-delay        Allow delays on switch-optimized devices\n  -separate-unit-scopes          Use a compilation-unit scope per file\n  -seq-udp-nba-region            Schedule an update of a sequential UDP output into the NBA region (default Active)\n  -shared-unit-scope             Use a shared compilation-unit scope\n  -show-ld                       Show linker command\n  -sv                            Make -sv20XX options apply to all files regardless of suffix\n  -sv2005                        Treat SystemVerilog-2005 keywords as reserved in .sv files\n  -sv2009                        Treat SystemVerilog-2009 keywords as reserved in .sv files\n  -sv2012                        Treat SystemVerilog-2012 keywords as reserved in .sv files (default)\n  -sv2017                        Treat SystemVerilog-2017 keywords as reserved in .sv files\n  -sysvlog-ext .ext[,...]        Specify extensions for SystemVerilog files (default:.sv)\n  -timescale 1ns/1ps             Set default timescale (default: 1ns/1ns)\n  -top name                      Specify top-level module(s); default is to use LRM procedure\n  -vhdl-no-ov-chk                Disable VHDL arithmetic overflow checking (analysis and code generation)\n  -vlog-ext .ext[,...]           Specify extensions for Verilog files (default:)\n  -vlog1995                      Treat only Verilog-1995 keywords as reserved in non-.sv files\n  -vlog2001                      Treat Verilog-2001 keywords as reserved in non-.sv files\n  -vlog2005                      Treat Verilog-2005 keywords as reserved in non-.sv files (default)\n  -vlog_sv2005                   Treat SystemVerilog-2005 keywords as reserved in non-.sv files\n  -vlog_sv2009                   Treat SystemVerilog-2009 keywords as reserved in non-.sv files\n  -vlog_sv2012                   Treat SystemVerilog-2012 keywords as reserved in non-.sv files\n\n====================== Options for both compile and run =======================\n\n  -code-cov ...                  Enables coverage for b[lock], e[xpression], t[oggle] or a[ll] code coverage features\n  -code-cov-scope-specs file     Specifies a file which indicates the detailed scopes for code coverage\n  -exit-on-error n               Terminate the execution after n errors (default: no limit)\n  +nosdf                         Turn off sdf annotation\n  -nosdf                         Turn off sdf annotation\n  -pli_lib libpli.so             Load PLI shared library\n  -sdf-fa-keywords               Treat SDF forward annotation keywords as reserved in files read with $sdf_annotate\n  -uvm indicator                 Incorporate the indicated UVM package. Provide a version, a custom path, or 'default' . Explicit version or path are recommended\n  -version                       Print version string\n  -version-verbose               Print verbose version string\n  -work dsim_work                Specify directory to create to hold intermediate build files\n\n============================= Run-time arguments ==============================\n\n  -cov-db metrics.db             Specify coverage database file\n  -cs-array-max n                Set max value for randomized array.size (default: 1000000)\n  -cs-randc-max n                Set max number of bits in randc variables (default: 16)\n  -cs-use-bdd                    Use BDD constraint solver\n  -cs-use-sat                    Use SAT constraint solver (default)\n  -debug-resolve-end time        End net resolver debug at given time (default: end of simulation)\n  -debug-resolve-start time      Start net resolver debug at given time (default: 0)\n  -debug-sched-end time          End scheduler debug at given time (default: end of simulation)\n  -debug-sched-start time        Start scheduler debug at given time (default: 0)\n  -debug-toggle-cov              Debug toggle coverage\n  -debug-vpi                     Log illegal/unsupported VPI calls\n  -dump-agg                      Dump aggregates (arrays/structs)\n  -dump-end time                 End wave dump at given time (default: end of simulation)\n  -dump-start time               Start wave dump at given time (default: 0)\n  -dump-vcd-9s                   Do not coerce VHDL std_logic items to 4-state in VCD\n  -fcov-save-empty-bins          Record the existance of empty bins (often artifacts of an ignore directive) in the coverage database\n  -fcov-tuple-str-limit n        truncates string description of a cross range. Has no effect on bins or bin counts. Zero means no limit  (default: 100)\n  -heartbeat time                Enable heartbeat messages (default: none)\n  -image name                    Run previously compiled image\n  -iter-limit n                  Set scheduler iteration limit to detect infinite zero-delay loops (default: 1000000)\n  -limit-enum-bins               Subject enum coverage bins to auto_bin_max\n  -linebuf                       Force line-buffered stdout\n  -maxdelays                     Use maximum delays\n  -mindelays                     Use minimum delays\n  +multisource_int_delays        Turns on interconnect multisource and pulse handling with SDF annotation\n  -no-cs-range                   Disable range analysis recoding\n  -no-demangle                   Do not demangle SV function names in runtime logs\n  -no-fcov                       Disable functional coverage collection\n  -no-linebuf                    Do not force line-buffered stdout\n  +no_tchk_msg                   Turn off timing check violation messages, notifier still toggles\n  -no_tchk_msg                   Turn off timing check violation messages, notifier still toggles\n  -nonotifier                    Turn off timing check notifier toggling\n  +nonotifier                    Turn off timing check notifier toggling\n  -noshowcancelled               Do not show negative pulses\n  +ntcnotchk                     Turn off timing checks, however delayed signals wrt negative timing checks\n  -ntcnotchk                     Turn off timing checks, however delayed signals wrt negative timing checks\n  -override-finish-completion n  Override the diagnostics type for $finish by 0, 1 or 2\n  -pathpulse                     Filters pulses using $PATHPULSE specparams\n  -profile ...                   Enable time profiling\n  -profile-end time              End profiling at given time (default: end of simulation)\n  -profile-start time            Start profiling at given time (default: 0)\n  -pulse_e n                     Set percent of module path delay for error limit (default: 100)\n  -pulse_e-no-cancelled-msg      Turn off warnings when negative pulses are cancelled\n  -pulse_e-no-warn-msg           Turn off warnings when pulses cause error state\n  -pulse_e-ondetect              Indicate pulse errors on detection\n  -pulse_e-onevent               Indicate pulse errors on event\n  -pulse_r n                     Set percent of module path delay for reject limit (default: 100)\n  -reseed time=seed              Reset RNGs with a new seed at start of given time\n  -run-top name                  Enable top-level module(s) at run time\n  -run-until time                Run until given time (default: no limit)\n  -sdf-verbose                   Log SDF annotation information about all errors\n  -showcancelled                 Show negative pulses as X\n  -sig-xpose                     Enable X detection\n  -sig-xpose-start time          Enable X detection at given time\n  -specify-unit unit              Override module path delays with a unit (if no unit given the option is ignored)\n  -specify-zero                  Overrides specify path delays with zero unless annotated by SDF\n  -sv_lib libdpi.so              Load DPI shared library\n  -sv_seed n                     SystemVerilog random seed. Specify n as a hex number or 'random'. (default: 1)\n  -tchk_msg_start time           Start timing check violation messages at time (default: 1)\n  -timingcheck-specs file        Specifies a file from which detailed timing check specs are read\n  -trace-dpi                     Trace DPI library loading\n  -trace-vpi                     Log all VPI calls\n  +transport_path_delays         Transmit pulses using pulse limits = 0, unless otherwise filtered\n  -try-all-soft-first            Try all soft constraints prior to binary search\n  -typdelays                     Use typical delays (default)\n  -vacuous                       Execute action blocks for assertions on vacuous success\n  -wave-scope-specs file         Specifies a file which indicates the detailed scopes to dump\n  -waves file.vcd                Enable wave dump to file.vcd; +acc is required at compile time\n  -wildcard-limit n              Set limit on number of ranges created when expanding wildcard coverage bins (default: 1000)\n  -write-sql                     Write coverage as SQLite database\n\n"
         }
       ],
-      "lastScanned": 1784973262633
+      "lastScanned": 1785259476124
+    },
+    {
+      "id": "bdf8c9d2-d882-45ae-8abd-40dc560cb4e3",
+      "command": "verilator",
+      "helpArg": "--help",
+      "variants": [
+        {
+          "label": "",
+          "selectArgs": [],
+          "options": [
+            {
+              "flags": [
+                "--assert"
+              ],
+              "description": "Enable all assertions"
+            },
+            {
+              "flags": [
+                "--autoflush"
+              ],
+              "description": "Flush streams after all $displays"
+            },
+            {
+              "flags": [
+                "--bbox-sys"
+              ],
+              "description": "Blackbox unknown $system calls"
+            },
+            {
+              "flags": [
+                "--bbox-unsup"
+              ],
+              "description": "Blackbox unsupported language features"
+            },
+            {
+              "flags": [
+                "--binary"
+              ],
+              "description": "Build model binary",
+              "favorite": true
+            },
+            {
+              "flags": [
+                "--build"
+              ],
+              "description": "Build model executable/library after Verilation"
+            },
+            {
+              "flags": [
+                "--cc"
+              ],
+              "description": "Create C++ output"
+            },
+            {
+              "flags": [
+                "--cdc"
+              ],
+              "description": "Clock domain crossing analysis"
+            },
+            {
+              "flags": [
+                "--coverage"
+              ],
+              "description": "Enable all coverage"
+            },
+            {
+              "flags": [
+                "--coverage-line"
+              ],
+              "description": "Enable line coverage"
+            },
+            {
+              "flags": [
+                "--coverage-toggle"
+              ],
+              "description": "Enable toggle coverage"
+            },
+            {
+              "flags": [
+                "--coverage-underscore"
+              ],
+              "description": "Enable coverage of _signals"
+            },
+            {
+              "flags": [
+                "--coverage-user"
+              ],
+              "description": "Enable SVL user coverage"
+            },
+            {
+              "flags": [
+                "--debug"
+              ],
+              "description": "Enable debugging"
+            },
+            {
+              "flags": [
+                "--debug-check"
+              ],
+              "description": "Enable debugging assertions"
+            },
+            {
+              "flags": [
+                "--no-debug-leak"
+              ],
+              "description": "Disable leaking memory in --debug mode"
+            },
+            {
+              "flags": [
+                "--no-decoration"
+              ],
+              "description": "Disable comments and symbol decorations"
+            },
+            {
+              "flags": [
+                "--dpi-hdr-only"
+              ],
+              "description": "Only produce the DPI header file"
+            },
+            {
+              "flags": [
+                "--dump-defines"
+              ],
+              "description": "Show preprocessor defines with -E"
+            },
+            {
+              "flags": [
+                "--dump-dfg"
+              ],
+              "description": "Enable dumping DfgGraphs to .dot files"
+            },
+            {
+              "flags": [
+                "--dump-graph"
+              ],
+              "description": "Enable dumping V3Graphs to .dot files"
+            },
+            {
+              "flags": [
+                "--dump-tree"
+              ],
+              "description": "Enable dumping Ast .tree files"
+            },
+            {
+              "flags": [
+                "--dump-tree-addrids"
+              ],
+              "description": "Use short identifiers instead of addresses"
+            },
+            {
+              "flags": [
+                "--exe"
+              ],
+              "description": "Link to create executable"
+            },
+            {
+              "flags": [
+                "--flatten"
+              ],
+              "description": "Force inlining of all modules, tasks and functions"
+            },
+            {
+              "flags": [
+                "--gdb"
+              ],
+              "description": "Run Verilator under GDB interactively"
+            },
+            {
+              "flags": [
+                "--gdbbt"
+              ],
+              "description": "Run Verilator under GDB for backtrace"
+            },
+            {
+              "flags": [
+                "--generate-key"
+              ],
+              "description": "Create random key for --protect-key"
+            },
+            {
+              "flags": [
+                "--hierarchical"
+              ],
+              "description": "Enable hierarchical Verilation"
+            },
+            {
+              "flags": [
+                "--lint-only"
+              ],
+              "description": "Lint, but do not make output",
+              "favorite": true
+            },
+            {
+              "flags": [
+                "--main"
+              ],
+              "description": "Generate C++ main() file"
+            },
+            {
+              "flags": [
+                "--main-top-name"
+              ],
+              "description": "Specify top name passed to Verilated model in generated C++ main"
+            },
+            {
+              "flags": [
+                "--MMD"
+              ],
+              "description": "Create .d dependency files"
+            },
+            {
+              "flags": [
+                "--MP"
+              ],
+              "description": "Create phony dependency targets"
+            },
+            {
+              "flags": [
+                "--no-order-clock-delay"
+              ],
+              "description": "Disable ordering clock enable assignments"
+            },
+            {
+              "flags": [
+                "--pins-sc-biguint"
+              ],
+              "description": "Specify types for top-level ports"
+            },
+            {
+              "flags": [
+                "--pins-sc-uint"
+              ],
+              "description": "Specify types for top-level ports"
+            },
+            {
+              "flags": [
+                "--pins-uint8"
+              ],
+              "description": "Specify types for top-level ports"
+            },
+            {
+              "flags": [
+                "--no-pins64"
+              ],
+              "description": "Don't use uint64_t's for 33-64 bit sigs"
+            },
+            {
+              "flags": [
+                "--pp-comments"
+              ],
+              "description": "Show preprocessor comments with -E"
+            },
+            {
+              "flags": [
+                "--private"
+              ],
+              "description": "Debugging; see docs"
+            },
+            {
+              "flags": [
+                "--prof-c"
+              ],
+              "description": "Compile C++ code with profiling"
+            },
+            {
+              "flags": [
+                "--prof-cfuncs"
+              ],
+              "description": "Name functions for profiling"
+            },
+            {
+              "flags": [
+                "--prof-exec"
+              ],
+              "description": "Enable generating execution profile for gantt chart"
+            },
+            {
+              "flags": [
+                "--prof-pgo"
+              ],
+              "description": "Enable generating profiling data for PGO"
+            },
+            {
+              "flags": [
+                "--protect-ids"
+              ],
+              "description": "Hash identifier names for obscurity"
+            },
+            {
+              "flags": [
+                "--public"
+              ],
+              "description": "Debugging; see docs"
+            },
+            {
+              "flags": [
+                "--public-params"
+              ],
+              "description": "Mark all parameters as public_flat"
+            },
+            {
+              "flags": [
+                "--public-flat-rw"
+              ],
+              "description": "Mark all variables, etc as public_flat_rw"
+            },
+            {
+              "flags": [
+                "--quiet-exit"
+              ],
+              "description": "Don't print the command on failure"
+            },
+            {
+              "flags": [
+                "--relative-includes"
+              ],
+              "description": "Resolve includes relative to current file"
+            },
+            {
+              "flags": [
+                "--reloop-limit"
+              ],
+              "description": "Minimum iterations for forming loops"
+            },
+            {
+              "flags": [
+                "--report-unoptflat"
+              ],
+              "description": "Extra diagnostics for UNOPTFLAT"
+            },
+            {
+              "flags": [
+                "--rr"
+              ],
+              "description": "Run Verilator and record with rr"
+            },
+            {
+              "flags": [
+                "--savable"
+              ],
+              "description": "Enable model save-restore"
+            },
+            {
+              "flags": [
+                "--sc"
+              ],
+              "description": "Create SystemC output"
+            },
+            {
+              "flags": [
+                "--no-skip-identical"
+              ],
+              "description": "Disable skipping identical output"
+            },
+            {
+              "flags": [
+                "--stats"
+              ],
+              "description": "Create statistics file"
+            },
+            {
+              "flags": [
+                "--stats-vars"
+              ],
+              "description": "Provide statistics on variables"
+            },
+            {
+              "flags": [
+                "--no-std"
+              ],
+              "description": "Prevent parsing standard library"
+            },
+            {
+              "flags": [
+                "--structs-packed"
+              ],
+              "description": "Convert all unpacked structures to packed structures"
+            },
+            {
+              "flags": [
+                "--timing"
+              ],
+              "description": "Enable timing support"
+            },
+            {
+              "flags": [
+                "--no-timing"
+              ],
+              "description": "Disable timing support"
+            },
+            {
+              "flags": [
+                "--trace"
+              ],
+              "description": "Enable waveform creation"
+            },
+            {
+              "flags": [
+                "--trace-coverage"
+              ],
+              "description": "Enable tracing of coverage"
+            },
+            {
+              "flags": [
+                "--trace-fst"
+              ],
+              "description": "Enable FST waveform creation"
+            },
+            {
+              "flags": [
+                "--trace-params"
+              ],
+              "description": "Enable tracing of parameters"
+            },
+            {
+              "flags": [
+                "--trace-structs"
+              ],
+              "description": "Enable tracing structure names"
+            },
+            {
+              "flags": [
+                "--no-trace-top"
+              ],
+              "description": "Do not emit traces for signals in the top module generated by verilator"
+            },
+            {
+              "flags": [
+                "--trace-underscore"
+              ],
+              "description": "Enable tracing of _signals"
+            },
+            {
+              "flags": [
+                "--no-unlimited-stack"
+              ],
+              "description": "Don't disable stack size limit"
+            },
+            {
+              "flags": [
+                "--verilate-jobs"
+              ],
+              "description": "Job threads for Verilation stage"
+            },
+            {
+              "flags": [
+                "--no-verilate"
+              ],
+              "description": "Skip Verilation and just compile previously Verilated code"
+            },
+            {
+              "flags": [
+                "--version"
+              ],
+              "description": "Displays program version and exits"
+            },
+            {
+              "flags": [
+                "--vpi"
+              ],
+              "description": "Enable VPI compiles"
+            },
+            {
+              "flags": [
+                "--x-initial-edge"
+              ],
+              "description": "Enable initial X->0 and X->1 edge triggers"
+            },
+            {
+              "flags": [
+                "--xml-only"
+              ],
+              "description": "Create XML parser output"
+            },
+            {
+              "flags": [
+                "--xml-output"
+              ],
+              "description": "XML output filename"
+            }
+          ],
+          "rawHelp": "[env_setup] example environment loaded\nActivating DSim version: 2026\n#! /usr/bin/perl\n######################################################################\n#\n# Copyright 2003-2024 by Wilson Snyder. This program is free software; you\n# can redistribute it and/or modify it under the terms of either the GNU\n# Lesser General Public License Version 3 or the Perl Artistic License\n# Version 2.0.\n# SPDX-License-Identifier: LGPL-3.0-only OR Artistic-2.0\n#\n######################################################################\n\nrequire 5.006_001;\nuse warnings;\nuse Getopt::Long;\nuse FindBin qw($RealBin $RealScript);\nuse IO::File;\nuse Pod::Usage;\n\nuse strict;\nuse vars qw($Debug @Opt_Verilator_Sw);\n\n#######################################################################\n#######################################################################\n# main\n\nautoflush STDOUT 1;\nautoflush STDERR 1;\n\n$Debug = 0;\nmy $opt_gdb;\nmy $opt_rr;\nmy $opt_gdbbt;\nmy $opt_quiet_exit;\nmy $opt_unlimited_stack = 1;\n\n# No arguments can't do anything useful.  Give help\nif ($#ARGV < 0) {\n    pod2usage(-exitstatus => 2, -verbose => 0);\n}\n\n# Insert debugging options up front\npush @ARGV, (split ' ', $ENV{VERILATOR_TEST_FLAGS} || \"\");\n\n# We sneak a look at the flags so we can do some pre-environment checks\n# All flags will hit verilator...\nforeach my $sw (@ARGV) {\n    push @Opt_Verilator_Sw, $sw;\n}\n\nGetopt::Long::config(\"no_auto_abbrev\", \"pass_through\");\nif (! GetOptions(\n          # Major operating modes\n          \"help\"             => \\&usage,\n          \"debug\"            => \\&debug,\n          # \"version!\"       => \\&version,   # Also passthru'ed\n          # Switches\n          \"gdb!\"             => \\$opt_gdb,\n          \"gdbbt!\"           => \\$opt_gdbbt,\n          \"quiet-exit!\"      => \\$opt_quiet_exit,\n          \"rr!\"              => \\$opt_rr,\n          \"unlimited-stack!\" => \\$opt_unlimited_stack,\n          # Additional parameters\n          \"<>\"               => sub {},      # Ignored\n    )) {\n    pod2usage(-exitstatus => 2, -verbose => 0);\n}\n\nif ($opt_gdbbt && !gdb_works()) {\n    warn \"-Info: --gdbbt ignored: gdb doesn't seem to be working\\n\" if $Debug;\n    $opt_gdbbt = 0;\n}\n\n# Determine runtime flags and run\n# Opt_Verilator_Sw is what we want verilator to see on its argc/argv.\n# Starting with that, escape all special chars for the shell;\n# The shell will undo the escapes and the verilator binary should\n# then see exactly the contents of @Opt_Verilator_Sw.\nmy @quoted_sw = map { sh_escape($_) } @Opt_Verilator_Sw;\nif ($opt_gdb) {\n    # Generic GDB interactive\n    run (ulimit_stack_unlimited()\n         . aslr_off()\n         . ($ENV{VERILATOR_GDB} || \"gdb\")\n         . \" \" . verilator_bin()\n         # Note, uncomment to set breakpoints before running:\n         #  .\" -ex 'break main'\"\n\n         # Note, we must use double-quotes (\"run <switches>\")\n         # and not single ('run <switches>') below. Bash swallows\n         # escapes as you would expect in a double-quoted string.\n         # That's not true for a single-quoted string, where \\'\n         # actually terminates the string -- not what we want!\n         . \" -ex \\\"run \" . join(' ', @quoted_sw) . \"\\\"\"\n         . \" -ex 'set width 0'\"\n         . \" -ex 'bt'\");\n} elsif ($opt_rr) {\n    # Record with rr\n    run (ulimit_stack_unlimited()\n         . aslr_off()\n         . \"rr record \" . verilator_bin()\n         . \" \" . join(' ', @quoted_sw));\n} elsif ($opt_gdbbt && $Debug) {\n    # Run under GDB to get gdbbt\n    run (ulimit_stack_unlimited()\n         . aslr_off()\n         . \"gdb\"\n         . \" \" . verilator_bin()\n         . \" --batch --quiet --return-child-result\"\n         . \" -ex \\\"run \" . join(' ', @quoted_sw).\"\\\"\"\n         . \" -ex 'set width 0'\"\n         . \" -ex 'bt' -ex 'quit'\");\n} elsif ($Debug) {\n    # Debug\n    run(ulimit_stack_unlimited()\n        . aslr_off()\n        . verilator_bin()\n        . \" \" . join(' ', @quoted_sw));\n} else {\n    # Normal, non gdb\n    run(ulimit_stack_unlimited() . verilator_bin() . \" \" . join(' ', @quoted_sw));\n}\n\n#----------------------------------------------------------------------\n\nsub usage {\n    pod2usage(-verbose => 2, -exitval => 0, -output => \\*STDOUT);\n}\n\nsub debug {\n    shift;\n    my $level = shift;\n    $Debug = $level || 3;\n}\n\n#######################################################################\n#######################################################################\n# Builds\n\nsub verilator_bin {\n    my $bin = \"\";\n    # Use VERILATOR_ROOT if defined, else assume verilator_bin is in the search path\n    my $basename = ($ENV{VERILATOR_BIN}\n                    || ($Debug ? \"verilator_bin_dbg\" : \"verilator_bin\"));\n    if (defined($ENV{VERILATOR_ROOT})) {\n        my $dir = $ENV{VERILATOR_ROOT};\n        if (-x \"$dir/bin/$basename\"\n            || -x \"$dir/bin/$basename.exe\") {  # From a \"make install\" into VERILATOR_ROOT\n            $bin = \"$dir/bin/$basename\";\n        } else {\n            $bin = \"$dir/$basename\";  # From pointing to kit directory\n        }\n    } else {\n        if (-x \"$RealBin/$basename\"\n            || -x \"$RealBin/$basename.exe\") {\n            $bin = \"$RealBin/$basename\";  # From path/to/verilator with verilator_bin installed\n        } else {\n            $bin = $basename;  # Find in PATH\n        }\n        # Note we don't look under bin/$basename which would be right if running\n        # in the kit dir. Running that would likely break, since\n        # VERILATOR_ROOT wouldn't be set and Verilator won't find internal files.\n    }\n    return $bin;\n}\n\n#######################################################################\n#######################################################################\n# Utilities\n\nsub gdb_works {\n    $! = undef;  # Cleanup -x\n    system(\"gdb /bin/echo\"\n           . \" --batch-silent --quiet --return-child-result\"\n           . \" -ex 'run -n'\"  # `echo -n`\n           . \" -ex 'set width 0'\"\n           . \" -ex 'bt'\"\n           . \" -ex 'quit'\");\n    my $status = $?;\n    return $status == 0;\n}\n\nsub aslr_off {\n    my $ok = `setarch --addr-no-randomize echo ok 2>/dev/null` || \"\";\n    if ($ok =~ /ok/) {\n        return \"setarch --addr-no-randomize \";\n    } else {\n        return \"\";\n    }\n}\n\nsub ulimit_stack_unlimited {\n    return \"\" if !$opt_unlimited_stack;\n    system(\"ulimit -s unlimited 2>/dev/null\");\n    my $status = $?;\n    if ($status == 0) {\n        return \"ulimit -s unlimited 2>/dev/null; exec \";\n    } else {\n        return \"\";\n    }\n}\n\nsub run {\n    # Run command, check errors\n    my $command = shift;\n    $! = undef;  # Cleanup -x\n    print \"\\t$command\\n\" if $Debug >= 3;\n    system($command);\n    my $status = $?;\n    if ($status) {\n        if ($! =~ /no such file or directory/i) {\n            warn \"%Error: verilator: Misinstalled, or VERILATOR_ROOT might need to be in environment\\n\";\n        }\n        if ($Debug) {  # For easy rerunning\n            warn \"%Error: export VERILATOR_ROOT=\" . ($ENV{VERILATOR_ROOT} || \"\") . \"\\n\";\n            warn \"%Error: $command\\n\";\n        }\n        if ($status & 127) {\n            if (($status & 127) == 4  # SIGILL\n                || ($status & 127) == 8  # SIGFPA\n                || ($status & 127) == 11) {  # SIGSEGV\n                warn \"%Error: Verilator internal fault, sorry. \"\n                    . \"Suggest trying --debug --gdbbt\\n\" if !$Debug;\n            } elsif (($status & 127) == 6) {  # SIGABRT\n                warn \"%Error: Verilator aborted. \"\n                    . \"Suggest trying --debug --gdbbt\\n\" if !$Debug;\n            } else {\n                warn \"%Error: Verilator threw signal $status. \"\n                    . \"Suggest trying --debug --gdbbt\\n\" if !$Debug;\n            }\n        }\n        if (!$opt_quiet_exit && ($status != 256 || $Debug)) {  # i.e. not normal exit(1)\n            warn \"%Error: Command Failed $command\\n\";\n        }\n        exit $! if $!;  # errno\n        exit $? >> 8 if $? >> 8;  # child exit status\n        exit 255;  # last resort\n    }\n}\n\nsub sh_escape {\n    my ($arg) = @_;\n\n    # This is similar to quotemeta() but less aggressive.\n    # There's no need to escape hyphens, periods, or forward slashes\n    # for the shell as these have no special meaning to the shell.\n    $arg =~ s/([^0-9a-zA-Z_\\-\\+\\=\\.\\/])/\\\\$1/g;\n    return $arg;\n}\n\n#######################################################################\n#######################################################################\npackage main;\n__END__\n\n=pod\n\n=head1 NAME\n\nVerilator - Translate and simulate SystemVerilog code using C++/SystemC\n\n\n=head1 SYNOPSIS\n\n    verilator --help\n    verilator --version\n    verilator --binary -j 0 [options] [source_files.v]... [opt_c_files.cpp/c/cc/a/o/so]\n    verilator --cc [options] [source_files.v]... [opt_c_files.cpp/c/cc/a/o/so]\n    verilator --sc [options] [source_files.v]... [opt_c_files.cpp/c/cc/a/o/so]\n    verilator --lint-only -Wall [source_files.v]...\n\n\n=head1 DESCRIPTION\n\nThe \"Verilator\" package converts all synthesizable, and many behavioral,\nVerilog and SystemVerilog designs into a C++ or SystemC model that after\ncompiling can be executed.  Verilator is not a traditional simulator, but a\ncompiler.\n\nFor documentation see L<https://verilator.org/verilator_doc.html>.\n\n\n=head1 ARGUMENT SUMMARY\n\nThis is a short summary of the arguments to the \"verilator\" executable.\nSee L<https://verilator.org/guide/latest/exe_verilator.html> for the\ndetailed descriptions of these arguments.\n\n=for VL_SPHINX_EXTRACT \"_build/gen/args_verilator.rst\"\n\n    <file.v>                    Verilog package, module, and top module filenames\n    <file.c/cc/cpp>             Optional C++ files to compile in\n    <file.a/o/so>               Optional C++ files to link in\n\n     +1364-1995ext+<ext>        Use Verilog 1995 with file extension <ext>\n     +1364-2001ext+<ext>        Use Verilog 2001 with file extension <ext>\n     +1364-2005ext+<ext>        Use Verilog 2005 with file extension <ext>\n     +1800-2005ext+<ext>        Use SystemVerilog 2005 with file extension <ext>\n     +1800-2009ext+<ext>        Use SystemVerilog 2009 with file extension <ext>\n     +1800-2012ext+<ext>        Use SystemVerilog 2012 with file extension <ext>\n     +1800-2017ext+<ext>        Use SystemVerilog 2017 with file extension <ext>\n    --assert                    Enable all assertions\n    --autoflush                 Flush streams after all $displays\n    --bbox-sys                  Blackbox unknown $system calls\n    --bbox-unsup                Blackbox unsupported language features\n    --binary                    Build model binary\n    --build                     Build model executable/library after Verilation\n    --build-dep-bin <filename>  Override build dependency Verilator binary\n    --build-jobs <jobs>         Parallelism for --build\n    --cc                        Create C++ output\n    --cdc                       Clock domain crossing analysis\n     -CFLAGS <flags>            C++ compiler arguments for makefile\n    --clk <signal-name>         Mark specified signal as clock\n    --no-clk <signal-name>      Prevent marking specified signal as clock\n    --compiler <compiler-name>  Tune for specified C++ compiler\n    --converge-limit <loops>    Tune convergence settle time\n    --coverage                  Enable all coverage\n    --coverage-line             Enable line coverage\n    --coverage-max-width <width>   Maximum array depth for coverage\n    --coverage-toggle           Enable toggle coverage\n    --coverage-underscore       Enable coverage of _signals\n    --coverage-user             Enable SVL user coverage\n     -D<var>[=<value>]          Set preprocessor define\n    --debug                     Enable debugging\n    --debug-check               Enable debugging assertions\n    --no-debug-leak             Disable leaking memory in --debug mode\n    --debugi <level>            Enable debugging at a specified level\n    --debugi-<srcfile> <level>  Enable debugging a source file at a level\n    --no-decoration             Disable comments and symbol decorations\n    --default-language <lang>   Default language to parse\n     +define+<var>=<value>      Set preprocessor define\n    --dpi-hdr-only              Only produce the DPI header file\n    --dump-defines              Show preprocessor defines with -E\n    --dump-dfg                  Enable dumping DfgGraphs to .dot files\n    --dump-graph                Enable dumping V3Graphs to .dot files\n    --dump-tree                 Enable dumping Ast .tree files\n    --dump-tree-addrids         Use short identifiers instead of addresses\n    --dump-<srcfile>            Enable dumping everything in source file\n    --dumpi-dfg <level>         Enable dumping DfgGraphs to .dot files at level\n    --dumpi-graph <level>       Enable dumping V3Graphs to .dot files at level\n    --dumpi-tree <level>        Enable dumping Ast .tree files at level\n    --dumpi-<srcfile> <level>   Enable dumping everything in source file at level\n     -E                         Preprocess, but do not compile\n    --error-limit <value>       Abort after this number of errors\n    --exe                       Link to create executable\n    --expand-limit <value>      Set expand optimization limit\n     -F <file>                  Parse arguments from a file, relatively\n     -f <file>                  Parse arguments from a file\n     -FI <file>                 Force include of a file\n    --flatten                   Force inlining of all modules, tasks and functions\n     -fno-<optimization>        Disable internal optimization stage\n     -G<name>=<value>           Overwrite top-level parameter\n    --gate-stmts <value>        Tune gate optimizer depth\n    --gdb                       Run Verilator under GDB interactively\n    --gdbbt                     Run Verilator under GDB for backtrace\n    --generate-key              Create random key for --protect-key\n    --getenv <var>              Get environment variable with defaults\n    --get-supported <feature>   Get if feature is supported\n    --help                      Display this help\n    --hierarchical              Enable hierarchical Verilation\n     -I<dir>                    Directory to search for includes\n    --if-depth <value>          Tune IFDEPTH warning\n     +incdir+<dir>              Directory to search for includes\n    --inline-mult <value>       Tune module inlining\n    --instr-count-dpi <value>   Assumed dynamic instruction count of DPI imports\n     -j <jobs>                  Parallelism for --build-jobs/--verilate-jobs\n    --l2-name <value>           Verilog scope name of the top module\n    --language <lang>           Default language standard to parse\n     -LDFLAGS <flags>           Linker pre-object arguments for makefile\n    --lib-create <name>         Create a DPI library\n     +libext+<ext>+[ext]...     Extensions for finding modules\n    --lint-only                 Lint, but do not make output\n    --make <build-tool>         Generate scripts for specified build tool\n     -MAKEFLAGS <flags>         Arguments to pass to make during --build\n    --main                      Generate C++ main() file\n    --main-top-name             Specify top name passed to Verilated model in generated C++ main\n    --max-num-width <value>     Maximum number width (default: 64K)\n    --Mdir <directory>          Name of output object directory\n    --MMD                       Create .d dependency files\n    --mod-prefix <topname>      Name to prepend to lower classes\n    --MP                        Create phony dependency targets\n     +notimingchecks            Ignored\n     -O0                        Disable optimizations\n     -O3                        High-performance optimizations\n     -O<optimization-letter>    Selectable optimizations\n     -o <executable>            Name of final executable\n    --no-order-clock-delay      Disable ordering clock enable assignments\n    --output-split <statements>          Split .cpp files into pieces\n    --output-split-cfuncs <statements>   Split model functions\n    --output-split-ctrace <statements>   Split tracing functions\n     -P                         Disable line numbers and blanks with -E\n    --pins-bv <bits>            Specify types for top-level ports\n    --pins-sc-biguint           Specify types for top-level ports\n    --pins-sc-uint              Specify types for top-level ports\n    --pins-uint8                Specify types for top-level ports\n    --no-pins64                 Don't use uint64_t's for 33-64 bit sigs\n    --pipe-filter <command>     Filter all input through a script\n    --pp-comments               Show preprocessor comments with -E\n    --prefix <topname>          Name of top-level class\n    --private                   Debugging; see docs\n    --prof-c                    Compile C++ code with profiling\n    --prof-cfuncs               Name functions for profiling\n    --prof-exec                 Enable generating execution profile for gantt chart\n    --prof-pgo                  Enable generating profiling data for PGO\n    --protect-ids               Hash identifier names for obscurity\n    --protect-key <key>         Key for symbol protection\n    --protect-lib <name>        Create a DPI protected library\n    --public                    Debugging; see docs\n    --public-params             Mark all parameters as public_flat\n    --public-flat-rw            Mark all variables, etc as public_flat_rw\n     -pvalue+<name>=<value>     Overwrite toplevel parameter\n    --quiet-exit                Don't print the command on failure\n    --relative-includes         Resolve includes relative to current file\n    --reloop-limit              Minimum iterations for forming loops\n    --report-unoptflat          Extra diagnostics for UNOPTFLAT\n    --rr                        Run Verilator and record with rr\n    --savable                   Enable model save-restore\n    --sc                        Create SystemC output\n    --no-skip-identical         Disable skipping identical output\n    --stats                     Create statistics file\n    --stats-vars                Provide statistics on variables\n    --no-std                    Prevent parsing standard library\n    --structs-packed            Convert all unpacked structures to packed structures\n     -sv                        Enable SystemVerilog parsing\n     +systemverilogext+<ext>    Synonym for +1800-2017ext+<ext>\n    --threads <threads>         Enable multithreading\n    --threads-dpi <mode>        Enable multithreaded DPI\n    --threads-max-mtasks <mtasks>  Tune maximum mtask partitioning\n    --timing                    Enable timing support\n    --no-timing                 Disable timing support\n    --timescale <timescale>     Sets default timescale\n    --timescale-override <timescale>  Overrides all timescales\n    --top <topname>             Alias of --top-module\n    --top-module <topname>      Name of top-level input module\n    --trace                     Enable waveform creation\n    --trace-coverage            Enable tracing of coverage\n    --trace-depth <levels>      Depth of tracing\n    --trace-fst                 Enable FST waveform creation\n    --trace-max-array <depth>   Maximum bit width for tracing\n    --trace-max-width <width>   Maximum array depth for tracing\n    --trace-params              Enable tracing of parameters\n    --trace-structs             Enable tracing structure names\n    --trace-threads <threads>   Enable FST waveform creation on separate threads\n    --no-trace-top              Do not emit traces for signals in the top module generated by verilator\n    --trace-underscore          Enable tracing of _signals\n     -U<var>                    Undefine preprocessor define\n    --no-unlimited-stack        Don't disable stack size limit\n    --unroll-count <loops>      Tune maximum loop iterations\n    --unroll-stmts <stmts>      Tune maximum loop body size\n    --unused-regexp <regexp>    Tune UNUSED lint signals\n     -V                         Verbose version and config\n     -v <filename>              Verilog library\n    --verilate-jobs             Job threads for Verilation stage\n    --no-verilate               Skip Verilation and just compile previously Verilated code\n     +verilog1995ext+<ext>      Synonym for +1364-1995ext+<ext>\n     +verilog2001ext+<ext>      Synonym for +1364-2001ext+<ext>\n    --version                   Displays program version and exits\n    --vpi                       Enable VPI compiles\n    --waiver-output <filename>  Create a waiver file based on the linter warnings\n     -Wall                      Enable all style warnings\n     -Werror-<message>          Convert warnings to errors\n     -Wfuture-<message>         Disable unknown message warnings\n     -Wno-<message>             Disable warning\n     -Wno-context               Disable source context on warnings\n     -Wno-fatal                 Disable fatal exit on warnings\n     -Wno-lint                  Disable all lint warnings\n     -Wno-style                 Disable all style warnings\n     -Wpedantic                 Warn on compliance-test issues\n     -Wwarn-<message>           Enable specified warning message\n     -Wwarn-lint                Enable lint warning message\n     -Wwarn-style               Enable style warning message\n    --x-assign <mode>           Assign non-initial Xs to this value\n    --x-initial <mode>          Assign initial Xs to this value\n    --x-initial-edge            Enable initial X->0 and X->1 edge triggers\n    --xml-only                  Create XML parser output\n    --xml-output                XML output filename\n     -y <dir>                   Directory to search for modules\n\nThis is a short summary of the simulation runtime arguments, i.e. for the\nfinal Verilated simulation runtime models.  See\nL<https://verilator.org/guide/latest/exe_verilator.html> for the detailed\ndescription of these arguments.\n\n=for VL_SPHINX_EXTRACT \"_build/gen/args_verilated.rst\"\n\n     +verilator+debug                  Enable debugging\n     +verilator+debugi+<value>         Enable debugging at a level\n     +verilator+error+limit+<value>    Set error limit\n     +verilator+help                   Display help\n     +verilator+noassert               Disable assert checking\n     +verilator+prof+exec+file+<filename>  Set execution profile filename\n     +verilator+prof+exec+start+<value>    Set execution profile starting point\n     +verilator+prof+exec+window+<value>   Set execution profile duration\n     +verilator+prof+vlt+file+<filename>   Set PGO profile filename\n     +verilator+rand+reset+<value>     Set random reset technique\n     +verilator+seed+<value>           Set random seed\n     +verilator+V                      Verbose version and config\n     +verilator+version                Show version and exit\n\n\n=head1 DISTRIBUTION\n\nThe latest version is available from L<https://verilator.org>.\n\nCopyright 2003-2024 by Wilson Snyder. This program is free software; you can\nredistribute it and/or modify the Verilator internals under the terms of\neither the GNU Lesser General Public License Version 3 or the Perl Artistic\nLicense Version 2.0.\n\nAll Verilog and C++/SystemC code quoted within this documentation file are\nreleased as Creative Commons Public Domain (CC0).  Many example files and\ntest files are likewise released under CC0 into effectively the Public\nDomain as described in the files themselves.\n\n\n=head1 SEE ALSO\n\nL<verilator_coverage>, L<verilator_gantt>, L<verilator_profcfunc>, L<make>,\n\nL<verilator --help> which is the source for this document,\n\nand L<https://verilator.org/verilator_doc.html> for detailed documentation.\n\n=cut\n\n######################################################################\n# Local Variables:\n# fill-column: 75\n# End:\n"
+        }
+      ],
+      "lastScanned": 1785259476449
+    },
+    {
+      "id": "7e29d0cf-cee6-4db6-95b3-09d42a798ad9",
+      "command": "bash scripts/mock_tool.sh",
+      "displayName": "Mock EDA Tool (synthetic, for testing Tool Setup)",
+      "helpArg": "--help",
+      "seedPattern": "--rng-init[= ]+(\\d+)",
+      "variants": [
+        {
+          "label": "",
+          "selectArgs": [],
+          "options": [],
+          "rawHelp": "[env_setup] example environment loaded\nActivating DSim version: 2026\nusage: mock_tool.sh {compile,sim,report} [options]\n\nA synthetic EDA-style dispatcher tool for exercising this extension's Tool\nSetup scanner -- not a real simulator.\n\ncommands:\n  compile               Compile the design\n  sim                    Run a simulation\n  report                Show the last run's summary\n\n  -h, --help             show this help message and exit\n"
+        },
+        {
+          "label": "compile",
+          "selectArgs": [
+            "compile"
+          ],
+          "options": [
+            {
+              "flags": [
+                "-o",
+                "--output"
+              ],
+              "metavar": "OUTPUT",
+              "description": "Output directory for compiled objects"
+            },
+            {
+              "flags": [
+                "-I",
+                "--include"
+              ],
+              "metavar": "DIR",
+              "description": "Additional include directory"
+            },
+            {
+              "flags": [
+                "-v",
+                "--verbose"
+              ],
+              "description": "Verbose compile output"
+            },
+            {
+              "flags": [
+                "-j",
+                "--jobs"
+              ],
+              "metavar": "N",
+              "description": "Number of parallel compile jobs"
+            }
+          ],
+          "rawHelp": "[env_setup] example environment loaded\nActivating DSim version: 2026\nusage: mock_tool.sh compile [options]\n\noptions:\n  -o OUTPUT, --output OUTPUT    Output directory for compiled objects\n  -I DIR, --include DIR         Additional include directory\n  -v, --verbose                 Verbose compile output\n  -j N, --jobs N                Number of parallel compile jobs\n  -h, --help                    show this help message and exit\n"
+        },
+        {
+          "label": "sim",
+          "selectArgs": [
+            "sim"
+          ],
+          "options": [
+            {
+              "flags": [
+                "-t",
+                "--test"
+              ],
+              "metavar": "TEST",
+              "description": "Test name to run",
+              "favorite": true,
+              "valueListName": "test"
+            },
+            {
+              "flags": [
+                "--rng-init"
+              ],
+              "metavar": "SEED",
+              "description": "Seed the run's random number generator",
+              "favorite": true
+            },
+            {
+              "flags": [
+                "--std"
+              ],
+              "metavar": "{v1995,v2001,v2005,v2012}",
+              "description": "SystemVerilog standard to compile against",
+              "favorite": true
+            },
+            {
+              "flags": [
+                "--gui"
+              ],
+              "description": "Launch waveform viewer"
+            },
+            {
+              "flags": [
+                "--parallel"
+              ],
+              "metavar": "N",
+              "description": "Number of parallel simulation jobs"
+            },
+            {
+              "flags": [
+                "-o",
+                "--output"
+              ],
+              "metavar": "OUTPUT",
+              "description": "Log output directory"
+            }
+          ],
+          "rawHelp": "[env_setup] example environment loaded\nActivating DSim version: 2026\nusage: mock_tool.sh sim [options]\n\noptions:\n  -t TEST, --test TEST                    Test name to run\n  --rng-init SEED                         Seed the run's random number generator\n  --std {v1995,v2001,v2005,v2012}          SystemVerilog standard to compile against\n  --gui                                   Launch waveform viewer\n  --parallel N                            Number of parallel simulation jobs\n  -o OUTPUT, --output OUTPUT               Log output directory\n  -h, --help                              show this help message and exit\n"
+        },
+        {
+          "label": "report",
+          "selectArgs": [
+            "report"
+          ],
+          "options": [],
+          "rawHelp": "[env_setup] example environment loaded\nActivating DSim version: 2026\nusage: mock_tool.sh report [options]\n\noptions:\n  -h, --help             show this help message and exit\n"
+        }
+      ],
+      "lastScanned": 1785259478469
     }
   ]
 }

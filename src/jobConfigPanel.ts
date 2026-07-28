@@ -1,15 +1,12 @@
 import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
 import { ToolStore } from './toolStore';
-import { JobRunner } from './jobRunner';
 import { GlobalParam, JobDefinition, JobTemplate, ToolDefinition, ValueList } from './types';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 import { buildPreview } from './commandPreview';
 import { flattenGlobalParams } from './paramVars';
-import { STEPS_CSS, STEPS_JS, stepperHtml, stepIntroHtml, stepRecipeHtml, StepId } from './webviewSteps';
-import { computeStepStatus, doneLineFor } from './setupState';
 
 interface SaveMessage {
   type: 'save';
@@ -33,8 +30,6 @@ interface SaveMessage {
   folder: string;
   customArgs: { arg: string; value?: string }[];
   paramOverrides: Record<string, string>;
-  /** Set by the "Save & Run" button -- run the job immediately after a successful save. */
-  runAfterSave?: boolean;
 }
 
 interface CancelMessage {
@@ -78,11 +73,6 @@ interface OpenInTerminalMessage {
   command: string;
 }
 
-interface OpenStepMessage {
-  type: 'openStep';
-  step: StepId;
-}
-
 type WebviewMessage =
   | SaveMessage
   | CancelMessage
@@ -91,7 +81,6 @@ type WebviewMessage =
   | PreviewRequestMessage
   | CopyPreviewMessage
   | OpenInTerminalMessage
-  | OpenStepMessage
   | BrowseMessage
   | ClientErrorMessage;
 
@@ -107,8 +96,6 @@ export class JobConfigPanel {
     jobStore: JobStore,
     toolStore: ToolStore,
     workspaceFolder: vscode.WorkspaceFolder,
-    jobRunner: JobRunner,
-    context: vscode.ExtensionContext,
     existingJob?: JobDefinition,
     presetFolder?: string
   ): void {
@@ -130,28 +117,25 @@ export class JobConfigPanel {
 
     JobConfigPanel.panels.set(
       key,
-      new JobConfigPanel(panel, jobStore, toolStore, key, existingJob, presetFolder, workspaceFolder, jobRunner, context)
+      new JobConfigPanel(panel, jobStore, toolStore, key, existingJob, presetFolder, workspaceFolder)
     );
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly jobStore: JobStore,
-    private readonly toolStore: ToolStore,
+    toolStore: ToolStore,
     /** Key into the static `panels` map -- mutable: a new job's first Save re-keys this from `'__new__'` to its real id. */
     private mapKey: string,
     existingJob: JobDefinition | undefined,
     presetFolder: string | undefined,
-    private readonly workspaceFolder: vscode.WorkspaceFolder,
-    private readonly jobRunner: JobRunner,
-    private readonly context: vscode.ExtensionContext
+    private readonly workspaceFolder: vscode.WorkspaceFolder
   ) {
     this.panel = panel;
     this.currentJobId = existingJob?.id;
     const autoSave = vscode.workspace
       .getConfiguration('eda-job-runner')
       .get<boolean>('experimentalAutoSaveJobConfig', false);
-    const status = computeStepStatus(this.toolStore, this.jobStore, this.jobRunner, this.context, this.workspaceFolder);
     this.panel.webview.html = renderHtml(
       panel.webview,
       existingJob,
@@ -161,9 +145,7 @@ export class JobConfigPanel {
       autoSave,
       jobStore.getParams(),
       jobStore.getTemplates(),
-      jobStore.getLists(),
-      status,
-      doneLineFor(3, status, this.toolStore, this.jobStore, this.jobRunner)
+      jobStore.getLists()
     );
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
@@ -187,18 +169,6 @@ export class JobConfigPanel {
     }
     if (msg.type === 'clientError') {
       return handleClientErrorMessage(msg);
-    }
-    if (msg.type === 'openStep') {
-      await vscode.commands.executeCommand(
-        msg.step === 1
-          ? 'eda-job-runner.configureShell'
-          : msg.step === 2
-            ? 'eda-job-runner.configureTools'
-            : msg.step === 3
-              ? 'eda-job-runner.addJob'
-              : 'eda-job-runner.configureParams'
-      );
-      return;
     }
     if (msg.type === 'previewRequest') {
       return this.onPreviewRequest(msg);
@@ -285,17 +255,6 @@ export class JobConfigPanel {
     // Save no longer closes the tab -- just acknowledge, so the user can keep
     // editing (and so an auto-save doesn't yank the tab out from under them).
     void this.panel.webview.postMessage({ type: 'saved' });
-
-    // T2.2's "Save & Run" -- the highest-value single change in the plan,
-    // closing the create-then-verify loop instead of requiring the user to
-    // leave the form, find the row, hover it, and click a Run icon that
-    // only appears on hover.
-    if (msg.runAfterSave && this.currentJobId) {
-      const job = this.jobStore.getJobs().find(j => j.id === this.currentJobId);
-      if (job) {
-        void this.jobRunner.run(job);
-      }
-    }
   }
 
   /**
@@ -395,11 +354,8 @@ export function renderHtml(
   autoSave: boolean,
   globalParams: GlobalParam[],
   templates: JobTemplate[],
-  lists: ValueList[],
-  status?: import('./webviewSteps').StepStatus,
-  doneLine?: string
+  lists: ValueList[]
 ): string {
-  const effectiveStatus: import('./webviewSteps').StepStatus = status ?? { env: 'todo', tool: 'todo', job: 'todo', params: 'todo' };
   const nonce = getNonce();
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -490,7 +446,6 @@ export function renderHtml(
   .hidden { display: none; }
   ${HELP_CSS}
   ${BROWSE_CSS}
-  ${STEPS_CSS}
   .willRun { margin-top: 8px; padding: 8px 10px; border-radius: 3px; background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.1)); font-size: 0.85em; }
   .willRun .row { display: flex; gap: 8px; margin-top: 2px; }
   .willRun .row .k { flex: 0 0 46px; color: var(--vscode-descriptionForeground); }
@@ -550,15 +505,6 @@ export function renderHtml(
   }
   details[open] summary { margin-bottom: 4px; }
   .actions { margin-top: 26px; display: flex; gap: 8px; align-items: center; }
-  .stickyActions {
-    position: sticky;
-    bottom: 0;
-    background: var(--vscode-editor-background);
-    padding: 12px 0;
-    margin-top: 0;
-    border-top: 1px solid var(--vscode-input-border, rgba(127,127,127,0.3));
-    z-index: 5;
-  }
   button {
     padding: 6px 16px;
     border: 1px solid transparent;
@@ -579,30 +525,31 @@ export function renderHtml(
 <body>
   <h2>${job ? 'Configure Job' : 'Add Job'}</h2>
 
-  ${
-    job
-      ? ''
-      : `${stepperHtml(3, effectiveStatus)}
-         ${stepIntroHtml(3, effectiveStatus.job, doneLine)}
-         ${stepRecipeHtml(3, effectiveStatus.job, true)}`
-  }
-
-  <div class="templateRow ${templates.length > 0 ? '' : 'hidden'}" id="templateRow">
+  <div class="templateRow">
     <div>
-      <label for="templateSelect">Start from template ${help(
-        "Load a saved template's fields into this form below. Deleting a template only removes the template itself — jobs already created from it are untouched."
+      <label for="templateSelect">Template ${help(
+        "Load a saved template's fields into this form below, or save the current form as a new one. Deleting a template only removes the template itself — jobs already created from it are untouched."
       )}</label>
       <select id="templateSelect">
         <option value="">(none)</option>
         ${templates.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('')}
       </select>
     </div>
-    <button class="secondary" id="loadTemplate" type="button" disabled>Load</button>
-    <button class="secondary" id="deleteTemplateBtn" type="button" disabled>Delete</button>
+    <button class="secondary" id="loadTemplate" type="button">Load</button>
+    <button class="secondary" id="saveAsTemplate" type="button">Save as template…</button>
+    <button class="secondary" id="deleteTemplateBtn" type="button">Delete</button>
   </div>
 
   <label for="name">Name</label>
   <input id="name" type="text" value="${esc(job?.name ?? '')}" placeholder="e.g. smoke_test" />
+
+  <label for="folder">Folder (optional) ${help(
+    "Groups this job under a folder in the sidebar. Leave blank for no folder. Typing a name that doesn't exist yet creates that folder."
+  )}</label>
+  <input id="folder" list="folderOptions" type="text" value="${esc(job?.folder ?? presetFolder ?? '')}" placeholder="e.g. Compile" />
+  <datalist id="folderOptions">
+    ${folders.map(f => `<option value="${esc(f)}"></option>`).join('')}
+  </datalist>
 
   <label for="command">Command ${help(
     'Shell command to run. Runs via the configured shell (bash login shell by default; see the Shell &amp; Environment panel), so module load / sourced environment setup is available.<br /><br />Optional placeholders: <code>${param:NAME}</code> (or <code>${param:NAME=default}</code>) prompts for a value on every Run, remembering what you last entered; <code>${randomSeed}</code> fills in a fresh random integer on every run with no prompt. "Re-run Last" on an already-run job replays its exact previous values/seed with no new prompt.'
@@ -644,25 +591,6 @@ export function renderHtml(
     ${globalParams.map(p => `<option value="\${var:${esc(p.name)}}"></option>`).join('')}
   </datalist>
 
-  <label for="cwd">Working Directory ${help('Relative to the workspace root. Use "." for the root itself.')}</label>
-  <input id="cwd" type="text" value="${esc(job?.cwd ?? '.')}" placeholder="." />
-
-  <label for="folder">Folder (optional) ${help(
-    "Groups this job under a folder in the sidebar. Leave blank for no folder. Typing a name that doesn't exist yet creates that folder."
-  )}</label>
-  <input id="folder" list="folderOptions" type="text" value="${esc(job?.folder ?? presetFolder ?? '')}" placeholder="e.g. Compile" />
-  <datalist id="folderOptions">
-    ${folders.map(f => `<option value="${esc(f)}"></option>`).join('')}
-  </datalist>
-
-  <label class="check" style="margin-top:18px;">
-    <input id="isDefault" type="checkbox" ${job?.default ? 'checked' : ''} />
-    Default job for this workspace
-    ${help(
-      'Run this with <b>EDA: Run Default Job</b> (and the F5 key, once a default is set). Only one job per workspace can be the default — choosing this unsets any other.'
-    )}
-  </label>
-
   <details id="paramsSection" ${job?.paramOverrides && Object.keys(job.paramOverrides).length > 0 ? 'open' : hasVarRef ? 'open' : ''}>
     <summary>Parameters</summary>
     <div class="hint">
@@ -675,13 +603,21 @@ export function renderHtml(
     <button class="secondary" id="addParamOverride" type="button" style="margin-top:10px;">+ Add parameter override</button>
   </details>
 
+  <label for="cwd">Working Directory ${help('Relative to the workspace root. Use "." for the root itself.')}</label>
+  <input id="cwd" type="text" value="${esc(job?.cwd ?? '.')}" placeholder="." />
+
+  <label for="runCount">Repeat count (sequential) ${help(
+    'Run this job this many times in a row when you click Run — e.g. 10 back-to-back runs of the same test with a random seed. Always sequential (never in parallel), regardless of the experimental multiple-jobs setting. Leave empty (or 1) for a normal single run.'
+  )}</label>
+  <input id="runCount" type="number" min="1" max="1000" step="1" value="${job?.runCount && job.runCount > 1 ? job.runCount : ''}" placeholder="1" />
+
   <details id="advanced" ${
     job?.postSetupCwd ||
     job?.logsDirectory ||
     job?.failPattern ||
     job?.passPattern ||
     job?.logFile ||
-    (job?.runCount && job.runCount > 1) ||
+    job?.default ||
     job?.parseProblems === false ||
     job?.postRunEnabled
       ? 'open'
@@ -694,10 +630,13 @@ export function renderHtml(
     )}</label>
     <input id="logFile" type="text" value="${esc(job?.logFile ?? '')}" placeholder="e.g. run.log or \${workspaceFolder}/lsf.%J.out" />
 
-    <label for="runCount">Repeat count (sequential) ${help(
-      'Run this job this many times in a row when you click Run — e.g. 10 back-to-back runs of the same test with a random seed. Always sequential (never in parallel), regardless of the experimental multiple-jobs setting. Leave empty (or 1) for a normal single run.'
-    )}</label>
-    <input id="runCount" type="number" min="1" max="1000" step="1" value="${job?.runCount && job.runCount > 1 ? job.runCount : ''}" placeholder="1" />
+    <label class="check">
+      <input id="isDefault" type="checkbox" ${job?.default ? 'checked' : ''} />
+      Default job for this workspace
+      ${help(
+        'Run this with <b>EDA: Run Default Job</b> (and the F5 key, once a default is set). Only one job per workspace can be the default — choosing this unsets any other.'
+      )}
+    </label>
 
     <label class="check">
       <input id="parseProblems" type="checkbox" ${job?.parseProblems === false ? '' : 'checked'} />
@@ -739,20 +678,16 @@ export function renderHtml(
 
   <div class="error" id="error"></div>
 
-  <div class="actions stickyActions">
-    <button class="primary" id="saveAndRun">Save &amp; Run</button>
-    <button class="secondary" id="save">Save</button>
-    <button class="secondary" id="saveAsTemplate">Save as template…</button>
-    <span class="savedFlash hidden" id="savedFlash">Saved ✓</span>
-    <span style="flex:1 1 auto;"></span>
+  <div class="actions">
+    <button class="primary" id="save">Save</button>
     <button class="secondary" id="cancel">Cancel</button>
+    <span class="savedFlash hidden" id="savedFlash">Saved ✓</span>
   </div>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
-    ${STEPS_JS}
     const AUTO_SAVE = ${autoSave ? 'true' : 'false'};
     const nameEl = document.getElementById('name');
     const folderEl = document.getElementById('folder');
@@ -1405,19 +1340,7 @@ export function renderHtml(
     }
     refreshBuilderUI();
 
-    const templateRowEl = document.getElementById('templateRow');
-    const loadTemplateBtn = document.getElementById('loadTemplate');
-    const deleteTemplateBtn = document.getElementById('deleteTemplateBtn');
-
-    function updateTemplateButtons() {
-      const hasSelection = !!templateSelectEl.value;
-      loadTemplateBtn.disabled = !hasSelection;
-      deleteTemplateBtn.disabled = !hasSelection;
-    }
-    templateSelectEl.addEventListener('change', updateTemplateButtons);
-
     function renderTemplateOptions(selectName) {
-      templateRowEl.classList.toggle('hidden', TEMPLATES.length === 0);
       templateSelectEl.innerHTML = '';
       const blank = document.createElement('option');
       blank.value = '';
@@ -1430,7 +1353,6 @@ export function renderHtml(
         templateSelectEl.appendChild(o);
       });
       if (selectName) { templateSelectEl.value = selectName; }
-      updateTemplateButtons();
     }
 
     document.getElementById('loadTemplate').addEventListener('click', () => {
@@ -1523,10 +1445,6 @@ export function renderHtml(
     document.getElementById('save').addEventListener('click', () => {
       errorEl.textContent = '';
       vscode.postMessage(collectSaveMessage());
-    });
-    document.getElementById('saveAndRun').addEventListener('click', () => {
-      errorEl.textContent = '';
-      vscode.postMessage(Object.assign(collectSaveMessage(), { runAfterSave: true }));
     });
 
     // D12: always-visible "Will run" preview under the Command field.

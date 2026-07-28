@@ -4,19 +4,42 @@
     "script": "scripts/env_setup.sh"
   },
   "folders": [
-    "Compile",
-    "PicoRV32 (real project)"
+    "Real Projects"
+  ],
+  "params": [
+    {
+      "name": "PROJECT_TAG",
+      "value": "smoke-v1"
+    }
   ],
   "lists": [
     {
       "name": "test",
-      "file": "/home/caioplazas/vscode-verilog-manager/examples/test.flist",
+      "file": "test.flist",
       "values": [
         "test1",
         "test2",
         "test3",
         "test4"
       ]
+    },
+    {
+      "name": "smoke_subset",
+      "values": [
+        "smoke_test",
+        "reset_test"
+      ],
+      "insertTemplate": "${value}"
+    },
+    {
+      "name": "uvm_testname",
+      "command": "echo -e 'smoke_test\\nreset_test\\nfull_regress'",
+      "values": [
+        "smoke_test",
+        "reset_test",
+        "full_regress"
+      ],
+      "insertTemplate": "+UVM_TESTNAME=${value}"
     }
   ],
   "jobs": [
@@ -25,14 +48,14 @@
       "name": "Compile (mock)",
       "command": "echo Compiling...; sleep 1; echo Compile OK",
       "cwd": ".",
-      "runCount": 5,
-      "folder": "Compile"
+      "runCount": 5
     },
     {
       "id": "5ddf7aef-a6a1-4933-b7d7-909f0bc59601",
       "name": "smoke_test (pass)",
       "command": "bash scripts/mock_uvm_sim.sh",
-      "cwd": "."
+      "cwd": ".",
+      "default": true
     },
     {
       "id": "fdcfe415-4021-4b8f-9e21-55b29f4e7078",
@@ -99,49 +122,189 @@
       "name": "Icarus Compile",
       "command": "mkdir -p build && iverilog -o build/picorv32_sim tb/smoke_tb.v rtl/picorv32.v",
       "cwd": "projects/picorv32",
-      "folder": "PicoRV32 (real project)"
+      "folder": "Real Projects"
     },
     {
       "id": "2e7a7a72-6416-40c4-ac8e-3621765ebb33",
       "name": "Icarus Test",
       "command": "vvp build/picorv32_sim",
       "cwd": "projects/picorv32",
-      "folder": "PicoRV32 (real project)"
+      "folder": "Real Projects"
     },
     {
       "id": "bb920539-7089-417f-af2f-9d1a426acea0",
       "name": "Verilator Compile",
       "command": "mkdir -p build/verilator && verilator --binary --top-module smoke_tb -Wno-fatal -Wall tb/smoke_tb.v rtl/picorv32.v --Mdir build/verilator -o smoke_sim",
       "cwd": "projects/picorv32",
-      "folder": "PicoRV32 (real project)"
+      "folder": "Real Projects"
     },
     {
       "id": "96fe4830-80de-4fbe-9e21-694dbbb75db2",
       "name": "Verilator Test",
       "command": "./build/verilator/smoke_sim",
       "cwd": "projects/picorv32",
-      "folder": "PicoRV32 (real project)"
+      "folder": "Real Projects"
     },
     {
       "id": "2bc90e93-83b7-4b1e-89f4-d6cf1b3e3587",
       "name": "Questa Compile",
       "command": "vlog tb/smoke_tb.v rtl/picorv32.v",
       "cwd": "projects/picorv32",
-      "folder": "PicoRV32 (real project)"
+      "folder": "Real Projects"
     },
     {
       "id": "53bc7778-26e1-4ac8-9a98-95fec36a61e7",
       "name": "Questa Test",
       "command": "vsim -c -do \"run -all; quit\" smoke_tb",
       "cwd": "projects/picorv32",
-      "folder": "PicoRV32 (real project)"
+      "folder": "Real Projects"
     },
     {
       "id": "27ada150-3b88-4735-b98c-c2d46a2fc3a8",
       "name": "DSim Compile+Test",
       "command": "dsim tb/smoke_tb.v rtl/picorv32.v -top smoke_tb",
       "cwd": "projects/picorv32",
-      "folder": "PicoRV32 (real project)"
+      "folder": "Real Projects"
+    },
+    {
+      "id": "d657b224-87bd-489b-ab1a-4c0dbe308af2",
+      "name": "VeeR EH1 Build+Run (Verilator, CoreMark)",
+      "command": "export RV_ROOT=\"$PWD\" && make -f tools/Makefile verilator-build && cp testbench/hex/cmark.hex program.hex && ./obj_dir/Vtb_top",
+      "cwd": "projects/veer-eh1",
+      "folder": "Real Projects"
+    },
+    {
+      "id": "fda63103-3882-4d6e-93fa-5e2c7195732a",
+      "name": "VeeR EH1 Re-run (no rebuild)",
+      "command": "./obj_dir/Vtb_top",
+      "cwd": "projects/veer-eh1",
+      "folder": "Real Projects"
+    },
+    {
+      "id": "4685f0cb-da0a-4819-b2c4-8bdf067dac51",
+      "name": "long_regression (pass, ~28s)",
+      "command": "bash scripts/mock_regression.sh ${randomSeed}",
+      "cwd": "."
+    },
+    {
+      "id": "67282652-87dc-4299-aeac-2a6ca92ee0a6",
+      "name": "long_regression (fail, ~28s)",
+      "command": "bash scripts/mock_regression.sh ${randomSeed} --fail",
+      "cwd": "."
+    },
+    {
+      "id": "a9982624-dd8d-4233-99cb-fa9ee8ef9da3",
+      "name": "mock_tool: sim (param prompt + seed, no builder link)",
+      "command": "bash scripts/mock_tool.sh sim -t ${param:TESTNAME=smoke_test} --rng-init ${randomSeed}",
+      "cwd": "."
+    },
+    {
+      "id": "d8f96ab6-d7f2-4df4-947f-9f49c9988b0a",
+      "name": "mock_tool: sim (Tool Setup builder demo)",
+      "command": "bash scripts/mock_tool.sh sim -t smoke_test --rng-init ${randomSeed} --std v2012 --parallel 2",
+      "cwd": ".",
+      "toolId": "7e29d0cf-cee6-4db6-95b3-09d42a798ad9",
+      "toolVariantLabel": "sim",
+      "customArgs": [
+        {
+          "arg": "--parallel",
+          "value": "2"
+        }
+      ]
+    },
+    {
+      "id": "2b4dbeb8-3290-434d-8934-81f0f85d1899",
+      "name": "mock_tool: sim (per-job value-list override)",
+      "command": "bash scripts/mock_tool.sh sim -t reset_test --rng-init ${randomSeed} --std v2001",
+      "cwd": ".",
+      "toolId": "7e29d0cf-cee6-4db6-95b3-09d42a798ad9",
+      "toolVariantLabel": "sim",
+      "optionListOverrides": {
+        "-t|--test": "smoke_subset"
+      }
+    },
+    {
+      "id": "09a11d14-de6a-435c-9108-bbc16e36d772",
+      "name": "fail_pattern (exits 0 but really failed)",
+      "command": "echo \"UVM_ERROR: checksum mismatch\"; exit 0",
+      "cwd": ".",
+      "failPattern": "UVM_ERROR"
+    },
+    {
+      "id": "1ebf224a-c136-4749-b1ec-2d982287165c",
+      "name": "pass_pattern (exits nonzero but really passed)",
+      "command": "echo \"ALL TESTS PASSED\"; exit 3",
+      "cwd": ".",
+      "passPattern": "ALL TESTS PASSED"
+    },
+    {
+      "id": "84260ed8-6aee-4e69-8ac1-c9f7c908d88c",
+      "name": "post_run_demo (notification after finish)",
+      "command": "bash scripts/mock_uvm_sim.sh",
+      "cwd": ".",
+      "postRunEnabled": true,
+      "postRunCommand": "echo \"post-run hook fired -- job finished\""
+    },
+    {
+      "id": "a0a78638-7227-46b6-bc47-f00c7e656e38",
+      "name": "custom_logs_dir (per-job logsDirectory override)",
+      "command": "bash scripts/mock_uvm_sim.sh",
+      "cwd": ".",
+      "logsDirectory": "${workspaceFolder}/scratch-logs"
+    },
+    {
+      "id": "a5b1ecc0-9fef-4831-9f97-f1ecbff780e1",
+      "name": "custom_cwd (per-job postSetupCwd override)",
+      "command": "echo \"Running from:\"; pwd; ls",
+      "cwd": ".",
+      "postSetupCwd": "${workspaceFolder}/projects/picorv32"
+    },
+    {
+      "id": "d5416ed8-bff3-4094-a00a-80748fe87988",
+      "name": "mock_tool: sim (global parameter reference)",
+      "command": "bash scripts/mock_tool.sh sim -t ${var:PROJECT_TAG} --rng-init ${randomSeed}",
+      "cwd": "."
+    },
+    {
+      "id": "9bf29f1b-68ca-4a56-9563-4d47c9bb5980",
+      "name": "mock_tool: sim (per-job parameter override)",
+      "command": "bash scripts/mock_tool.sh sim -t ${var:PROJECT_TAG} --rng-init ${randomSeed}",
+      "cwd": ".",
+      "paramOverrides": {
+        "PROJECT_TAG": "regression-v2"
+      }
+    },
+    {
+      "id": "08494ddc-1d2c-473e-9795-aada26df7dbd",
+      "name": "mock_tool: compile (variant demo)",
+      "command": "bash scripts/mock_tool.sh compile -o build -I include -j 4 --verbose",
+      "cwd": ".",
+      "toolId": "7e29d0cf-cee6-4db6-95b3-09d42a798ad9",
+      "toolVariantLabel": "compile"
+    },
+    {
+      "id": "b31c2887-e239-4862-8456-4143ea5648bc",
+      "name": "mock_tool: report (variant demo, no flags)",
+      "command": "bash scripts/mock_tool.sh report",
+      "cwd": ".",
+      "toolId": "7e29d0cf-cee6-4db6-95b3-09d42a798ad9",
+      "toolVariantLabel": "report"
+    }
+  ],
+  "templates": [
+    {
+      "name": "Mock UVM smoke test",
+      "namePattern": "smoke_test",
+      "command": "bash scripts/mock_uvm_sim.sh",
+      "cwd": "."
+    },
+    {
+      "name": "Mock Tool sim (builder)",
+      "namePattern": "mock_sim",
+      "command": "bash scripts/mock_tool.sh sim -t smoke_test --rng-init ${randomSeed}",
+      "cwd": ".",
+      "toolId": "7e29d0cf-cee6-4db6-95b3-09d42a798ad9",
+      "toolVariantLabel": "sim"
     }
   ]
 }

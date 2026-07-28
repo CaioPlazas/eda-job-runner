@@ -32,13 +32,7 @@ export class JobTreeItem extends vscode.TreeItem {
     );
     this.contextValue = isLane ? `edaJobRun-${status.state}` : `edaJob-${status.state}`;
     this.iconPath = iconForState(status);
-    // D1: a single click opens the latest log (quiet -- no "run it first"
-    // toast for a never-run job, so clicking simply selects the row);
-    // Configure moved to the inline gear icon. A lane row is unchanged --
-    // it always opens straight to that one run's own log.
-    this.command = isLane
-      ? { command: 'eda-job-runner.openLog', title: 'Open Log', arguments: [this] }
-      : { command: 'eda-job-runner.openLog', title: 'Open Log', arguments: [this, { quiet: true }] };
+    this.command = { command: 'eda-job-runner.openLog', title: 'Open Log', arguments: [this] };
   }
 }
 

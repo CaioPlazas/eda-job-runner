@@ -1,16 +1,14 @@
 import * as vscode from 'vscode';
 import { ToolStore } from './toolStore';
 import { JobStore } from './jobStore';
-import { JobRunner } from './jobRunner';
 import { ToolDefinition, ToolOption, ToolVariant, ValueList, JobsFileSetup } from './types';
-import { scanVariant, scanTool, discoverList } from './toolIntrospect';
+import { scanVariant, scanTool } from './toolIntrospect';
 import { detectSubcommandChoices, mergeFavorites, parseChoices } from './toolOptionParser';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 import { runProbeChecks } from './webviewProbe';
-import { STEPS_CSS, STEPS_JS, stepperHtml, stepIntroHtml, stepRecipeHtml, nextStepButtonHtml, setupErrorHtml, StepId, StepStatus } from './webviewSteps';
-import { computeStepStatus, doneLineFor } from './setupState';
+import { SETUP_ERROR_CSS, OPEN_STEP_JS, setupErrorHtml, StepId } from './webviewSteps';
 import { buildSetupChain } from './setupChain';
 import { BUILTIN_SEED_PATTERNS } from './seedDetect';
 
@@ -88,15 +86,6 @@ interface SetOptionValueSourceMessage {
   flagsKey: string;
   listName: string;
 }
-interface CreateValueListMessage {
-  type: 'createValueList';
-  id: string;
-  label: string;
-  flagsKey: string;
-  name: string;
-  sourceType: 'file' | 'command';
-  source: string;
-}
 interface CloseMessage {
   type: 'close';
 }
@@ -132,7 +121,6 @@ type WebviewMessage =
   | RemoveVariantMessage
   | ToggleFavoriteMessage
   | SetOptionValueSourceMessage
-  | CreateValueListMessage
   | CloseMessage
   | FindItMessage
   | TryHelpArgMessage
@@ -161,9 +149,7 @@ export class ToolSetupPanel {
   static createOrShow(
     toolStore: ToolStore,
     jobStore: JobStore,
-    folder: vscode.WorkspaceFolder,
-    jobRunner: JobRunner,
-    context: vscode.ExtensionContext
+    folder: vscode.WorkspaceFolder
   ): void {
     if (ToolSetupPanel.current) {
       ToolSetupPanel.current.panel.reveal();
@@ -173,16 +159,14 @@ export class ToolSetupPanel {
       enableScripts: true,
       retainContextWhenHidden: true
     });
-    ToolSetupPanel.current = new ToolSetupPanel(panel, toolStore, jobStore, folder, jobRunner, context);
+    ToolSetupPanel.current = new ToolSetupPanel(panel, toolStore, jobStore, folder);
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly toolStore: ToolStore,
     private readonly jobStore: JobStore,
-    private readonly folder: vscode.WorkspaceFolder,
-    private readonly jobRunner: JobRunner,
-    private readonly context: vscode.ExtensionContext
+    private readonly folder: vscode.WorkspaceFolder
   ) {
     this.panel = panel;
     this.render();
@@ -193,7 +177,6 @@ export class ToolSetupPanel {
   }
 
   private render(): void {
-    const status = computeStepStatus(this.toolStore, this.jobStore, this.jobRunner, this.context, this.folder);
     this.panel.webview.html = renderHtml(
       this.panel.webview,
       this.toolStore.getTools(),
@@ -202,9 +185,7 @@ export class ToolSetupPanel {
       this.editingToolId,
       this.addingVariantForToolId,
       this.jobStore.getSetup(),
-      this.folder.uri.fsPath,
-      status,
-      doneLineFor(2, status, this.toolStore, this.jobStore, this.jobRunner)
+      this.folder.uri.fsPath
     );
   }
 
@@ -520,43 +501,6 @@ export class ToolSetupPanel {
         return;
       }
 
-      case 'createValueList': {
-        // T1.5's round-trip fix: create, discover, and attach a new value
-        // list to this option in one action, without ever leaving Tool
-        // Setup for the Parameters & Value Lists panel.
-        const tool = this.toolStore.getTool(msg.id);
-        const name = msg.name.trim();
-        const source = msg.source.trim();
-        if (!tool || !name || !source) {
-          return;
-        }
-        const list = {
-          name,
-          command: msg.sourceType === 'command' ? source : undefined,
-          file: msg.sourceType === 'file' ? source : undefined,
-          values: [] as string[]
-        };
-        const { list: discovered } = await discoverList(list, this.jobStore, this.folder, tool.scanDir);
-        const lists = this.jobStore.getLists();
-        // A name collision with an existing list attaches to the existing
-        // one instead of silently shadowing it -- the user typed a name
-        // that's already taken, so respect it as the same list.
-        const existingIdx = lists.findIndex(l => l.name === name);
-        const nextLists = existingIdx === -1 ? [...lists, discovered] : lists;
-        await this.jobStore.setLists(nextLists);
-
-        const idx = tool.variants.findIndex(v => v.label === msg.label);
-        if (idx !== -1) {
-          const variants = tool.variants.slice();
-          variants[idx] = {
-            ...variants[idx],
-            options: variants[idx].options.map(o => (o.flags.join('|') === msg.flagsKey ? { ...o, valueListName: name } : o))
-          };
-          await this.toolStore.updateTool(msg.id, { variants });
-        }
-        this.render();
-        return;
-      }
     }
   }
 
@@ -576,14 +520,11 @@ export function renderHtml(
   editingToolId: string | undefined,
   addingVariantForToolId: string | undefined,
   setup?: JobsFileSetup,
-  workspaceRoot?: string,
-  status?: StepStatus,
-  doneLine?: string
+  workspaceRoot?: string
 ): string {
   const nonce = getNonce();
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const effectiveStatus: StepStatus = status ?? { env: 'todo', tool: 'todo', job: 'todo', params: 'todo' };
   const effectiveRoot = workspaceRoot ?? '';
 
   /** Distinguishes the three scan outcomes so the remedy shown matches the actual cause (T1.3 item 7). */
@@ -660,10 +601,11 @@ export function renderHtml(
     <table class="opts">${sorted
       .map(o => {
         const key = o.flags.join('|');
-        const valueSourceCell = o.metavar
-          ? `<td><select class="valueSourceSelect" data-vs-id="${esc(tool.id)}" data-vs-label="${esc(
-              variantLabel
-            )}" data-vs-key="${esc(key)}" title="Where this flag's value comes from. Manage value lists themselves from the Parameters &amp; Value Lists panel.">
+        const valueSourceCell =
+          o.metavar && lists.length > 0
+            ? `<td><select class="valueSourceSelect" data-vs-id="${esc(tool.id)}" data-vs-label="${esc(
+                variantLabel
+              )}" data-vs-key="${esc(key)}" title="Where this flag's value comes from. Manage value lists themselves from the Parameters &amp; Value Lists panel.">
                 <option value="">free text</option>
                 ${lists
                   .map(
@@ -671,7 +613,6 @@ export function renderHtml(
                       `<option value="${esc(l.name)}" ${o.valueListName === l.name ? 'selected' : ''}>${esc(l.name)}</option>`
                   )
                   .join('')}
-                <option value="__new__">+ New value list…</option>
               </select></td>`
             : '<td></td>';
         return `<tr data-orig-idx="${origIndex.get(key) ?? 0}">
@@ -683,16 +624,7 @@ export function renderHtml(
           <td>${esc(o.flags.join(', '))}${metavarHtml(o.metavar)}</td>
           <td class="hint">${esc(o.description ?? '')}</td>
           ${valueSourceCell}
-        </tr>
-        <tr class="newListRow hidden" data-newlist-for="${esc(key)}"><td colspan="4">
-          <div class="newListInline">
-            name <input type="text" class="nlName" placeholder="e.g. Tests" style="width:120px;" />
-            from <select class="nlSourceType"><option value="command">command</option><option value="file">file</option></select>
-            source <input type="text" class="nlSource" placeholder="ls tests/*.sv or a command" style="width:220px;" />
-            <button type="button" class="primary small" data-create-list-id="${esc(tool.id)}" data-create-list-label="${esc(variantLabel)}" data-create-list-key="${esc(key)}">Create &amp; attach</button>
-            <button type="button" class="secondary small newListCancel">Cancel</button>
-          </div>
-        </td></tr>`;
+        </tr>`;
       })
       .join('')}</table>`;
   };
@@ -898,7 +830,7 @@ export function renderHtml(
   .hint { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
   ${HELP_CSS}
   ${BROWSE_CSS}
-  ${STEPS_CSS}
+  ${SETUP_ERROR_CSS}
   .err { color: var(--vscode-errorForeground); }
   .actions { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
   button {
@@ -940,14 +872,6 @@ export function renderHtml(
     background: none; border: none; cursor: pointer; padding: 0 4px 0 0; font-size: 1em;
     color: var(--vscode-descriptionForeground);
   }
-  .hidden { display: none; }
-  .newListRow td { padding-top: 6px; padding-bottom: 6px; }
-  .newListInline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 0.9em; }
-  .newListInline input, .newListInline select {
-    width: auto; margin-top: 0; padding: 3px 6px;
-    background: var(--vscode-input-background); color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px;
-  }
   .favBtn.favOn { color: var(--vscode-charts-yellow, #e2c08d); }
   pre {
     margin-top: 6px;
@@ -986,16 +910,11 @@ export function renderHtml(
       "that builder. Re-scanned automatically on every window reload, in case the tool's own flags changed."
   )}</h2>
 
-  ${stepperHtml(2, effectiveStatus)}
-  ${stepIntroHtml(2, effectiveStatus.tool, doneLine)}
-  ${stepRecipeHtml(2, effectiveStatus.tool, tools.length === 0)}
-
   ${tools.length > 0 ? tools.map(renderTool).join('') : '<div class="hint" style="margin-top:20px;">No tools registered yet.</div>'}
 
   ${pendingHtml}
 
   <div class="actions">
-    ${nextStepButtonHtml(2)}
     <button class="secondary" id="close">Close</button>
   </div>
 
@@ -1003,7 +922,7 @@ export function renderHtml(
     const vscode = acquireVsCodeApi();
     ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
-    ${STEPS_JS}
+    ${OPEN_STEP_JS}
     const $ = id => document.getElementById(id);
     const $req = id => { const el = $(id); if (!el) { throw new Error('missing element #' + id); } return el; };
     $req('close').addEventListener('click', () => vscode.postMessage({ type: 'close' }));
@@ -1238,39 +1157,13 @@ export function renderHtml(
       });
     });
     document.querySelectorAll('.valueSourceSelect').forEach(sel => {
-      sel.dataset.prevValue = sel.value;
       sel.addEventListener('change', () => {
-        if (sel.value === '__new__') {
-          const key = sel.getAttribute('data-vs-key');
-          const row = document.querySelector('.newListRow[data-newlist-for="' + CSS.escape(key) + '"]');
-          if (row) { row.classList.remove('hidden'); row.querySelector('.nlName').focus(); }
-          sel.value = sel.dataset.prevValue || '';
-          return;
-        }
-        sel.dataset.prevValue = sel.value;
         vscode.postMessage({
           type: 'setOptionValueSource',
           id: sel.getAttribute('data-vs-id'),
           label: sel.getAttribute('data-vs-label'),
           flagsKey: sel.getAttribute('data-vs-key'),
           listName: sel.value
-        });
-      });
-    });
-    document.querySelectorAll('.newListRow').forEach(row => {
-      const key = row.getAttribute('data-newlist-for');
-      row.querySelector('.newListCancel').addEventListener('click', () => row.classList.add('hidden'));
-      row.querySelector('[data-create-list-id]').addEventListener('click', btn0 => {
-        const btn = btn0.currentTarget;
-        showBusy();
-        vscode.postMessage({
-          type: 'createValueList',
-          id: btn.getAttribute('data-create-list-id'),
-          label: btn.getAttribute('data-create-list-label'),
-          flagsKey: btn.getAttribute('data-create-list-key'),
-          name: row.querySelector('.nlName').value,
-          sourceType: row.querySelector('.nlSourceType').value,
-          source: row.querySelector('.nlSource').value
         });
       });
     });

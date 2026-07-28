@@ -1,26 +1,39 @@
 # EDA Job Runner — test workspace
 
-A self-contained workspace for trying out the EDA Job Runner extension.
-It has two kinds of jobs, in two different folders:
+A self-contained workspace for trying out the EDA Job Runner extension,
+laid out in three parts:
 
-- **`PicoRV32 (real project)`** — a real, well-known open-source RISC-V
-  CPU ([PicoRV32](https://github.com/YosysHQ/picorv32)) with a genuine
-  self-checking testbench, compiled and simulated by four different real
-  tools. Start here if you want to see what actually using this
-  extension on a real design looks like. See
-  [projects/picorv32](projects/picorv32) below.
-- **Everything else** — mock/fixture jobs (bash scripts that mimic real
-  tool output, plus a trivial hand-written counter) built to exercise
-  specific extension behaviors in isolation (Stop, log truncation, log
-  history, ...). Good for testing the extension itself; not
-  representative of a real project's command lines. See
-  [Dev-testing fixtures](#dev-testing-fixtures) below.
+- **`Real Projects`** (the one sidebar folder) — two real, well-known
+  open-source CPU designs, each with a genuine self-checking testbench:
+  [PicoRV32](https://github.com/YosysHQ/picorv32) (a small sequential
+  RV32I core, compiled/simulated by four different real tools) and
+  [VeeR EH1](https://github.com/chipsalliance/Cores-VeeR-EH1) (a real,
+  silicon-proven 9-stage dual-issue RISC-V core, formerly Western
+  Digital's "SweRV," running an actual CoreMark benchmark). Start here
+  if you want to see what using this extension on a real design looks
+  like — see [Real project: PicoRV32](#real-project-picorv32) and
+  [Real project: VeeR EH1](#real-project-veer-eh1) below.
+- **Feature-showcase jobs** (ungrouped, deliberately kept out of `Real
+  Projects`) — jobs built to exercise one specific extension mechanism
+  each: `${randomSeed}`, `${param:NAME}` prompts, the Tool Setup builder
+  (including a per-job value-list override), custom Fail/Pass patterns,
+  a post-run command, and per-job `logsDirectory`/`postSetupCwd`
+  overrides. See [Feature-showcase jobs](#feature-showcase-jobs) below.
+- **Dev-testing fixtures** — mock/fixture jobs (bash scripts that mimic
+  real tool output, plus a trivial hand-written counter) built to
+  exercise Stop, log truncation, log history, and similar extension-only
+  behaviors in isolation. See [Dev-testing fixtures](#dev-testing-fixtures)
+  below.
 
 See [docs/eda-tools-setup.md](../docs/eda-tools-setup.md) for installing
 Icarus Verilog, Verilator, Questa-Altera FPGA Starter Edition, and Altair
 DSim yourself — DSim and Questa's simulator both need a free license from
 your own account; Questa's compiler and both Icarus and Verilator need
-no license at all.
+no license at all. VeeR EH1's own jobs need only Verilator, `g++`, `make`,
+and `perl` — all four already need to be installed for the rest of this
+workspace to be useful, and VeeR's build falls back to prebuilt test
+binaries automatically when no RISC-V cross-compiler is present (the
+expected case), so there's nothing extra to install for it specifically.
 
 ## Real project: PicoRV32
 
@@ -35,9 +48,9 @@ result to a memory-mapped address. It prints `TEST PASSED: ...` or
 `TEST FAILED: ...`, real pass/fail output from a real CPU core actually
 executing instructions — not a canned message.
 
-The `PicoRV32 (real project)` folder in the sidebar runs that same
-design through four different tools, each split into a Compile job and a
-Test job (see [why they're split](#compiletest-job-pairs-depend-on-each-other-running-in-order)
+The `Real Projects` folder in the sidebar runs that same design through
+four different tools, each split into a Compile job and a Test job (see
+[why they're split](#compiletest-job-pairs-depend-on-each-other-running-in-order)
 below — the same reasoning applies here):
 
 | Job | What it exercises |
@@ -50,6 +63,72 @@ below — the same reasoning applies here):
 Run any tool's Compile job then its matching Test job (in that order) —
 the log should end with `TEST PASSED: RV32I loop wrote result=10 to
 0x400`.
+
+## Real project: VeeR EH1
+
+[`projects/veer-eh1`](projects/veer-eh1) vendors the actual
+[VeeR EH1](https://github.com/chipsalliance/Cores-VeeR-EH1) core
+(unmodified, Apache-2.0 license — see
+[`projects/veer-eh1/NOTICE.md`](projects/veer-eh1/NOTICE.md) for the
+pinned commit), upstream's own build (`tools/Makefile`, driven by the
+Perl script `configs/veer.config`), and its own canned test programs.
+Where PicoRV32 is one file and a simple sequential core, VeeR EH1 is
+dozens of RTL files (`design/{ifu,dec,exu,lsu,dbg,dmi,lib}/`) implementing
+a real, silicon-proven 9-stage, dual-issue in-order pipeline with dynamic
+branch prediction — originally developed by Western Digital under the
+name "SweRV" and used in WD's own manufactured chips, later donated to
+CHIPS Alliance. If PicoRV32 is "a real project," VeeR EH1 is "a real
+project that's actually complex."
+
+The two `Real Projects` jobs for it:
+
+| Job | What it exercises |
+| --- | --- |
+| `VeeR EH1 Build+Run (Verilator, CoreMark)` | Runs upstream's `tools/Makefile` to generate the core's configuration, builds a Verilator model of the *whole testbench* (not just the core), then runs the actual [CoreMark](https://github.com/eembc/coremark) benchmark against it — a genuine ~5s simulation, not an instant toy, ending in a real self-checked `Correct operation validated` |
+| `VeeR EH1 Re-run (no rebuild)` | Re-executes the already-built `obj_dir/Vtb_top` binary directly — same Compile/Test-pair dependency as PicoRV32 above: run the Build+Run job at least once first |
+
+No RISC-V cross-compiler is needed — the build automatically falls back
+to `testbench/hex/cmark.hex`, a prebuilt program checked into the
+upstream repo, whenever `riscv64-unknown-elf-gcc` isn't on `PATH` (the
+expected case). The log ends with `TEST_PASSED` and
+`Finished : minstret = 303700, mcycle = 586649` — real retired-instruction
+and cycle counts from a real (simulated) CPU, not a canned string.
+
+## Feature-showcase jobs
+
+Ungrouped on purpose — `Real Projects` stays reserved for the two real
+designs above. Each job here is built to exercise exactly one mechanism:
+
+| Job | What it exercises |
+| --- | --- |
+| `long_regression (pass, ~28s)` / `(fail, ~28s)` | A genuinely longer mock run (`scripts/mock_regression.sh`, 5 staged sub-tests, ~28s total, output streamed incrementally rather than printed all at once) — use these instead of `smoke_test`/`regression` above to actually watch the live elapsed-time ticker or "Follow Running Log" do something over time. Uses `${randomSeed}` — try **Re-run Last** afterward, and check the Log Viewer's Seed column picks it up |
+| `mock_tool: sim (param prompt + seed, no builder link)` | `${param:TESTNAME=smoke_test}` — prompts once and remembers the answer for next time, independent of `${randomSeed}` in the same command |
+| `mock_tool: sim (Tool Setup builder demo)` | A job actually linked to a registered tool (`toolId`/`toolVariantLabel`) with a custom argument (`--parallel 2`) added via the builder's escape hatch — open Configure to see the real checkbox builder pre-populated, not just a typed Command string |
+| `mock_tool: sim (per-job value-list override)` | Same tool/variant, but this job's `-t/--test` flag is overridden (`optionListOverrides`) to source its dropdown from the `smoke_subset` list instead of the tool's own default `test` list — open Configure's ⚙ on the Test flag to see the difference |
+| `fail_pattern (exits 0 but really failed)` | Exits `0` but prints a real `UVM_ERROR` line; a custom **Fail pattern** on the job overrides the sidebar to failed anyway |
+| `pass_pattern (exits nonzero but really passed)` | The inverse: exits `3` but prints `ALL TESTS PASSED`; a custom **Pass pattern** overrides the sidebar to passed |
+| `post_run_demo (notification after finish)` | A checkbox-gated post-run command, fired once the job itself finishes |
+| `custom_logs_dir (per-job logsDirectory override)` | This job's logs land in `scratch-logs/` instead of the workspace's normal logs directory |
+| `custom_cwd (per-job postSetupCwd override)` | This job's shell starts inside `projects/picorv32` instead of the workspace root — `pwd`/`ls` in its own log prove it |
+| `mock_tool: sim (global parameter reference)` | `${var:PROJECT_TAG}` — a workspace-wide **Parameter** (Parameters & Value Lists panel), resolved silently into the command every run, unlike `${param:...}` above which prompts |
+| `mock_tool: sim (per-job parameter override)` | Same `${var:PROJECT_TAG}` reference, but this job overrides the value to `regression-v2` for itself only (`paramOverrides`) — every other job keeps seeing the workspace-wide value |
+| `mock_tool: compile (variant demo)` | Links to `mock_tool.sh`'s `compile` sub-command (a different variant than `sim` above) — open Configure to see a completely different set of checkboxes for the same registered tool |
+| `mock_tool: report (variant demo, no flags)` | The `report` sub-command, which takes no flags at all — the simplest possible variant, and the third of `mock_tool.sh`'s three registered variants exercised here |
+
+`uvm_testname` (Parameters & Value Lists panel) is a value list deliberately
+left **unattached** to any tool flag — it shows up as its own row in every
+job's Configure form, with its picked value written in as
+`+UVM_TESTNAME=${value}` (its custom insert template) instead of a plain
+`--flag value`, matching a real plusarg-style CLI convention.
+
+`smoke_test (pass)` is this workspace's default job (F5 / **EDA: Run
+Default Job**) — the fastest, always-passing one, so F5 always does
+something safe.
+
+Two job **templates** (Configure → Save as Template / the "New Job"
+template picker) are also included: "Mock UVM smoke test" and "Mock Tool
+sim (builder)" — the latter pre-fills a tool/variant link, not just a
+Command string.
 
 ## Dev-testing fixtures
 
@@ -79,7 +158,7 @@ here is lint-only, with no sim counterpart.)
    from the main repo to launch an Extension Development Host).
 2. Open **this folder** (`examples/`) as its own VS Code workspace —
    not the repo root. `.vscode/eda-jobs.json` here defines every job in
-   both this section and the PicoRV32 section above.
+   this section and both real-project sections above.
 3. Open the "EDA Jobs" view in the activity bar and click ▶ on a job.
 
 ## Fixture jobs
@@ -170,6 +249,31 @@ so `Stop` still kills everything correctly.
 - Run `Questa Compile` then `Questa Test` (in that order, needs a valid
   `SALT_LICENSE_SERVER`) — `Questa Test` should print `PASS: counter
   reached expected value (19)` from inside a real `vsim` run.
+- Run `VeeR EH1 Build+Run (Verilator, CoreMark)` — takes a few seconds
+  longer than anything else here (real Verilator + g++ compile, then a
+  real ~5s simulation); the log should end `TEST_PASSED`. Then run
+  `VeeR EH1 Re-run (no rebuild)` — much faster, same result, no rebuild.
+- Run `long_regression (pass, ~28s)` and actually watch it via "Follow
+  Running Log" — output should stream in over the full ~28s, not appear
+  as one burst at the end. Try **Re-run Last** afterward.
+- Open Configure on `mock_tool: sim (Tool Setup builder demo)` — the
+  checkbox builder should already show `Test`/`--rng-init`/`--std`
+  checked, matching the job's Command, plus a custom argument row for
+  `--parallel 2`.
+- Run `fail_pattern (exits 0 but really failed)` — sidebar shows
+  **failed** despite a real exit code of 0. Run `pass_pattern (exits
+  nonzero but really passed)` — the inverse, sidebar shows **passed**
+  despite a real nonzero exit.
+- Run `mock_tool: sim (global parameter reference)` and `mock_tool: sim
+  (per-job parameter override)` back to back — the log should show
+  `smoke-v1` for the first and `regression-v2` for the second, both from
+  the same `${var:PROJECT_TAG}` in the Command.
+- Open Configure on `mock_tool: compile (variant demo)` and `mock_tool:
+  report (variant demo, no flags)` — each should show the checkbox
+  builder for its own sub-command's flags (or none, for `report`), not
+  `sim`'s.
+- Press F5 (or **EDA: Run Default Job**) with no job selected — it
+  should run `smoke_test (pass)`, this workspace's default job.
 
 ## Full Phase-3 testing checklist
 

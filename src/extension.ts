@@ -27,7 +27,6 @@ import { ToolStore } from './toolStore';
 import { ToolSetupPanel } from './toolSetupPanel';
 import { scanTool, scanAllLists } from './toolIntrospect';
 import { planListMigration } from './listMigration';
-import { createExampleJobs } from './exampleJobs';
 
 export function activate(context: vscode.ExtensionContext): void {
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -88,9 +87,9 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('eda-job-runner.addJob', () => addJob(jobStore, toolStore, folder, jobRunner, context)),
+    vscode.commands.registerCommand('eda-job-runner.addJob', () => addJob(jobStore, toolStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.configureJob', (item: EdaTreeElement) =>
-      item ? JobConfigPanel.createOrShow(jobStore, toolStore, folder, jobRunner, context, item.job) : undefined
+      item ? JobConfigPanel.createOrShow(jobStore, toolStore, folder, item.job) : undefined
     ),
     vscode.commands.registerCommand('eda-job-runner.deleteJob', (item: EdaTreeElement) => deleteJob(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.saveJobAsTemplate', (item: EdaTreeElement) => saveJobAsTemplate(jobStore, item)),
@@ -98,15 +97,14 @@ export function activate(context: vscode.ExtensionContext): void {
       jobStore.duplicateJob(item.job.id)
     ),
     vscode.commands.registerCommand('eda-job-runner.refresh', () => jobStore.load()),
-    vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, toolStore, folder, logManager, jobRunner, context)),
-    vscode.commands.registerCommand('eda-job-runner.configureTools', () => ToolSetupPanel.createOrShow(toolStore, jobStore, folder, jobRunner, context)),
-    vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore, toolStore, folder, jobRunner, context)),
+    vscode.commands.registerCommand('eda-job-runner.configureShell', () => ShellEnvPanel.createOrShow(jobStore, toolStore, folder, logManager, jobRunner)),
+    vscode.commands.registerCommand('eda-job-runner.configureTools', () => ToolSetupPanel.createOrShow(toolStore, jobStore, folder)),
+    vscode.commands.registerCommand('eda-job-runner.configureParams', () => ParamsPanel.createOrShow(jobStore, folder)),
     vscode.commands.registerCommand('eda-job-runner.refreshValueLists', () => refreshValueLists(jobStore, folder)),
-    vscode.commands.registerCommand('eda-job-runner.createExampleJobs', () => createExampleJobs(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.openLogViewer', () => LogViewerPanel.createOrShow(jobStore, logManager, toolStore)),
     vscode.commands.registerCommand('eda-job-runner.addFolder', () => addFolder(jobStore)),
     vscode.commands.registerCommand('eda-job-runner.addJobInFolder', (item: FolderTreeItem) =>
-      item ? JobConfigPanel.createOrShow(jobStore, toolStore, folder, jobRunner, context, undefined, item.folderName) : undefined
+      item ? JobConfigPanel.createOrShow(jobStore, toolStore, folder, undefined, item.folderName) : undefined
     ),
     vscode.commands.registerCommand('eda-job-runner.renameFolder', (item: FolderTreeItem) => renameFolder(jobStore, item)),
     vscode.commands.registerCommand('eda-job-runner.deleteFolder', (item: FolderTreeItem) => deleteFolder(jobStore, item)),
@@ -161,12 +159,9 @@ export function activate(context: vscode.ExtensionContext): void {
       item ? jobRunner.clearLanes(item.job.id) : undefined
     ),
     // Opens this specific row's own log — the primary's latest run, or one
-    // exact lane's log when invoked on a run inside a job group. `quiet`
-    // (D1) is set by a plain click on a never-run row's default command --
-    // it just selects the row instead of popping a "run it first" toast;
-    // an explicit context-menu invocation always keeps the toast.
-    vscode.commands.registerCommand('eda-job-runner.openLog', (item: JobTreeItem, options?: { quiet?: boolean }) =>
-      item ? openLogForJob(item.job, item.status.logPath, options?.quiet ?? false) : undefined
+    // exact lane's log when invoked on a run inside a job group.
+    vscode.commands.registerCommand('eda-job-runner.openLog', (item: JobTreeItem) =>
+      item ? openLogForJob(item.job, item.status.logPath) : undefined
     ),
     vscode.commands.registerCommand('eda-job-runner.openLogHistory', (item: EdaTreeElement) =>
       openLogHistory(logManager, item)
@@ -313,14 +308,8 @@ async function migrateMaxConcurrentJobs(folder: vscode.WorkspaceFolder): Promise
   await config.update('maxConcurrentJobs', legacyValue ? 0 : 1, target);
 }
 
-function addJob(
-  jobStore: JobStore,
-  toolStore: ToolStore,
-  folder: vscode.WorkspaceFolder,
-  jobRunner: JobRunner,
-  context: vscode.ExtensionContext
-): void {
-  JobConfigPanel.createOrShow(jobStore, toolStore, folder, jobRunner, context);
+function addJob(jobStore: JobStore, toolStore: ToolStore, folder: vscode.WorkspaceFolder): void {
+  JobConfigPanel.createOrShow(jobStore, toolStore, folder);
 }
 
 async function saveJobAsTemplate(jobStore: JobStore, item: EdaTreeElement): Promise<void> {
@@ -497,11 +486,9 @@ function openLiveLog(jobRunner: JobRunner, folder: vscode.WorkspaceFolder, job: 
   LogLiveView.show(job.name, filePath);
 }
 
-async function openLogForJob(job: JobDefinition, logPath: string | undefined, quiet = false): Promise<void> {
+async function openLogForJob(job: JobDefinition, logPath: string | undefined): Promise<void> {
   if (!logPath) {
-    if (!quiet) {
-      void vscode.window.showInformationMessage(`No logs yet for "${job.name}" — run it first.`);
-    }
+    void vscode.window.showInformationMessage(`No logs yet for "${job.name}" — run it first.`);
     return;
   }
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(logPath));

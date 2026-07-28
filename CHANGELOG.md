@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.1.1 — Trim back to what earns its keep day to day
+
+v1.1.0's setup-flow overhaul was built for a new user's first run. Used
+solo instead, most of that onboarding polish was just in the way — this
+release keeps only the pieces that kept paying off after the first day,
+and reverts the rest back to how it worked before.
+
+**Kept:** the Test Shell Setup probe console, Tool Setup's self-explaining
+scan failures, the job form's "Will run" preview, and `maxConcurrentJobs`.
+
+**Reverted to pre-1.1.0 behavior:**
+- Removed the ① Environment → ② Tool → ③ Job stepper, its banners, and
+  the inline "How do I fill this in?" recipes from every panel.
+- Job form: back to its original field order, with plain Save/Cancel
+  instead of Save & Run, no sticky action bar, and the template row
+  always shown instead of only once a template exists.
+- Removed inline value-list creation from Tool Setup; Parameters &
+  Value Lists goes back to explicit Save/Cancel instead of autosave.
+- Removed the sidebar's "Create Example Jobs" empty-state offer.
+- A job row click reverts to opening the log with a "run it first"
+  toast on a never-run job (the inline Configure gear icon stays).
+- The status bar reverts to hiding when nothing is running.
+- Removed the extra Ctrl+Alt+R/Cmd+Alt+R keybinding (F5 only).
+- Removed the "Use My VS Code Terminal Shell" autofill button in Shell
+  & Environment — type `shellPath`/`shellArgs` by hand.
+
+**Fixes:**
+- The inline Configure gear icon now also shows on a job that has run
+  as a repeat-count batch, not just a never-batched job — previously
+  the only way back to Configure on those was a right-click, or
+  clearing the run history first.
+- Starting a fresh single run of a job that previously ran as a batch
+  now automatically clears its stale batch history, instead of leaving
+  it grouped until a manual "Clear Run History".
+
 ## 1.1.0 — The setup flow: ① Environment → ② Tool → ③ Job
 
 A ground-up review of the first-run experience (full findings and design
