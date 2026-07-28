@@ -1,5 +1,0 @@
-{
-    "eda-job-runner.shellPath": "bash",
-    "eda-job-runner.logRetentionCount": 20,
-    "eda-job-runner.logRetentionMaxSizeMB": 0
-}
