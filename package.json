@@ -2,7 +2,7 @@
   "name": "eda-job-runner",
   "displayName": "EDA Job Runner",
   "description": "Tool-agnostic sidebar for running and tracking EDA compile/simulation jobs (Xcelium, Questa, or any custom script) without leaving VS Code.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "CaioPlazas",
   "license": "GPL-3.0",
   "icon": "media/icon.png",
@@ -41,6 +41,7 @@
     "workspace"
   ],
   "categories": [
+    "Testing",
     "Other"
   ],
   "activationEvents": [
@@ -68,7 +69,7 @@
     "viewsWelcome": [
       {
         "view": "edaJobRunnerView",
-        "contents": "No EDA jobs configured yet.\n[Add Job](command:eda-job-runner.addJob)\n\nJobs are stored in `.vscode/eda-jobs.json` and can also be edited by hand.",
+        "contents": "No jobs yet.\n[Create example jobs](command:eda-job-runner.createExampleJobs)\n[Add Job](command:eda-job-runner.addJob)\n\nExample jobs need nothing installed — try Run, Stop, and the log.\n\nSetting up real tools takes three steps:\n[① Environment](command:eda-job-runner.configureShell) → [② Tool](command:eda-job-runner.configureTools) → [③ Job](command:eda-job-runner.addJob)",
         "when": "workspaceFolderCount != 0"
       },
       {
@@ -119,13 +120,17 @@
       },
       {
         "command": "eda-job-runner.configureParams",
-        "title": "EDA: Configure Parameters",
+        "title": "EDA: Configure Parameters & Value Lists",
         "icon": "$(symbol-variable)"
       },
       {
         "command": "eda-job-runner.refreshValueLists",
         "title": "EDA: Refresh Value Lists",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "eda-job-runner.createExampleJobs",
+        "title": "EDA: Create Example Jobs"
       },
       {
         "command": "eda-job-runner.openLogViewer",
@@ -258,12 +263,12 @@
       "view/item/context": [
         {
           "command": "eda-job-runner.runJob",
-          "when": "view == edaJobRunnerView && viewItem =~ /^edaJob-(?!running)/ && !edaJobRunner.anyJobRunning",
+          "when": "view == edaJobRunnerView && viewItem =~ /^edaJob-(?!running)/",
           "group": "inline@1"
         },
         {
           "command": "eda-job-runner.runJob",
-          "when": "view == edaJobRunnerView && viewItem == edaJobGroup-idle && !edaJobRunner.anyJobRunning",
+          "when": "view == edaJobRunnerView && viewItem == edaJobGroup-idle",
           "group": "inline@1"
         },
         {
@@ -282,18 +287,18 @@
           "group": "inline@1"
         },
         {
-          "command": "eda-job-runner.openLog",
-          "when": "view == edaJobRunnerView && viewItem =~ /^(edaJob-|edaJobRun-)/",
+          "command": "eda-job-runner.configureJob",
+          "when": "view == edaJobRunnerView && viewItem =~ /^edaJob-/",
           "group": "inline@2"
         },
         {
           "command": "eda-job-runner.runJob",
-          "when": "view == edaJobRunnerView && viewItem =~ /^edaJob-(?!running)/ && !edaJobRunner.anyJobRunning",
+          "when": "view == edaJobRunnerView && viewItem =~ /^edaJob-(?!running)/",
           "group": "1_run@1"
         },
         {
           "command": "eda-job-runner.runJob",
-          "when": "view == edaJobRunnerView && viewItem == edaJobGroup-idle && !edaJobRunner.anyJobRunning",
+          "when": "view == edaJobRunnerView && viewItem == edaJobGroup-idle",
           "group": "1_run@1"
         },
         {
@@ -491,6 +496,12 @@
         "command": "eda-job-runner.runDefaultJob",
         "key": "f5",
         "when": "edaJobRunner.hasDefaultJob && !inDebugMode"
+      },
+      {
+        "command": "eda-job-runner.runDefaultJob",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "edaJobRunner.hasDefaultJob"
       }
     ],
     "configuration": {
@@ -568,11 +579,18 @@
           "minimum": 0,
           "description": "Fallback grace period (seconds) for a killSignals stage that doesn't specify its own graceSeconds."
         },
+        "eda-job-runner.logParseBudgetMB": {
+          "type": "number",
+          "default": 200,
+          "minimum": 1,
+          "description": "Maximum amount (MB) of a run's output fed into error/warning parsing and Fail/Pass pattern matching -- NOT a log file size limit. Once exceeded, parsing stops (with a marker) but the job keeps running and its full output keeps being recorded to the log file regardless, since the log file is written directly by the job's own process. To bound disk usage, use logRetentionCount and/or logRetentionMaxSizeMB (Shell & Environment panel) instead -- unrelated settings despite the similar name."
+        },
         "eda-job-runner.logMaxSizeMB": {
           "type": "number",
           "default": 200,
           "minimum": 1,
-          "description": "Maximum amount (MB) of a run's output fed into error/warning parsing and Fail/Pass pattern matching -- NOT a log file size limit, despite the name (kept for settings.json compatibility). Once exceeded, parsing stops (with a marker) but the job keeps running and its full output keeps being recorded to the log file regardless -- since v0.30.0 the log file is written directly by the job's own process, so this setting no longer bounds the file itself. To bound disk usage, use logRetentionCount and/or logRetentionMaxSizeMB (Shell & Environment panel) instead -- unrelated settings despite the similar name."
+          "deprecationMessage": "Renamed to logParseBudgetMB (same meaning -- the old name was too easily confused with a log file size limit, which this never was). Still honored as a fallback if set and logParseBudgetMB isn't.",
+          "description": "Deprecated -- see logParseBudgetMB. Maximum amount (MB) of a run's output fed into error/warning parsing and Fail/Pass pattern matching -- NOT a log file size limit, despite the name (kept for settings.json compatibility)."
         },
         "eda-job-runner.logRetentionCount": {
           "type": "number",
@@ -589,6 +607,7 @@
         "eda-job-runner.stripAnsiCodes": {
           "type": "boolean",
           "default": true,
+          "deprecationMessage": "No longer has any effect since v0.30.0 -- kept registered only for settings.json backward compatibility.",
           "description": "No longer has any effect since v0.30.0: the log file is now written directly by the job's own process (needed so capture survives a window reload) and can no longer be selectively stripped before writing. Error/warning parsing always strips ANSI codes internally regardless of this setting. Kept registered for backward compatibility with existing settings.json files."
         },
         "eda-job-runner.failOnLogErrors": {
@@ -609,12 +628,27 @@
         "eda-job-runner.experimentalMultipleRuns": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "**Experimental.** Allow more than one *different* job to run at the same time, instead of the default one-job-at-a-time restriction. A single job can never run concurrently with itself either way — its own **Repeat count** (Advanced settings) is the only way to run it again, always sequentially."
+          "deprecationMessage": "Replaced by maxConcurrentJobs (0 = unlimited, matching what 'true' meant here; 1 = one at a time, matching 'false'). Migrated automatically the first time this workspace loads with the new setting untouched.",
+          "markdownDescription": "**Deprecated** — see `maxConcurrentJobs`. Allow more than one *different* job to run at the same time, instead of the default one-job-at-a-time restriction. A single job can never run concurrently with itself either way — its own **Repeat count** (Advanced settings) is the only way to run it again, always sequentially."
+        },
+        "eda-job-runner.maxConcurrentJobs": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "markdownDescription": "Maximum number of *different* jobs allowed to run at the same time. `0` = unlimited (the default) — compiling in one directory while a sim runs in another is table stakes, not something to gate behind an experimental flag. Set to `1` to restore the old one-job-at-a-time behavior. A single job can never run concurrently with itself either way — its own **Repeat count** (Advanced settings) is the only way to run it again, always sequentially. Configure from the Shell & Environment panel."
         },
         "eda-job-runner.experimentalAutoSaveJobConfig": {
           "type": "boolean",
           "default": false,
           "markdownDescription": "**Experimental.** Auto-save a job's Configure form as you edit it (on typing/change/blur/Enter, debounced) instead of relying on the Save button — Save still works either way, and the tab never closes on its own."
+        },
+        "eda-job-runner.setupChecks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra commands to run (through the same shell setup as every job) each time you click **Test Shell Setup** in the Shell & Environment panel — e.g. a license-server check or a `which` for a tool not yet registered. Managed from that panel's *Also check* field; rarely worth hand-editing here."
         }
       }
     }

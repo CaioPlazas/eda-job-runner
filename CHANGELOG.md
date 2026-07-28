@@ -1,5 +1,87 @@
 # Changelog
 
+## 1.1.0 — The setup flow: ① Environment → ② Tool → ③ Job
+
+A ground-up review of the first-run experience (full findings and design
+rationale kept in the project's own planning docs) turned into this
+release. The core diagnosis: every panel was a faithful editor for one
+JSON structure, when a verification engineer thinks "run my sim, tell me
+if it passed" — not "edit my JobDefinition." Setup also has a strict,
+code-enforced dependency order (shell → tool scan → job command) that
+nothing in the UI expressed, so failures pointed the wrong way. This
+release makes that order visible, explains each step inline, and closes
+several real dead ends along the way. Nothing existing was removed —
+everything advanced stays, it just stops being the first thing in the
+way.
+
+**The setup flow.** Shell & Environment, Tool Setup, the job form, and
+Parameters & Value Lists now share a stepper (① Environment → ② Tool →
+③ Job, plus an optional ④ Parameters outside the arrow chain). Each step
+carries a self-erasing banner (what it's for, when to skip it, how you
+know you're done — collapses to one line once satisfied) and a "How do I
+fill this in?" recipe anchored to a terminal where your tool already
+works.
+
+**Verification, not guesswork:**
+- **Test Shell Setup** is now a probe console: shows the exact shell
+  invocation and working directory, auto-checks every registered tool via
+  `command -v`, plus a persistent free-text "Also check" list — all
+  through a single shell spawn.
+- **Tool Setup scan failures are self-explaining**: the exact probe
+  command that ran, which of three distinct causes it was (launch
+  failure / printed nothing / printed but nothing parsed), one-click
+  `-help`/`-h` retries, and a **[Find it]** button that checks whether
+  the command even resolves on PATH before you scan.
+- **The job form gets a live "Will run" preview** under Command: resolved
+  working directory, shell invocation, and fully substituted command,
+  with undefined `${var:NAME}` flagged inline and a one-click **[Define]**
+  fix. **[Copy]** and **[Open in terminal ▸]** let you debug with your own
+  tools instead of inferring from a log.
+- **A new value list can be created inline** from any option's value-
+  source dropdown in Tool Setup — no more register-tool → leave-to-
+  Parameters → return-to-attach round trip.
+
+**Real bug fixes:**
+- A whitespace-only `setup.script` or a blank entry in `setup.commands`
+  used to break Tool Setup's Scan and value-list Refresh while the
+  identical job ran fine — the three separate places that assembled the
+  setup chain disagreed on blank-filtering. Unified into one function,
+  with a golden test locking in the previously-correct behavior.
+- A repeat-count batch (`runCount: 10`) fired one toast per iteration;
+  now fires one summary toast (`"job" finished — N passed, M failed.`)
+  unless the batch was stopped by the user.
+- The Parameters panel's help text pointed at "the puzzle-piece icon,"
+  which doesn't exist — Parameters actually uses a different glyph.
+
+**New in the job list and job form:**
+- **Create Example Jobs** — three jobs (pass, fail, a killable slow one)
+  needing nothing installed, offered from the sidebar's empty state
+  before the real-tool setup steps.
+- Single-click on a job row now opens its latest log quietly (no
+  "run it first" toast on a never-run job); Configure moved to an
+  inline gear icon.
+- **Save & Run** is the job form's new primary action, closing the
+  create-then-verify loop in one click. Field order reshuffled around how
+  people actually think about a job (Name → Command → Tool builder →
+  Working Directory → Folder → Default-job checkbox → Parameters →
+  Advanced), the template row only appears once a template exists, and
+  the action bar is sticky.
+- New `maxConcurrentJobs` setting (default `0` = unlimited) replaces the
+  `experimentalMultipleRuns` flag — running different jobs side by side
+  is table stakes, not something to gate behind an experimental flag.
+  Old setting migrates automatically and still works if already set.
+- Parameters & Value Lists (renamed from "Parameters") now autosaves
+  parameter rows immediately, matching how value lists already behaved.
+- Tool Setup now lists registered tools before the (now collapsed)
+  add-a-tool form.
+- The status bar is now a persistent anchor: shows the last result once
+  anything has run, or a neutral placeholder before that, instead of
+  disappearing whenever nothing is running.
+- `logMaxSizeMB` renamed to `logParseBudgetMB` (old name still works,
+  deprecated); `stripAnsiCodes` marked deprecated in the Settings UI.
+- Added Ctrl+Alt+R / Cmd+Alt+R as an additional Run Default Job binding
+  alongside F5, for workspaces where F5 collides with a debugger.
+
 ## 1.0.0 — Stable release
 
 No functional changes from 0.43.0. This release promotes the extension from

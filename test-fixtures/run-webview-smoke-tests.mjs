@@ -78,6 +78,21 @@ const job = {
   paramOverrides: { X: '1' }
 };
 
+const toolWithScanError = {
+  id: 'tool-2',
+  command: 'xrun',
+  helpArg: '--help',
+  variants: [
+    {
+      label: '',
+      selectArgs: [],
+      options: [],
+      rawHelp: '',
+      scanError: 'exited 127 with no recognizable options'
+    }
+  ]
+};
+
 const templates = [{ name: 'Smoke', command: 'questa_run.sh -t smoke_test', cwd: '.' }];
 const globalParams = [{ name: 'X', value: '1' }];
 const folders = ['Regression'];
@@ -92,7 +107,20 @@ const shellState = {
   postSetupCwd: '',
   logsDirectory: '',
   logRetentionCount: 20,
-  logRetentionMaxSizeMB: 0
+  logRetentionMaxSizeMB: 0,
+  maxConcurrentJobs: 0,
+  setupChecks: '',
+  registeredTools: [{ name: 'xrun', command: 'xrun' }],
+  detectedShellMatches: true,
+  detectedShellPath: 'bash',
+  detectedShellSource: 'vscode.env.shell',
+  status: { env: 'todo', tool: 'ok', job: 'ok', params: 'todo' },
+  doneLine: undefined
+};
+const shellStateTested = {
+  ...shellState,
+  status: { env: 'ok', tool: 'ok', job: 'ok', params: 'ok' },
+  doneLine: '✓ Shell setup tested.'
 };
 
 // ---- jsdom execution harness ----
@@ -145,9 +173,20 @@ function checkState(name, html) {
 
 {
   const { renderHtml } = await import(bundle('./src/jobConfigPanel.ts', 'jobConfig'));
-  checkState('jobConfig', renderHtml(fakeWebview, job, [tool], folders, undefined, false, globalParams, templates, lists));
-  checkState('jobConfig-new', renderHtml(fakeWebview, undefined, [tool], folders, undefined, false, globalParams, templates, lists));
+  const configureHtml = renderHtml(fakeWebview, job, [tool], folders, undefined, false, globalParams, templates, lists);
+  const addHtml = renderHtml(fakeWebview, undefined, [tool], folders, undefined, false, globalParams, templates, lists);
+  checkState('jobConfig', configureHtml);
+  checkState('jobConfig-new', addHtml);
   checkState('jobConfig-nolists', renderHtml(fakeWebview, job, [tool], folders, undefined, false, globalParams, templates, []));
+  const addNoTemplatesHtml = renderHtml(fakeWebview, undefined, [tool], folders, undefined, false, globalParams, [], lists);
+  checkState('jobConfig-new-notemplates', addNoTemplatesHtml);
+  // T2.2: the template row is absent (hidden) when there are zero templates, present when there are.
+  check(addNoTemplatesHtml.includes('class="templateRow hidden"'), 'template row is hidden with zero templates');
+  check(!addHtml.includes('class="templateRow hidden"'), 'template row is shown when templates exist');
+  // D10: the stepper renders only when adding a job, never when configuring an existing one.
+  check(addHtml.includes('class="stepper"'), 'jobConfig-new (Add) shows the stepper');
+  check(!configureHtml.includes('class="stepper"'), 'jobConfig (Configure existing) has no stepper');
+  check(addHtml.includes('id="willRun"') && configureHtml.includes('id="willRun"'), 'Will-run preview is present in both Add and Configure (verification, not onboarding)');
 }
 
 {
@@ -164,12 +203,14 @@ function checkState(name, html) {
   };
   checkState('toolSetup-pending', renderHtml(fakeWebview, [tool], lists, pendingAdd, undefined, undefined));
   checkState('toolSetup-addvariant', renderHtml(fakeWebview, [tool], lists, undefined, undefined, tool.id));
+  checkState('toolSetup-scanerror', renderHtml(fakeWebview, [toolWithScanError], lists, undefined, undefined, undefined));
   checkState('toolSetup-empty', renderHtml(fakeWebview, [], [], undefined, undefined, undefined));
 }
 
 {
   const { renderHtml } = await import(bundle('./src/shellEnvPanel.ts', 'shellEnv'));
   checkState('shellEnv', renderHtml(fakeWebview, shellState));
+  checkState('shellEnv-tested', renderHtml(fakeWebview, shellStateTested));
 }
 
 {

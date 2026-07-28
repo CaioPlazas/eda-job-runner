@@ -1,12 +1,17 @@
 import * as vscode from 'vscode';
 import { ToolStore } from './toolStore';
 import { JobStore } from './jobStore';
-import { ToolDefinition, ToolOption, ToolVariant, ValueList } from './types';
-import { scanVariant, scanTool } from './toolIntrospect';
+import { JobRunner } from './jobRunner';
+import { ToolDefinition, ToolOption, ToolVariant, ValueList, JobsFileSetup } from './types';
+import { scanVariant, scanTool, discoverList } from './toolIntrospect';
 import { detectSubcommandChoices, mergeFavorites, parseChoices } from './toolOptionParser';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
+import { runProbeChecks } from './webviewProbe';
+import { STEPS_CSS, STEPS_JS, stepperHtml, stepIntroHtml, stepRecipeHtml, nextStepButtonHtml, setupErrorHtml, StepId, StepStatus } from './webviewSteps';
+import { computeStepStatus, doneLineFor } from './setupState';
+import { buildSetupChain } from './setupChain';
 import { BUILTIN_SEED_PATTERNS } from './seedDetect';
 
 interface ScanNewMessage {
@@ -83,8 +88,32 @@ interface SetOptionValueSourceMessage {
   flagsKey: string;
   listName: string;
 }
+interface CreateValueListMessage {
+  type: 'createValueList';
+  id: string;
+  label: string;
+  flagsKey: string;
+  name: string;
+  sourceType: 'file' | 'command';
+  source: string;
+}
 interface CloseMessage {
   type: 'close';
+}
+interface FindItMessage {
+  type: 'findIt';
+  requestId: number;
+  command: string;
+  scanDir: string;
+}
+interface TryHelpArgMessage {
+  type: 'tryHelpArg';
+  id: string;
+  helpArg: string;
+}
+interface OpenStepMessage {
+  type: 'openStep';
+  step: StepId;
 }
 
 type WebviewMessage =
@@ -103,7 +132,11 @@ type WebviewMessage =
   | RemoveVariantMessage
   | ToggleFavoriteMessage
   | SetOptionValueSourceMessage
+  | CreateValueListMessage
   | CloseMessage
+  | FindItMessage
+  | TryHelpArgMessage
+  | OpenStepMessage
   | BrowseMessage
   | ClientErrorMessage;
 
@@ -112,7 +145,7 @@ interface PendingAdd {
   helpArg: string;
   displayName: string;
   scanDir: string;
-  topLevel: { options: ToolOption[]; rawHelp: string; scanError?: string };
+  topLevel: { options: ToolOption[]; rawHelp: string; scanError?: string; probeCommand?: string };
   suggestedChoices: string[];
 }
 
@@ -125,7 +158,13 @@ export class ToolSetupPanel {
   private editingToolId: string | undefined;
   private addingVariantForToolId: string | undefined;
 
-  static createOrShow(toolStore: ToolStore, jobStore: JobStore, folder: vscode.WorkspaceFolder): void {
+  static createOrShow(
+    toolStore: ToolStore,
+    jobStore: JobStore,
+    folder: vscode.WorkspaceFolder,
+    jobRunner: JobRunner,
+    context: vscode.ExtensionContext
+  ): void {
     if (ToolSetupPanel.current) {
       ToolSetupPanel.current.panel.reveal();
       return;
@@ -134,14 +173,16 @@ export class ToolSetupPanel {
       enableScripts: true,
       retainContextWhenHidden: true
     });
-    ToolSetupPanel.current = new ToolSetupPanel(panel, toolStore, jobStore, folder);
+    ToolSetupPanel.current = new ToolSetupPanel(panel, toolStore, jobStore, folder, jobRunner, context);
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly toolStore: ToolStore,
     private readonly jobStore: JobStore,
-    private readonly folder: vscode.WorkspaceFolder
+    private readonly folder: vscode.WorkspaceFolder,
+    private readonly jobRunner: JobRunner,
+    private readonly context: vscode.ExtensionContext
   ) {
     this.panel = panel;
     this.render();
@@ -152,13 +193,18 @@ export class ToolSetupPanel {
   }
 
   private render(): void {
+    const status = computeStepStatus(this.toolStore, this.jobStore, this.jobRunner, this.context, this.folder);
     this.panel.webview.html = renderHtml(
       this.panel.webview,
       this.toolStore.getTools(),
       this.jobStore.getLists(),
       this.pendingAdd,
       this.editingToolId,
-      this.addingVariantForToolId
+      this.addingVariantForToolId,
+      this.jobStore.getSetup(),
+      this.folder.uri.fsPath,
+      status,
+      doneLineFor(2, status, this.toolStore, this.jobStore, this.jobRunner)
     );
   }
 
@@ -174,6 +220,62 @@ export class ToolSetupPanel {
       case 'clientError':
         return handleClientErrorMessage(msg);
 
+      case 'openStep':
+        await vscode.commands.executeCommand(
+          msg.step === 1
+            ? 'eda-job-runner.configureShell'
+            : msg.step === 2
+              ? 'eda-job-runner.configureTools'
+              : msg.step === 3
+                ? 'eda-job-runner.addJob'
+                : 'eda-job-runner.configureParams'
+        );
+        return;
+
+      case 'findIt': {
+        const command = msg.command.trim();
+        if (!command) {
+          void this.panel.webview.postMessage({ type: 'foundIt', requestId: msg.requestId, ok: false, output: '' });
+          return;
+        }
+        const config = vscode.workspace.getConfiguration('eda-job-runner', this.folder.uri);
+        const shellPath = config.get<string>('shellPath', 'bash');
+        const shellArgs = config.get<string[] | null>('shellArgs', null);
+        const env = config.get<Record<string, string>>('env', {});
+        const postSetupCwd = config.get<string>('postSetupCwd', '');
+        const cwd = (msg.scanDir.trim() || postSetupCwd) || undefined;
+        const run = await runProbeChecks(
+          [`command -v ${shellQuote(command)}`],
+          { path: shellPath, args: shellArgs, env },
+          this.jobStore.getSetup() ?? {},
+          cwd,
+          this.folder
+        );
+        const result = run.results[0];
+        void this.panel.webview.postMessage({
+          type: 'foundIt',
+          requestId: msg.requestId,
+          ok: !run.launchError && result.ok,
+          output: run.launchError ?? result.output
+        });
+        return;
+      }
+
+      case 'tryHelpArg': {
+        const tool = this.toolStore.getTool(msg.id);
+        if (!tool) {
+          return;
+        }
+        await this.toolStore.updateTool(msg.id, { helpArg: msg.helpArg });
+        const updated = this.toolStore.getTool(msg.id);
+        if (updated) {
+          const variants = await scanTool(updated, this.jobStore, this.folder);
+          await this.toolStore.updateTool(msg.id, { variants, lastScanned: Date.now() });
+        }
+        this.render();
+        return;
+      }
+
       case 'scanNew': {
         const command = msg.command.trim();
         if (!command) {
@@ -188,7 +290,7 @@ export class ToolSetupPanel {
           helpArg,
           displayName,
           scanDir,
-          topLevel: { options: result.options, rawHelp: result.rawHelp, scanError: result.scanError },
+          topLevel: { options: result.options, rawHelp: result.rawHelp, scanError: result.scanError, probeCommand: result.probeCommand },
           suggestedChoices: detectSubcommandChoices(result.rawHelp)
         };
         this.render();
@@ -417,6 +519,44 @@ export class ToolSetupPanel {
         // valueListName, so there's nothing to patch or re-render at all.
         return;
       }
+
+      case 'createValueList': {
+        // T1.5's round-trip fix: create, discover, and attach a new value
+        // list to this option in one action, without ever leaving Tool
+        // Setup for the Parameters & Value Lists panel.
+        const tool = this.toolStore.getTool(msg.id);
+        const name = msg.name.trim();
+        const source = msg.source.trim();
+        if (!tool || !name || !source) {
+          return;
+        }
+        const list = {
+          name,
+          command: msg.sourceType === 'command' ? source : undefined,
+          file: msg.sourceType === 'file' ? source : undefined,
+          values: [] as string[]
+        };
+        const { list: discovered } = await discoverList(list, this.jobStore, this.folder, tool.scanDir);
+        const lists = this.jobStore.getLists();
+        // A name collision with an existing list attaches to the existing
+        // one instead of silently shadowing it -- the user typed a name
+        // that's already taken, so respect it as the same list.
+        const existingIdx = lists.findIndex(l => l.name === name);
+        const nextLists = existingIdx === -1 ? [...lists, discovered] : lists;
+        await this.jobStore.setLists(nextLists);
+
+        const idx = tool.variants.findIndex(v => v.label === msg.label);
+        if (idx !== -1) {
+          const variants = tool.variants.slice();
+          variants[idx] = {
+            ...variants[idx],
+            options: variants[idx].options.map(o => (o.flags.join('|') === msg.flagsKey ? { ...o, valueListName: name } : o))
+          };
+          await this.toolStore.updateTool(msg.id, { variants });
+        }
+        this.render();
+        return;
+      }
     }
   }
 
@@ -434,11 +574,41 @@ export function renderHtml(
   lists: ValueList[],
   pendingAdd: PendingAdd | undefined,
   editingToolId: string | undefined,
-  addingVariantForToolId: string | undefined
+  addingVariantForToolId: string | undefined,
+  setup?: JobsFileSetup,
+  workspaceRoot?: string,
+  status?: StepStatus,
+  doneLine?: string
 ): string {
   const nonce = getNonce();
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const effectiveStatus: StepStatus = status ?? { env: 'todo', tool: 'todo', job: 'todo', params: 'todo' };
+  const effectiveRoot = workspaceRoot ?? '';
+
+  /** Distinguishes the three scan outcomes so the remedy shown matches the actual cause (T1.3 item 7). */
+  const classifyOutcome = (v: { rawHelp?: string; scanError?: string; options?: unknown[] }): 'launchFailed' | 'printedNothing' | 'nothingParsed' | 'ok' => {
+    if (!v.scanError) {
+      return 'ok';
+    }
+    if (v.scanError.startsWith('Failed to launch shell')) {
+      return 'launchFailed';
+    }
+    if (!v.rawHelp || v.rawHelp.trim().length === 0) {
+      return 'printedNothing';
+    }
+    return 'nothingParsed';
+  };
+
+  const outcomeMessage = (outcome: 'launchFailed' | 'printedNothing' | 'nothingParsed' | 'ok', scanError: string): string => {
+    if (outcome === 'launchFailed' || outcome === 'ok') {
+      return scanError;
+    }
+    if (outcome === 'printedNothing') {
+      return 'The command ran but printed nothing. It may need a different help argument.';
+    }
+    return `Ran and produced output, but no recognisable flags were found (${scanError}).`;
+  };
 
   // For the Seed pattern paste-and-preview tester -- regex source (not the
   // RegExp object itself, which doesn't survive JSON.stringify) plus label,
@@ -490,11 +660,10 @@ export function renderHtml(
     <table class="opts">${sorted
       .map(o => {
         const key = o.flags.join('|');
-        const valueSourceCell =
-          o.metavar && lists.length > 0
-            ? `<td><select class="valueSourceSelect" data-vs-id="${esc(tool.id)}" data-vs-label="${esc(
-                variantLabel
-              )}" data-vs-key="${esc(key)}" title="Where this flag's value comes from. Manage value lists themselves from the Parameters panel.">
+        const valueSourceCell = o.metavar
+          ? `<td><select class="valueSourceSelect" data-vs-id="${esc(tool.id)}" data-vs-label="${esc(
+              variantLabel
+            )}" data-vs-key="${esc(key)}" title="Where this flag's value comes from. Manage value lists themselves from the Parameters &amp; Value Lists panel.">
                 <option value="">free text</option>
                 ${lists
                   .map(
@@ -502,6 +671,7 @@ export function renderHtml(
                       `<option value="${esc(l.name)}" ${o.valueListName === l.name ? 'selected' : ''}>${esc(l.name)}</option>`
                   )
                   .join('')}
+                <option value="__new__">+ New value list…</option>
               </select></td>`
             : '<td></td>';
         return `<tr data-orig-idx="${origIndex.get(key) ?? 0}">
@@ -513,13 +683,32 @@ export function renderHtml(
           <td>${esc(o.flags.join(', '))}${metavarHtml(o.metavar)}</td>
           <td class="hint">${esc(o.description ?? '')}</td>
           ${valueSourceCell}
-        </tr>`;
+        </tr>
+        <tr class="newListRow hidden" data-newlist-for="${esc(key)}"><td colspan="4">
+          <div class="newListInline">
+            name <input type="text" class="nlName" placeholder="e.g. Tests" style="width:120px;" />
+            from <select class="nlSourceType"><option value="command">command</option><option value="file">file</option></select>
+            source <input type="text" class="nlSource" placeholder="ls tests/*.sv or a command" style="width:220px;" />
+            <button type="button" class="primary small" data-create-list-id="${esc(tool.id)}" data-create-list-label="${esc(variantLabel)}" data-create-list-key="${esc(key)}">Create &amp; attach</button>
+            <button type="button" class="secondary small newListCancel">Cancel</button>
+          </div>
+        </td></tr>`;
       })
       .join('')}</table>`;
   };
 
   const renderVariant = (tool: ToolDefinition, v: ToolVariant): string => {
     const label = v.label || '(top-level)';
+    const helpArg = tool.helpArg?.trim() || '--help';
+    const probeCommand = buildSetupChain(setup, [tool.command, ...v.selectArgs, helpArg].join(' '), effectiveRoot);
+    const outcome = classifyOutcome(v);
+    const helpArgLadder =
+      outcome === 'nothingParsed' && v.options.length === 0
+        ? `<div class="actions">
+             <button class="secondary small" data-try-helparg-id="${esc(tool.id)}" data-try-helparg-label="${esc(v.label)}" data-try-helparg="-help" type="button">Try -help</button>
+             <button class="secondary small" data-try-helparg-id="${esc(tool.id)}" data-try-helparg-label="${esc(v.label)}" data-try-helparg="-h" type="button">Try -h</button>
+           </div>`
+        : '';
     return `<details class="variant" open>
       <summary>${esc(label)} — ${v.options.length} option${v.options.length === 1 ? '' : 's'}${
       v.scanError ? ' <span class="err">⚠ scan issue</span>' : ''
@@ -527,13 +716,14 @@ export function renderHtml(
         <button class="secondary small" data-rescan-variant-id="${esc(tool.id)}" data-rescan-variant-label="${esc(v.label)}" type="button">Rescan</button>
         ${
           v.label !== ''
-            ? `<button class="secondary small" data-remove-variant-id="${esc(tool.id)}" data-remove-variant-label="${esc(v.label)}" type="button">Remove sub-tool</button>`
+            ? `<button class="secondary small" data-remove-variant-id="${esc(tool.id)}" data-remove-variant-label="${esc(v.label)}" type="button">Remove sub-command</button>`
             : ''
         }
       </summary>
-      ${v.scanError ? `<div class="err">${esc(v.scanError)}</div>` : ''}
+      ${v.scanError ? setupErrorHtml(outcomeMessage(outcome, v.scanError), probeCommand) : ''}
+      ${helpArgLadder}
       ${renderOptionRowsEditable(tool, v.label, v.options)}
-      <details><summary class="rawSummary">raw help output</summary><pre>${esc(v.rawHelp ?? '')}</pre></details>
+      <details><summary class="rawSummary">Show output</summary><pre>${esc(v.rawHelp ?? '')}</pre></details>
     </details>`;
   };
 
@@ -594,11 +784,12 @@ export function renderHtml(
       ${
         addingVariantForToolId === tool.id
           ? renderAddVariantForm(tool.id)
-          : `<button class="secondary small" data-start-addvariant="${esc(tool.id)}" type="button" style="margin-top:10px;">+ Add sub-tool</button>`
+          : `<button class="secondary small" data-start-addvariant="${esc(tool.id)}" type="button" style="margin-top:10px;">+ Add sub-command</button>`
       }
     </div>`;
   };
 
+  const pendingOutcome = pendingAdd ? classifyOutcome(pendingAdd.topLevel) : 'ok';
   const pendingHtml = pendingAdd
     ? `
     <div class="pendingAdd">
@@ -606,11 +797,19 @@ export function renderHtml(
       ${pendingAdd.displayName ? `<div class="hint"><code>${esc(pendingAdd.command)}</code></div>` : ''}
       ${pendingAdd.scanDir ? `<div class="hint">scanning from <code>${esc(pendingAdd.scanDir)}</code></div>` : ''}
       <div class="hint">
-        Top-level scan: ${pendingAdd.topLevel.options.length} option(s)${
-        pendingAdd.topLevel.scanError ? ` — ${esc(pendingAdd.topLevel.scanError)}` : ''
-      }
+        Top-level scan: ${pendingAdd.topLevel.options.length} option(s)
       </div>
+      ${pendingAdd.topLevel.scanError ? setupErrorHtml(outcomeMessage(pendingOutcome, pendingAdd.topLevel.scanError), pendingAdd.topLevel.probeCommand) : ''}
+      ${
+        pendingOutcome === 'nothingParsed' && pendingAdd.topLevel.options.length === 0
+          ? `<div class="actions">
+               <button class="secondary small" id="tryHelpArgDash" data-pending-command="${esc(pendingAdd.command)}" data-pending-displayname="${esc(pendingAdd.displayName)}" data-pending-scandir="${esc(pendingAdd.scanDir)}">Try -help</button>
+               <button class="secondary small" id="tryHelpArgH" data-pending-command="${esc(pendingAdd.command)}" data-pending-displayname="${esc(pendingAdd.displayName)}" data-pending-scandir="${esc(pendingAdd.scanDir)}">Try -h</button>
+             </div>`
+          : ''
+      }
       ${renderOptionRows(pendingAdd.topLevel.options)}
+      <details><summary class="rawSummary">Show output</summary><pre>${esc(pendingAdd.topLevel.rawHelp ?? '')}</pre></details>
       ${
         pendingAdd.suggestedChoices.length > 0
           ? `<div class="hint" style="margin-top:14px;">Detected possible sub-commands — add as variants?</div>
@@ -623,9 +822,9 @@ export function renderHtml(
           : ''
       }
       <div id="manualVariants"></div>
-      <button class="secondary" id="addVariantRow" type="button">+ Add sub-tool manually</button>
+      <button class="secondary" id="addVariantRow" type="button">+ Add sub-command manually</button>
       ${help(
-        "A sub-tool's <b>selector args</b> are what's inserted after the command to reach it, e.g. " +
+        "A sub-command's <b>selector args</b> are what's inserted after the command to reach it, e.g. " +
           '<code>regression</code> (positional) or <code>--regression</code> (flag) — whatever the tool itself expects.'
       )}
       <div class="actions">
@@ -634,16 +833,23 @@ export function renderHtml(
       </div>
     </div>`
     : `
-    <div class="addTool">
-      <h3>Add a tool</h3>
-      <label for="newCommand">Command</label>
-      <input id="newCommand" type="text" placeholder="your_run_script.py or /path/to/tool" />
-      <label for="newHelpArg">Help argument ${help(
-        'Scanned through the same shell &amp; workspace setup chain a job uses (Shell &amp; Environment panel).'
+    <details class="addTool" id="addToolDetails" ${tools.length === 0 ? 'open' : ''}>
+      <summary>${tools.length === 0 ? 'Add a tool' : '+ Add tool'}</summary>
+      <label for="newCommand">Command ${help(
+        'Exactly what you type in a terminal to launch the tool. If it is a script in your project, use its path, or Browse…'
       )}</label>
-      <input id="newHelpArg" type="text" value="--help" />
+      <input id="newCommand" type="text" placeholder="your_run_script.py or /path/to/tool" />
+      <div class="hint" id="willScanPreview"></div>
+      <div class="actions">
+        <button class="secondary small" id="findIt" type="button">Find it</button>
+        <span class="hint" id="findItResult"></span>
+      </div>
       <details class="advancedFields">
-        <summary>Advanced (name, scan directory)</summary>
+        <summary>Advanced (help argument, name, scan directory)</summary>
+        <label for="newHelpArg">Help argument ${help(
+          'Scanned through the same shell &amp; workspace setup chain a job uses (Shell &amp; Environment panel). Defaults to <code>--help</code>; change it if a scan comes back empty.'
+        )}</label>
+        <input id="newHelpArg" type="text" value="--help" />
         <label for="newDisplayName">Display name</label>
         <input id="newDisplayName" type="text" placeholder="(defaults to the command)" />
         <label for="newScanDir">Scan directory ${help(
@@ -654,7 +860,7 @@ export function renderHtml(
       <div class="actions">
         <button class="primary" id="scanNew">Scan</button>
       </div>
-    </div>`;
+    </details>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -692,6 +898,7 @@ export function renderHtml(
   .hint { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
   ${HELP_CSS}
   ${BROWSE_CSS}
+  ${STEPS_CSS}
   .err { color: var(--vscode-errorForeground); }
   .actions { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
   button {
@@ -717,6 +924,7 @@ export function renderHtml(
   .toolHeader.editForm input { margin-top: 0; }
   .variant { margin-top: 10px; border-top: 1px solid var(--vscode-input-border, rgba(127,127,127,0.2)); padding-top: 8px; }
   .variant summary { cursor: pointer; }
+  .addTool > summary { cursor: pointer; font-weight: 600; font-size: 1.05em; }
   .rawSummary { cursor: pointer; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
   .optFilterTool { margin-top: 8px; }
   table.opts { border-collapse: collapse; margin-top: 8px; width: 100%; }
@@ -731,6 +939,14 @@ export function renderHtml(
   .favBtn {
     background: none; border: none; cursor: pointer; padding: 0 4px 0 0; font-size: 1em;
     color: var(--vscode-descriptionForeground);
+  }
+  .hidden { display: none; }
+  .newListRow td { padding-top: 6px; padding-bottom: 6px; }
+  .newListInline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 0.9em; }
+  .newListInline input, .newListInline select {
+    width: auto; margin-top: 0; padding: 3px 6px;
+    background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px;
   }
   .favBtn.favOn { color: var(--vscode-charts-yellow, #e2c08d); }
   pre {
@@ -770,11 +986,16 @@ export function renderHtml(
       "that builder. Re-scanned automatically on every window reload, in case the tool's own flags changed."
   )}</h2>
 
-  ${pendingHtml}
+  ${stepperHtml(2, effectiveStatus)}
+  ${stepIntroHtml(2, effectiveStatus.tool, doneLine)}
+  ${stepRecipeHtml(2, effectiveStatus.tool, tools.length === 0)}
 
   ${tools.length > 0 ? tools.map(renderTool).join('') : '<div class="hint" style="margin-top:20px;">No tools registered yet.</div>'}
 
+  ${pendingHtml}
+
   <div class="actions">
+    ${nextStepButtonHtml(2)}
     <button class="secondary" id="close">Close</button>
   </div>
 
@@ -782,9 +1003,90 @@ export function renderHtml(
     const vscode = acquireVsCodeApi();
     ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
+    ${STEPS_JS}
     const $ = id => document.getElementById(id);
     const $req = id => { const el = $(id); if (!el) { throw new Error('missing element #' + id); } return el; };
     $req('close').addEventListener('click', () => vscode.postMessage({ type: 'close' }));
+
+    // P4/Resolve: "Will scan" preview under the Command field -- pure string
+    // assembly mirroring buildSetupChain, no subprocess. Blank entries are
+    // dropped the same way the real chain drops them (Finding #15).
+    (function wireWillScanPreview() {
+      const cmdEl = $('newCommand');
+      const helpArgEl = $('newHelpArg');
+      const previewEl = $('willScanPreview');
+      if (!cmdEl || !helpArgEl || !previewEl) { return; }
+      const setupScript = ${JSON.stringify((setup?.script ?? '').trim())};
+      const setupCommands = ${JSON.stringify((setup?.commands ?? []).filter(c => c.trim().length > 0))};
+      const update = () => {
+        const command = cmdEl.value.trim();
+        if (!command) { previewEl.textContent = ''; return; }
+        const steps = [];
+        if (setupScript) { steps.push('source "' + setupScript + '"'); }
+        steps.push(...setupCommands);
+        steps.push(command + ' ' + (helpArgEl.value.trim() || '--help'));
+        previewEl.textContent = 'Will scan: ' + steps.join(' && ');
+      };
+      cmdEl.addEventListener('input', update);
+      helpArgEl.addEventListener('input', update);
+      update();
+    })();
+
+    // P4/Probe: [Find it] -- "is this even on PATH after my step ① setup?"
+    let __findItRequestId = 0;
+    const __findItPending = new Map();
+    const findItBtn = $('findIt');
+    if (findItBtn) {
+      findItBtn.addEventListener('click', () => {
+        const resultEl = $req('findItResult');
+        resultEl.textContent = 'Checking…';
+        const requestId = ++__findItRequestId;
+        __findItPending.set(requestId, resultEl);
+        vscode.postMessage({ type: 'findIt', requestId, command: $req('newCommand').value, scanDir: $('newScanDir') ? $req('newScanDir').value : '' });
+      });
+    }
+    window.addEventListener('message', event => {
+      const m = event.data;
+      if (!m) { return; }
+      if (m.type === 'foundIt') {
+        const resultEl = __findItPending.get(m.requestId);
+        __findItPending.delete(m.requestId);
+        if (!resultEl) { return; }
+        resultEl.innerHTML = m.ok
+          ? '✓ ' + m.output
+          : '✗ not on PATH after your setup commands. <a href="#" id="findItOpenStep1">Open step ① Environment</a>';
+        const link = document.getElementById('findItOpenStep1');
+        if (link) { link.addEventListener('click', e => { e.preventDefault(); vscode.postMessage({ type: 'openStep', step: 1 }); }); }
+      }
+    });
+
+    // Help-argument ladder: a zero-option scan offers a one-click retry with
+    // a different guess, updating tool.helpArg on success (rescan handlers
+    // already persist whatever helpArg the tool/edit form last had).
+    wire('[data-try-helparg-id]', btn => {
+      showBusy();
+      vscode.postMessage({
+        type: 'tryHelpArg',
+        id: btn.getAttribute('data-try-helparg-id'),
+        helpArg: btn.getAttribute('data-try-helparg')
+      });
+    });
+    function wirePendingHelpArgRetry(id, helpArg) {
+      const btn = $(id);
+      if (!btn) { return; }
+      btn.addEventListener('click', () => {
+        showBusy();
+        vscode.postMessage({
+          type: 'scanNew',
+          command: btn.getAttribute('data-pending-command'),
+          helpArg,
+          displayName: btn.getAttribute('data-pending-displayname'),
+          scanDir: btn.getAttribute('data-pending-scandir')
+        });
+      });
+    }
+    wirePendingHelpArgRetry('tryHelpArgDash', '-help');
+    wirePendingHelpArgRetry('tryHelpArgH', '-h');
     // At most one tool is ever in edit mode at a time -- a class, not an id,
     // since renderTool re-renders per-tool (see wrap.querySelector('.editCommand') below).
     const editCommandEl = document.querySelector('.editCommand');
@@ -936,13 +1238,39 @@ export function renderHtml(
       });
     });
     document.querySelectorAll('.valueSourceSelect').forEach(sel => {
+      sel.dataset.prevValue = sel.value;
       sel.addEventListener('change', () => {
+        if (sel.value === '__new__') {
+          const key = sel.getAttribute('data-vs-key');
+          const row = document.querySelector('.newListRow[data-newlist-for="' + CSS.escape(key) + '"]');
+          if (row) { row.classList.remove('hidden'); row.querySelector('.nlName').focus(); }
+          sel.value = sel.dataset.prevValue || '';
+          return;
+        }
+        sel.dataset.prevValue = sel.value;
         vscode.postMessage({
           type: 'setOptionValueSource',
           id: sel.getAttribute('data-vs-id'),
           label: sel.getAttribute('data-vs-label'),
           flagsKey: sel.getAttribute('data-vs-key'),
           listName: sel.value
+        });
+      });
+    });
+    document.querySelectorAll('.newListRow').forEach(row => {
+      const key = row.getAttribute('data-newlist-for');
+      row.querySelector('.newListCancel').addEventListener('click', () => row.classList.add('hidden'));
+      row.querySelector('[data-create-list-id]').addEventListener('click', btn0 => {
+        const btn = btn0.currentTarget;
+        showBusy();
+        vscode.postMessage({
+          type: 'createValueList',
+          id: btn.getAttribute('data-create-list-id'),
+          label: btn.getAttribute('data-create-list-label'),
+          flagsKey: btn.getAttribute('data-create-list-key'),
+          name: row.querySelector('.nlName').value,
+          sourceType: row.querySelector('.nlSourceType').value,
+          source: row.querySelector('.nlSource').value
         });
       });
     });
@@ -1040,6 +1368,10 @@ export function renderHtml(
   </script>
 </body>
 </html>`;
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 function getNonce(): string {

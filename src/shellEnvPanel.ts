@@ -1,14 +1,18 @@
 import * as vscode from 'vscode';
-import * as cp from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 import { JobStore } from './jobStore';
+import { ToolStore } from './toolStore';
 import { JobRunner } from './jobRunner';
 import { LogManager } from './logManager';
 import { detectVscodeShell } from './shellDetect';
-import { buildShellInvocation, defaultArgsForShell, resolveJobEnv, substituteVars } from './shellInvocation';
+import { defaultArgsForShell, substituteVars } from './shellInvocation';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
+import { runProbeChecks, PROBE_CSS } from './webviewProbe';
+import { STEPS_CSS, STEPS_JS, stepperHtml, stepIntroHtml, stepRecipeHtml, nextStepButtonHtml, StepId } from './webviewSteps';
+import { computeStepStatus, doneLineFor, recordShellTestPass } from './setupState';
 
 interface SaveMessage {
   type: 'save';
@@ -22,14 +26,15 @@ interface SaveMessage {
   logsDirectory: string;
   logRetentionCount: string;
   logRetentionMaxSizeMB: string;
+  maxConcurrentJobs: string;
 }
 
 interface DetectMessage {
   type: 'detect';
 }
 
-interface TestMessage {
-  type: 'test';
+interface ShellTestProbeMessage {
+  type: 'shellTestProbe';
   shellPath: string;
   shellArgsAuto: boolean;
   shellArgs: string;
@@ -37,6 +42,19 @@ interface TestMessage {
   setupScript: string;
   setupCommands: string;
   postSetupCwd: string;
+  alsoChecks: string; // one probe command per line, persisted to eda-job-runner.setupChecks
+}
+
+interface ResolvePathMessage {
+  type: 'resolvePath';
+  requestId: number;
+  field: string;
+  value: string;
+}
+
+interface OpenStepMessage {
+  type: 'openStep';
+  step: StepId;
 }
 
 interface CancelMessage {
@@ -50,28 +68,28 @@ interface CleanAllLogsMessage {
 type WebviewMessage =
   | SaveMessage
   | DetectMessage
-  | TestMessage
+  | ShellTestProbeMessage
+  | ResolvePathMessage
+  | OpenStepMessage
   | CancelMessage
   | CleanAllLogsMessage
   | BrowseMessage
   | ClientErrorMessage;
-
-const TEST_TIMEOUT_MS = 15000;
-const TEST_OUTPUT_CAP = 64 * 1024;
-const TEST_MARKER = '__EDA_SHELL_OK__';
 
 export class ShellEnvPanel {
   private static current: ShellEnvPanel | undefined;
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
-  private testChild: cp.ChildProcess | undefined;
+  private probing = false;
 
   static createOrShow(
     jobStore: JobStore,
+    toolStore: ToolStore,
     folder: vscode.WorkspaceFolder,
     logManager: LogManager,
-    jobRunner: JobRunner
+    jobRunner: JobRunner,
+    context: vscode.ExtensionContext
   ): void {
     if (ShellEnvPanel.current) {
       ShellEnvPanel.current.panel.reveal();
@@ -83,22 +101,28 @@ export class ShellEnvPanel {
       vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true }
     );
-    ShellEnvPanel.current = new ShellEnvPanel(panel, jobStore, folder, logManager, jobRunner);
+    ShellEnvPanel.current = new ShellEnvPanel(panel, jobStore, toolStore, folder, logManager, jobRunner, context);
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly jobStore: JobStore,
+    private readonly toolStore: ToolStore,
     private readonly folder: vscode.WorkspaceFolder,
     private readonly logManager: LogManager,
-    private readonly jobRunner: JobRunner
+    private readonly jobRunner: JobRunner,
+    private readonly context: vscode.ExtensionContext
   ) {
     this.panel = panel;
-    this.panel.webview.html = renderHtml(panel.webview, this.readState());
+    this.render();
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
       this.panel.onDidDispose(() => this.cleanup())
     );
+  }
+
+  private render(): void {
+    this.panel.webview.html = renderHtml(this.panel.webview, this.readState());
   }
 
   private readState() {
@@ -107,6 +131,8 @@ export class ShellEnvPanel {
     const shellArgs = config.get<string[] | null>('shellArgs', null);
     const env = config.get<Record<string, string>>('env', {});
     const setup = this.jobStore.getSetup();
+    const detected = detectVscodeShell();
+    const status = computeStepStatus(this.toolStore, this.jobStore, this.jobRunner, this.context, this.folder);
     return {
       shellPath,
       shellArgsAuto: !shellArgs || shellArgs.length === 0,
@@ -119,7 +145,15 @@ export class ShellEnvPanel {
       postSetupCwd: config.get<string>('postSetupCwd', ''),
       logsDirectory: config.get<string>('logsDirectory', ''),
       logRetentionCount: Math.max(0, config.get<number>('logRetentionCount', 20)),
-      logRetentionMaxSizeMB: Math.max(0, config.get<number>('logRetentionMaxSizeMB', 0))
+      logRetentionMaxSizeMB: Math.max(0, config.get<number>('logRetentionMaxSizeMB', 0)),
+      maxConcurrentJobs: Math.max(0, config.get<number>('maxConcurrentJobs', 0)),
+      setupChecks: config.get<string[]>('setupChecks', []).join('\n'),
+      registeredTools: this.toolStore.getTools().map(t => ({ name: t.displayName || t.command, command: t.command })),
+      detectedShellMatches: detected.path === shellPath,
+      detectedShellPath: detected.path,
+      detectedShellSource: detected.source,
+      status,
+      doneLine: doneLineFor(1, status, this.toolStore, this.jobStore, this.jobRunner)
     };
   }
 
@@ -130,8 +164,10 @@ export class ShellEnvPanel {
         return;
       case 'detect':
         return this.onDetect();
-      case 'test':
-        return this.onTest(msg);
+      case 'shellTestProbe':
+        return this.onShellTestProbe(msg);
+      case 'resolvePath':
+        return this.onResolvePath(msg);
       case 'save':
         return this.onSave(msg);
       case 'cleanAllLogs':
@@ -140,6 +176,17 @@ export class ShellEnvPanel {
         return handleBrowseMessage(msg, this.panel.webview, this.folder);
       case 'clientError':
         return handleClientErrorMessage(msg);
+      case 'openStep':
+        await vscode.commands.executeCommand(
+          msg.step === 1
+            ? 'eda-job-runner.configureShell'
+            : msg.step === 2
+              ? 'eda-job-runner.configureTools'
+              : msg.step === 3
+                ? 'eda-job-runner.addJob'
+                : 'eda-job-runner.configureParams'
+        );
+        return;
     }
   }
 
@@ -193,6 +240,25 @@ export class ShellEnvPanel {
     });
   }
 
+  private async onResolvePath(msg: ResolvePathMessage): Promise<void> {
+    const workspaceRoot = this.folder.uri.fsPath;
+    const value = msg.value.trim();
+    if (!value) {
+      void this.panel.webview.postMessage({ type: 'resolvedPath', requestId: msg.requestId, field: msg.field, resolved: '', exists: undefined });
+      return;
+    }
+    const expanded = substituteVars(value, workspaceRoot);
+    const resolved = path.isAbsolute(expanded) ? expanded : path.resolve(workspaceRoot, expanded);
+    let exists: boolean | undefined;
+    try {
+      await fs.promises.access(resolved);
+      exists = true;
+    } catch {
+      exists = false;
+    }
+    void this.panel.webview.postMessage({ type: 'resolvedPath', requestId: msg.requestId, field: msg.field, resolved, exists });
+  }
+
   private async onSave(msg: SaveMessage): Promise<void> {
     const config = vscode.workspace.getConfiguration('eda-job-runner', this.folder.uri);
     // Workspace target (not WorkspaceFolder): these settings are window-scoped
@@ -207,6 +273,7 @@ export class ShellEnvPanel {
 
     const retentionCountParsed = parseInt(msg.logRetentionCount.trim(), 10);
     const retentionSizeParsed = parseInt(msg.logRetentionMaxSizeMB.trim(), 10);
+    const maxConcurrentParsed = parseInt(msg.maxConcurrentJobs.trim(), 10);
 
     try {
       await config.update('shellPath', shellPath, target);
@@ -225,6 +292,11 @@ export class ShellEnvPanel {
         Number.isFinite(retentionSizeParsed) ? Math.max(0, retentionSizeParsed) : undefined,
         target
       );
+      await config.update(
+        'maxConcurrentJobs',
+        Number.isFinite(maxConcurrentParsed) ? Math.max(0, maxConcurrentParsed) : undefined,
+        target
+      );
 
       await this.jobStore.setSetup({
         script: msg.setupScript.trim() || undefined,
@@ -238,122 +310,83 @@ export class ShellEnvPanel {
       return;
     }
 
-    void vscode.window.showInformationMessage('EDA Job Runner: shell & environment settings saved.');
-    this.panel.dispose();
+    // Unlike before, the panel stays open (D9/T1.2 item 7 -- disposing mid-
+    // setup destroyed the stepper the user was following and silently
+    // discarded an un-run test). A flash confirms the save; the stepper/
+    // banner state is recomputed on the next full render (e.g. Test, or a
+    // fresh open) rather than here, since Save alone doesn't change step ①'s
+    // tested-or-not status.
+    void this.panel.webview.postMessage({ type: 'saved' });
   }
 
-  private onTest(msg: TestMessage): void {
-    if (this.testChild) {
-      return; // a test is already running
-    }
-    const shellPath = msg.shellPath.trim() || 'bash';
-    const shellArgs = msg.shellArgsAuto ? null : parseLines(msg.shellArgs);
-    const env = parseEnv(msg.env);
-    const workspaceRoot = this.folder.uri.fsPath;
-
-    const probe = buildTestCommand(msg.setupScript.trim(), parseLines(msg.setupCommands), workspaceRoot);
-    const { file, args } = buildShellInvocation(shellPath, shellArgs, probe);
-    const testCwd = msg.postSetupCwd.trim()
-      ? path.resolve(workspaceRoot, substituteVars(msg.postSetupCwd.trim(), workspaceRoot))
-      : workspaceRoot;
-
-    let child: cp.ChildProcess;
-    try {
-      child = cp.spawn(file, args, {
-        cwd: testCwd,
-        env: resolveJobEnv(env, workspaceRoot),
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-    } catch (err) {
-      void this.panel.webview.postMessage({
-        type: 'testResult',
-        ok: false,
-        output: `Failed to launch shell: ${describe(err)}`
-      });
+  private async onShellTestProbe(msg: ShellTestProbeMessage): Promise<void> {
+    if (this.probing) {
       return;
     }
-    this.testChild = child;
+    this.probing = true;
+    try {
+      const shellPath = msg.shellPath.trim() || 'bash';
+      const shellArgs = msg.shellArgsAuto ? null : parseLines(msg.shellArgs);
+      const env = parseEnv(msg.env);
+      const setup = { script: msg.setupScript.trim() || undefined, commands: parseLines(msg.setupCommands) };
+      const workspaceRoot = this.folder.uri.fsPath;
+      const cwd = msg.postSetupCwd.trim()
+        ? path.resolve(workspaceRoot, substituteVars(msg.postSetupCwd.trim(), workspaceRoot))
+        : workspaceRoot;
 
-    let output = '';
-    let capped = false;
-    const collect = (buf: Buffer) => {
-      if (capped) {
-        return;
-      }
-      output += buf.toString('utf8');
-      if (output.length > TEST_OUTPUT_CAP) {
-        output = output.slice(0, TEST_OUTPUT_CAP) + '\n…(truncated)';
-        capped = true;
-      }
-    };
-    child.stdout?.on('data', collect);
-    child.stderr?.on('data', collect);
+      const tools = this.toolStore.getTools();
+      const toolChecks = tools.map(t => `command -v ${shellQuote(t.command)}`);
+      const alsoChecks = parseLines(msg.alsoChecks);
+      const allChecks = [...toolChecks, ...alsoChecks];
 
-    const timer = setTimeout(() => {
-      if (child.pid) {
-        try {
-          process.kill(child.pid, 'SIGKILL');
-        } catch {
-          /* already gone */
-        }
-      }
-    }, TEST_TIMEOUT_MS);
+      const run = await runProbeChecks(allChecks, { path: shellPath, args: shellArgs, env }, setup, cwd, this.folder);
 
-    child.on('error', err => {
-      clearTimeout(timer);
-      this.testChild = undefined;
+      const toolResults = run.results.slice(0, toolChecks.length).map((r, i) => ({ name: tools[i].displayName || tools[i].command, command: tools[i].command, ok: r.ok, output: r.output }));
+      const alsoResults = run.results.slice(toolChecks.length);
+
+      const allOk = !run.launchError && run.results.every(r => r.ok);
+      if (allOk) {
+        recordShellTestPass(this.context, this.folder, {
+          shellPath,
+          shellArgs,
+          env,
+          setupScript: setup.script,
+          setupCommands: setup.commands,
+          postSetupCwd: msg.postSetupCwd.trim()
+        });
+      }
+
+      // Persist the user-authored "Also check" list so it becomes a
+      // reusable site smoke test, independent of the main Save button.
+      const config = vscode.workspace.getConfiguration('eda-job-runner', this.folder.uri);
+      await config.update('setupChecks', alsoChecks.length > 0 ? alsoChecks : undefined, vscode.ConfigurationTarget.Workspace);
+
       void this.panel.webview.postMessage({
-        type: 'testResult',
-        ok: false,
-        output: `Failed to launch shell: ${describe(err)}\n\nInvocation: ${file} ${args.join(' ')}`
+        type: 'shellTestProbed',
+        invocation: run.invocation,
+        cwd: run.cwd,
+        toolResults,
+        alsoResults,
+        launchError: run.launchError,
+        allOk,
+        stepStatus: computeStepStatus(this.toolStore, this.jobStore, this.jobRunner, this.context, this.folder),
+        doneLine: doneLineFor(1, computeStepStatus(this.toolStore, this.jobStore, this.jobRunner, this.context, this.folder), this.toolStore, this.jobStore, this.jobRunner)
       });
-    });
-
-    child.on('exit', (code, signal) => {
-      clearTimeout(timer);
-      this.testChild = undefined;
-      const ok = code === 0 && output.includes(TEST_MARKER);
-      const header = ok
-        ? `OK — shell responded (exit 0, marker seen).`
-        : `Problem — exit ${code ?? 'n/a'}${signal ? `, signal ${signal}` : ''}${
-            signal === 'SIGKILL' ? ' (timed out)' : ''
-          }.`;
-      void this.panel.webview.postMessage({
-        type: 'testResult',
-        ok,
-        output: `cwd: ${testCwd}\n$ ${file} ${args.join(' ')}\n\n${output || '(no output)'}\n\n${header}`
-      });
-    });
+    } finally {
+      this.probing = false;
+    }
   }
 
   private cleanup(): void {
     ShellEnvPanel.current = undefined;
-    if (this.testChild?.pid) {
-      try {
-        process.kill(this.testChild.pid, 'SIGKILL');
-      } catch {
-        /* already gone */
-      }
-    }
     for (const d of this.disposables) {
       d.dispose();
     }
   }
 }
 
-/** Assemble the probe command: run the same setup chain, then echo a marker. */
-function buildTestCommand(script: string, commands: string[], workspaceRoot: string): string {
-  const steps: string[] = [];
-  if (script) {
-    const scriptPath = path.isAbsolute(script) ? script : path.join(workspaceRoot, script);
-    steps.push(`source "${scriptPath}"`);
-  }
-  for (const cmd of commands) {
-    steps.push(cmd);
-  }
-  steps.push(`echo ${TEST_MARKER}`);
-  steps.push('echo "PATH=$PATH"');
-  return steps.join(' && ');
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {
@@ -401,12 +434,24 @@ interface PanelState {
   logsDirectory: string;
   logRetentionCount: number;
   logRetentionMaxSizeMB: number;
+  maxConcurrentJobs: number;
+  setupChecks: string;
+  registeredTools: { name: string; command: string }[];
+  detectedShellMatches: boolean;
+  detectedShellPath: string;
+  detectedShellSource: string;
+  status: import('./webviewSteps').StepStatus;
+  doneLine: string | undefined;
 }
 
 export function renderHtml(webview: vscode.Webview, state: PanelState): string {
   const nonce = getNonce();
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const detectNoteHtml = state.detectedShellMatches
+    ? `✓ Matches your VS Code terminal shell.`
+    : `Your VS Code terminal uses <code>${esc(state.detectedShellPath)}</code> (${esc(state.detectedShellSource)}). <button type="button" class="secondary" id="useDetected">Use it</button>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -445,6 +490,8 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
   label.check input { width: auto; margin-top: 0; }
   ${HELP_CSS}
   ${BROWSE_CSS}
+  ${STEPS_CSS}
+  ${PROBE_CSS}
   .row { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
   .row label { margin-top: 0; }
   .actions { margin-top: 26px; display: flex; gap: 8px; flex-wrap: wrap; }
@@ -469,11 +516,19 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
     font-size: 0.85em;
     white-space: pre-wrap;
     display: none;
-    max-height: 240px;
+    max-height: 320px;
     overflow: auto;
   }
+  #saveOut { margin-top: 8px; font-size: 0.85em; min-height: 1.2em; }
+  #saveOut.error { color: var(--vscode-errorForeground); }
+  #saveOut.ok { color: var(--vscode-charts-green); }
   #detectNote { margin-top: 6px; font-size: 0.85em; color: var(--vscode-descriptionForeground); min-height: 1em; }
+  .pathCheck { margin-top: 4px; font-size: 0.85em; color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); min-height: 1.2em; }
+  .pathCheck .yes { color: var(--vscode-charts-green); }
+  .pathCheck .no { color: var(--vscode-charts-red, var(--vscode-errorForeground)); }
   .hidden { display: none; }
+  details.section { margin-top: 22px; }
+  details.section summary { cursor: pointer; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -483,13 +538,17 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       'script + pre-commands) is saved to <code>.vscode/eda-jobs.json</code>.'
   )}</h2>
 
+  ${stepperHtml(1, state.status)}
+  ${stepIntroHtml(1, state.status.env, state.doneLine)}
+  ${stepRecipeHtml(1, state.status.env, !state.shellPath && !state.setupScript && state.setupCommands.length === 0)}
+
   <div class="actions">
     <button class="secondary" id="detect">Use My VS Code Terminal Shell</button>
   </div>
-  <div id="detectNote"></div>
+  <div id="detectNote">${detectNoteHtml}</div>
 
   <label for="shellPath">Shell path ${help(
-    'Shell binary (name on PATH or absolute path), e.g. <code>bash</code>, <code>zsh</code>, <code>tcsh</code>.'
+    'Shell binary (name on PATH or absolute path), e.g. <code>bash</code>, <code>zsh</code>, <code>tcsh</code>. Provenance: whatever shell your tool already runs correctly under, in a plain terminal.'
   )}</label>
   <input id="shellPath" type="text" value="${esc(state.shellPath)}" placeholder="bash" />
 
@@ -516,17 +575,18 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       '${workspaceFolder}' +
       '</code> and <code>' +
       '${env:NAME}' +
-      '</code>.'
+      '</code>. Provenance: licence servers, install roots — variables your tool needs exported before it runs.'
   )}</label>
   <textarea id="env" spellcheck="false" placeholder="LM_LICENSE_FILE=27000@licsrv">${esc(state.env)}</textarea>
 
   <label for="setupScript">Setup script (sourced before every job) ${help(
-    'Relative to the workspace root, or an absolute path. Optional.'
+    'Relative to the workspace root, or an absolute path. Optional. Provenance: a file you `source` in your terminal before your tool works.'
   )}</label>
   <input id="setupScript" type="text" value="${esc(state.setupScript)}" placeholder="scripts/env_setup.sh" />
+  <div class="pathCheck" id="setupScriptCheck"></div>
 
   <label for="setupCommands">Setup commands (one per line, run before every job)</label>
-  <textarea id="setupCommands" spellcheck="false" placeholder="module load xcelium/24.03">${esc(state.setupCommands)}</textarea>
+  <textarea id="setupCommands" spellcheck="false" placeholder="the commands you run in a terminal before launching your tool">${esc(state.setupCommands)}</textarea>
 
   <label for="postSetupCwd">Post-setup working directory ${help(
     "Where a job's shell starts, after its own startup (sourcing " +
@@ -544,63 +604,94 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       'settings.'
   )}</label>
   <input id="postSetupCwd" type="text" value="${esc(state.postSetupCwd)}" placeholder="e.g. work or \${workspaceFolder}/work" />
-
-  <label for="logsDirectory">Logs directory ${help(
-    'Where run logs are stored, instead of the default <code>.eda-runner/logs</code> under the workspace root. ' +
-      'Absolute, or relative to the workspace root; supports <code>' +
-      '${workspaceFolder}' +
-      '</code> and <code>' +
-      '${env:NAME}' +
-      '</code>. Leave blank to keep the default. A job can override this individually in its Advanced settings.'
-  )}</label>
-  <input id="logsDirectory" type="text" value="${esc(state.logsDirectory)}" placeholder=".eda-runner/logs (default)" />
+  <div class="pathCheck" id="postSetupCwdCheck"></div>
 
   <label class="check">
-    <input id="limitByCount" type="checkbox" ${state.logRetentionCount > 0 ? 'checked' : ''} />
-    Limit by run count
+    <input id="limitConcurrent" type="checkbox" ${state.maxConcurrentJobs > 0 ? 'checked' : ''} />
+    Limit how many jobs run at once
+    ${help(
+      'Off by default — different jobs can run side by side (e.g. compiling in one directory while a sim runs in another). ' +
+        "A single job can never run concurrently with itself either way — its own Repeat count is the only way to run it again, always sequentially."
+    )}
   </label>
   <div class="row">
-    <input id="logRetentionCount" type="number" min="1" style="flex:0 0 100px;" value="${state.logRetentionCount > 0 ? state.logRetentionCount : 20}" ${state.logRetentionCount > 0 ? '' : 'disabled'} />
-    <span>past runs per job ${help('Older runs beyond this count are deleted automatically after each new run.')}</span>
+    <input id="maxConcurrentJobs" type="number" min="1" style="flex:0 0 100px;" value="${state.maxConcurrentJobs > 0 ? state.maxConcurrentJobs : 1}" ${state.maxConcurrentJobs > 0 ? '' : 'disabled'} />
+    <span>jobs at once</span>
   </div>
 
-  <label class="check">
-    <input id="limitBySize" type="checkbox" ${state.logRetentionMaxSizeMB > 0 ? 'checked' : ''} />
-    Limit by total size
-  </label>
-  <div class="row">
-    <input id="logRetentionMaxSizeMB" type="number" min="1" style="flex:0 0 100px;" value="${state.logRetentionMaxSizeMB > 0 ? state.logRetentionMaxSizeMB : 500}" ${state.logRetentionMaxSizeMB > 0 ? '' : 'disabled'} />
-    <span>MB total per job ${help(
-      'Once a job\'s own past runs exceed this total size, the oldest surviving ones are deleted (after the count limit above, if that\'s also on) until back under it. ' +
-        'This bounds disk usage only -- unrelated to the separate logMaxSizeMB setting (settings.json only), which caps how much of a run\'s output gets parsed for errors/warnings, not how much is kept on disk.'
-    )}</span>
-  </div>
+  <details class="section" id="logsRetentionDetails">
+    <summary>Logs &amp; retention</summary>
+
+    <label for="logsDirectory">Logs directory ${help(
+      'Where run logs are stored, instead of the default <code>.eda-runner/logs</code> under the workspace root. ' +
+        'Absolute, or relative to the workspace root; supports <code>' +
+        '${workspaceFolder}' +
+        '</code> and <code>' +
+        '${env:NAME}' +
+        '</code>. Leave blank to keep the default. A job can override this individually in its Advanced settings.'
+    )}</label>
+    <input id="logsDirectory" type="text" value="${esc(state.logsDirectory)}" placeholder=".eda-runner/logs (default)" />
+    <div class="pathCheck" id="logsDirectoryCheck"></div>
+
+    <label class="check">
+      <input id="limitByCount" type="checkbox" ${state.logRetentionCount > 0 ? 'checked' : ''} />
+      Limit by run count
+    </label>
+    <div class="row">
+      <input id="logRetentionCount" type="number" min="1" style="flex:0 0 100px;" value="${state.logRetentionCount > 0 ? state.logRetentionCount : 20}" ${state.logRetentionCount > 0 ? '' : 'disabled'} />
+      <span>past runs per job ${help('Older runs beyond this count are deleted automatically after each new run.')}</span>
+    </div>
+
+    <label class="check">
+      <input id="limitBySize" type="checkbox" ${state.logRetentionMaxSizeMB > 0 ? 'checked' : ''} />
+      Limit by total size
+    </label>
+    <div class="row">
+      <input id="logRetentionMaxSizeMB" type="number" min="1" style="flex:0 0 100px;" value="${state.logRetentionMaxSizeMB > 0 ? state.logRetentionMaxSizeMB : 500}" ${state.logRetentionMaxSizeMB > 0 ? '' : 'disabled'} />
+      <span>MB total per job ${help(
+        'Once a job\'s own past runs exceed this total size, the oldest surviving ones are deleted (after the count limit above, if that\'s also on) until back under it. ' +
+          'This bounds disk usage only -- unrelated to the separate logParseBudgetMB setting (settings.json only), which caps how much of a run\'s output gets parsed for errors/warnings, not how much is kept on disk.'
+      )}</span>
+    </div>
+
+    <div class="actions">
+      <button class="secondary" id="cleanAllLogs">Clean all logs now…</button>
+    </div>
+  </details>
+
+  <details class="section" id="alsoCheckDetails">
+    <summary>Also check (one command per line)</summary>
+    <textarea id="setupChecks" spellcheck="false" placeholder="echo \$LM_LICENSE_FILE">${esc(state.setupChecks)}</textarea>
+  </details>
 
   <div class="actions">
-    <button class="secondary" id="cleanAllLogs">Clean all logs now…</button>
-  </div>
-
-  <div class="actions">
-    <button class="secondary" id="test">Test Shell Setup</button>
-    <button class="primary" id="save">Save</button>
+    <button class="primary" id="test">Test Shell Setup</button>
+    <button class="secondary" id="save">Save</button>
+    ${nextStepButtonHtml(1)}
     <button class="secondary" id="cancel">Cancel</button>
   </div>
+  <div id="saveOut"></div>
   <div id="testOut"></div>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
+    ${STEPS_JS}
     const $ = id => document.getElementById(id);
     const $req = id => { const el = $(id); if (!el) { throw new Error('missing element #' + id); } return el; };
     const autoEl = $req('shellArgsAuto');
     const argsWrap = $req('argsWrap');
     const testOut = $req('testOut');
+    const saveOut = $req('saveOut');
     const detectNote = $req('detectNote');
     const limitByCountEl = $req('limitByCount');
     const logRetentionCountEl = $req('logRetentionCount');
     const limitBySizeEl = $req('limitBySize');
     const logRetentionMaxSizeMBEl = $req('logRetentionMaxSizeMB');
+    const limitConcurrentEl = $req('limitConcurrent');
+    const maxConcurrentJobsEl = $req('maxConcurrentJobs');
+    const registeredTools = ${JSON.stringify(state.registeredTools)};
 
     autoEl.addEventListener('change', () => {
       argsWrap.classList.toggle('hidden', autoEl.checked);
@@ -610,6 +701,9 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
     });
     limitBySizeEl.addEventListener('change', () => {
       logRetentionMaxSizeMBEl.disabled = !limitBySizeEl.checked;
+    });
+    limitConcurrentEl.addEventListener('change', () => {
+      maxConcurrentJobsEl.disabled = !limitConcurrentEl.checked;
     });
 
     function collect() {
@@ -623,7 +717,8 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
         postSetupCwd: $req('postSetupCwd').value,
         logsDirectory: $req('logsDirectory').value,
         logRetentionCount: limitByCountEl.checked ? logRetentionCountEl.value : '0',
-        logRetentionMaxSizeMB: limitBySizeEl.checked ? logRetentionMaxSizeMBEl.value : '0'
+        logRetentionMaxSizeMB: limitBySizeEl.checked ? logRetentionMaxSizeMBEl.value : '0',
+        maxConcurrentJobs: limitConcurrentEl.checked ? maxConcurrentJobsEl.value : '0'
       };
     }
 
@@ -631,12 +726,20 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       detectNote.textContent = 'Detecting…';
       vscode.postMessage({ type: 'detect' });
     });
+    const useDetectedBtn = $('useDetected');
+    if (useDetectedBtn) {
+      useDetectedBtn.addEventListener('click', () => vscode.postMessage({ type: 'detect' }));
+    }
+
     $req('test').addEventListener('click', () => {
       testOut.style.display = 'block';
       testOut.textContent = 'Running…';
-      vscode.postMessage(Object.assign({ type: 'test' }, collect()));
+      const c = collect();
+      vscode.postMessage(Object.assign({ type: 'shellTestProbe', alsoChecks: $req('setupChecks').value }, c));
     });
     $req('save').addEventListener('click', () => {
+      saveOut.textContent = '';
+      saveOut.className = '';
       vscode.postMessage(Object.assign({ type: 'save' }, collect()));
     });
     $req('cancel').addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
@@ -644,6 +747,64 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
     addBrowseButton($req('setupScript'), 'file');
     addBrowseButton($req('postSetupCwd'), 'folder');
     addBrowseButton($req('logsDirectory'), 'folder');
+
+    // P4/Resolve+Check: debounced passive feedback under each path field.
+    let __resolveRequestId = 0;
+    const __resolvePending = new Map();
+    function watchPath(inputId, checkId) {
+      const input = $req(inputId);
+      const out = $req(checkId);
+      let timer;
+      input.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          const requestId = ++__resolveRequestId;
+          __resolvePending.set(requestId, out);
+          vscode.postMessage({ type: 'resolvePath', requestId, field: inputId, value: input.value });
+        }, 300);
+      });
+      // Also check once on load, so an already-filled field shows feedback immediately.
+      if (input.value.trim()) {
+        const requestId = ++__resolveRequestId;
+        __resolvePending.set(requestId, out);
+        vscode.postMessage({ type: 'resolvePath', requestId, field: inputId, value: input.value });
+      }
+    }
+    watchPath('setupScript', 'setupScriptCheck');
+    watchPath('postSetupCwd', 'postSetupCwdCheck');
+    watchPath('logsDirectory', 'logsDirectoryCheck');
+
+    function renderProbeResult(m) {
+      testOut.style.display = 'block';
+      if (m.launchError) {
+        testOut.innerHTML = 'Problem — ' + m.launchError + '\\n\\nRan:  ' + m.invocation + '\\nIn:   ' + m.cwd;
+        return;
+      }
+      const lines = [];
+      lines.push((m.allOk ? '✓ Shell setup works.' : '✗ Shell setup has problems.'));
+      lines.push('');
+      lines.push('Ran:  ' + m.invocation);
+      lines.push('In:   ' + m.cwd);
+      if (m.toolResults && m.toolResults.length > 0) {
+        lines.push('');
+        lines.push('Registered tools');
+        for (const t of m.toolResults) {
+          lines.push('  ' + (t.ok ? '✓' : '✗') + ' ' + t.name + '   ' + (t.output || (t.ok ? '' : 'not found on PATH')));
+        }
+      }
+      if (m.alsoResults && m.alsoResults.length > 0) {
+        lines.push('');
+        lines.push('Also check');
+        for (const r of m.alsoResults) {
+          lines.push('  ' + (r.ok ? '✓' : '✗') + ' ' + r.command + '   ' + r.output);
+        }
+      }
+      if (!m.allOk) {
+        lines.push('');
+        lines.push("Tool Setup's Scan and value-list Refresh run through this same shell and setup chain — fix this first and they will work too.");
+      }
+      testOut.textContent = lines.join('\\n');
+    }
 
     window.addEventListener('message', event => {
       const m = event.data;
@@ -670,12 +831,24 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
         autoEl.checked = m.shellArgsIsDefault;
         argsWrap.classList.toggle('hidden', autoEl.checked);
         detectNote.textContent = 'Filled from ' + m.source + '. Review, then Save.';
-      } else if (m.type === 'testResult') {
-        testOut.style.display = 'block';
-        testOut.textContent = m.output;
+      } else if (m.type === 'shellTestProbed') {
+        renderProbeResult(m);
       } else if (m.type === 'saveError') {
-        testOut.style.display = 'block';
-        testOut.textContent = m.message;
+        saveOut.className = 'error';
+        saveOut.textContent = m.message;
+      } else if (m.type === 'saved') {
+        saveOut.className = 'ok';
+        saveOut.textContent = 'Saved ✓';
+        setTimeout(() => { if (saveOut.textContent === 'Saved ✓') { saveOut.textContent = ''; saveOut.className = ''; } }, 4000);
+      } else if (m.type === 'resolvedPath') {
+        const out = __resolvePending.get(m.requestId);
+        __resolvePending.delete(m.requestId);
+        if (!out) { return; }
+        if (!m.resolved) {
+          out.textContent = '';
+          return;
+        }
+        out.innerHTML = '→ ' + m.resolved + '  ' + (m.exists === undefined ? '' : m.exists ? '<span class="yes">✓</span>' : '<span class="no">✗ does not exist</span>');
       }
     });
 

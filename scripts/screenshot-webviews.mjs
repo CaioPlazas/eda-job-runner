@@ -288,6 +288,9 @@ async function run() {
         }
 
         if (name === 'shellEnv') {
+          // Logs & retention (T1.2) is now a collapsed <details> -- open it
+          // before interacting with fields inside, or Playwright can't see them.
+          await page.locator('#logsRetentionDetails').evaluate(el => { el.open = true; });
           await page.locator('#limitByCount').check();
           await page.locator('#limitBySize').check();
           await shoot(page, `${name}-${theme}-retention-checked`);

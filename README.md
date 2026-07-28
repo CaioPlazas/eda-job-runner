@@ -21,7 +21,9 @@ to install it.
 
 - **Sidebar job list.** Add a job, configure it in a real form (not a
   chain of quick-pick prompts), run it with a click. Group jobs into
-  folders, drag to reorder, mark one as the workspace default (F5 runs it).
+  folders, drag to reorder, mark one as the workspace default (F5, or
+  Ctrl+Alt+R / Cmd+Alt+R if F5 collides with a debugger in your workspace,
+  runs it).
 - **Kills cleanly.** Every job runs in its own process group, so Stop
   actually frees the EDA license instead of leaving an orphaned simulator
   behind. The signal sequence is configurable (`killSignals`) and defaults
@@ -92,12 +94,12 @@ by hand. Registered tools for Tool Setup live in their own file,
 | `postSetupCwd` | `""` | Base directory a job's `cwd` resolves against, instead of the workspace root |
 | `killSignals` | SIGINT → SIGTERM → SIGKILL | Ordered kill signal escalation, each with its own grace period |
 | `killGracePeriodSeconds` | `5` | Fallback grace period for a `killSignals` stage that doesn't set its own |
-| `logMaxSizeMB` | `200` | Cap on how much of a run's output is parsed for error/warning counts (the log file itself isn't size-limited — see `logRetentionCount`) |
+| `logParseBudgetMB` | `200` | Cap on how much of a run's output is parsed for error/warning counts (the log file itself isn't size-limited — see `logRetentionCount`) |
 | `logsDirectory` | `""` | Where logs are stored, instead of `.eda-runner/logs` under the workspace root |
 | `logRetentionCount` | `20` | Past runs kept per job by count (`0` = unlimited) |
 | `logRetentionMaxSizeMB` | `0` | Past runs kept per job by total size (`0` = off) |
 | `failOnLogErrors` | `true` | Fail a job on log errors, even if it exited 0 |
-| `experimentalMultipleRuns` | `false` | Let *different* jobs run at once |
+| `maxConcurrentJobs` | `0` | Max *different* jobs running at once (`0` = unlimited) |
 
 (Full list — including ANSI stripping and an experimental auto-save
 toggle — in the Settings UI. Search `eda-job-runner`.)
@@ -131,11 +133,26 @@ Two things trip people up with `bsub`/`qsub`-style jobs:
 
 ## Try it without an EDA tool installed
 
-Open [examples/](examples/) as its own workspace — mock pass/fail/
-killable jobs that exercise every feature, no simulator required. For
-real designs, [sample-projects/](sample-projects/) has a UART subsystem
-and a full UVM environment (needs the actual tools — see
-[docs/eda-tools-setup.md](docs/eda-tools-setup.md)).
+Open any folder, and before you configure anything, the sidebar's empty
+state offers **Create example jobs** — three jobs (pass, fail, and a
+slow/killable one) that need nothing installed, no clone required. Try
+Run, Stop, and the log against those first.
+
+For a bigger sandbox with real value lists and a multi-tool setup, clone
+this repo and open
+[examples/](https://github.com/CaioPlazas/eda-job-runner/tree/main/examples)
+as its own workspace — still mock jobs, no simulator required. For real
+designs,
+[sample-projects/](https://github.com/CaioPlazas/eda-job-runner/tree/main/sample-projects)
+has a UART subsystem and a full UVM environment (needs the actual tools
+— see
+[docs/eda-tools-setup.md](https://github.com/CaioPlazas/eda-job-runner/blob/main/docs/eda-tools-setup.md)).
+
+Setting up real tools follows one order: get your **shell & environment**
+right first (Shell & Environment panel), then **register a tool**'s
+command (Tool Setup) so its flags are scanned through that same shell,
+then build a **job** from those flags. Each panel explains this inline —
+see the ①→②→③ steps and "How do I fill this in?" recipe in each one.
 
 ## How this was built
 

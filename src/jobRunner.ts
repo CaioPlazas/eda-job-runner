@@ -8,6 +8,7 @@ import { ensureGitignoreEntry } from './gitignoreManager';
 import { LogDiagnostics } from './logDiagnostics';
 import { ParseState, newParseState, parseLine } from './logParser';
 import { buildShellInvocation, resolveJobEnv, substituteVars } from './shellInvocation';
+import { buildSetupChain } from './setupChain';
 import { ParamSpec, parseParams, substituteParams, substituteRandomSeed } from './paramSubstitution';
 import { flattenGlobalParams, substituteParamVars } from './paramVars';
 import { decideFinalState, compilePattern } from './jobOutcome';
@@ -20,6 +21,14 @@ import { RetentionOptions } from './logRetention';
 
 export type { JobRunState } from './jobOutcome';
 import type { JobRunState } from './jobOutcome';
+
+export interface BatchSummary {
+  jobId: string;
+  jobName: string;
+  total: number;
+  passed: number;
+  failed: number;
+}
 
 export interface JobRunStatus {
   state: JobRunState;
@@ -91,7 +100,7 @@ interface ActiveRun {
   tailer: FileTailer;
   /** Total (ANSI-stripped) bytes fed into parsing so far this run -- independent of the log file's own size, which the OS controls now. */
   parseBytesFed: number;
-  /** Once true, further chunks are no longer fed to the parser (logMaxSizeMB cap) -- the log file itself keeps growing regardless, that's no longer something this class controls. */
+  /** Once true, further chunks are no longer fed to the parser (logParseBudgetMB cap) -- the log file itself keeps growing regardless, that's no longer something this class controls. */
   parseTruncated: boolean;
   maxParseBytes: number;
   killRequested: boolean;
@@ -153,6 +162,27 @@ interface ReattachRun {
 }
 
 const MB = 1024 * 1024;
+
+/**
+ * T4.2: `logMaxSizeMB` was renamed to `logParseBudgetMB` (same meaning --
+ * the old name was too easily confused with an actual log-file size cap,
+ * which it never was). Falls back to the legacy setting only when the user
+ * explicitly set *it* and has left the new one untouched at every scope, so
+ * an existing settings.json keeps working with no silent behavior change.
+ */
+function resolveLogParseBudgetMB(config: vscode.WorkspaceConfiguration): number {
+  const next = config.inspect<number>('logParseBudgetMB');
+  const nextUntouched =
+    next?.workspaceFolderValue === undefined && next?.workspaceValue === undefined && next?.globalValue === undefined;
+  if (nextUntouched) {
+    const legacy = config.inspect<number>('logMaxSizeMB');
+    const legacyValue = legacy?.workspaceFolderValue ?? legacy?.workspaceValue ?? legacy?.globalValue;
+    if (legacyValue !== undefined) {
+      return Math.max(1, legacyValue);
+    }
+  }
+  return Math.max(1, config.get<number>('logParseBudgetMB', 200));
+}
 const STATUS_STORAGE_KEY = 'eda-job-runner.jobStatuses';
 const PARAM_VALUES_STORAGE_KEY = 'eda-job-runner.jobParamValues';
 // Matches CSI ANSI escape sequences (color codes, cursor movement, etc.)
@@ -171,6 +201,16 @@ const POST_RUN_TIMEOUT_MS = 60_000;
 export class JobRunner implements vscode.Disposable {
   private readonly _onDidChangeStatus = new vscode.EventEmitter<string | undefined>();
   readonly onDidChangeStatus = this._onDidChangeStatus.event;
+  /**
+   * Fired once when a repeat-count batch finishes (T3.3) -- the per-lane
+   * `onDidChangeStatus` events still fire for each iteration (the tree needs
+   * them to render live), but the *toast* is this single summary instead of
+   * one per lane. Not fired if the batch was stopped by the user (Stop is
+   * always self-explanatory, same precedent as a single killed run showing
+   * no toast at all).
+   */
+  private readonly _onDidCompleteBatch = new vscode.EventEmitter<BatchSummary>();
+  readonly onDidCompleteBatch = this._onDidCompleteBatch.event;
 
   private readonly statuses: Map<string, JobRunStatus>;
   private readonly activeRuns = new Map<string, ActiveRun>();
@@ -308,11 +348,13 @@ export class JobRunner implements vscode.Disposable {
     }
 
     const config = vscode.workspace.getConfiguration('eda-job-runner', this.workspaceFolder.uri);
-    const multiEnabled = config.get<boolean>('experimentalMultipleRuns', false);
-    if (!multiEnabled && (this.activeRuns.size > 0 || this.promptingJobs.size > 0)) {
+    // 0 means unlimited -- compiling in one directory while a sim runs in
+    // another is table stakes, not something to gate by default (D2).
+    const maxConcurrent = Math.max(0, config.get<number>('maxConcurrentJobs', 0));
+    const runningCount = this.activeRuns.size + this.promptingJobs.size;
+    if (maxConcurrent > 0 && runningCount >= maxConcurrent) {
       void vscode.window.showWarningMessage(
-        'Only one job can run at a time for now — stop the current job first, or turn on ' +
-          '"Experimental: multiple jobs" in settings.'
+        `Already running ${runningCount} job${runningCount === 1 ? '' : 's'} (the maximum). Stop one, or raise the limit in Shell & Environment.`
       );
       return;
     }
@@ -396,13 +438,26 @@ export class JobRunner implements vscode.Disposable {
     // A fresh batch replaces any previous lane-group history for this job so
     // old and new batch results don't mix confusingly in the tree.
     this.laneGroups.set(job.id, new Map());
+    let passed = 0;
+    let failed = 0;
+    let stoppedByUser = false;
     for (let i = 1; i <= total; i++) {
       const laneKey = `${job.id}::run${i}`;
       const label = `${i}/${total}`;
       const finalState = await this.runLane(job, laneKey, label, true, template);
-      if (finalState === 'killed') {
+      if (finalState === 'passed') {
+        passed++;
+      } else if (finalState === 'failed') {
+        failed++;
+      } else if (finalState === 'killed') {
+        stoppedByUser = true;
         break; // the user explicitly stopped this iteration — don't keep going
       }
+    }
+    // Stop is always self-explanatory (T3.3) -- same precedent as a single
+    // killed run producing no toast at all.
+    if (!stoppedByUser) {
+      this._onDidCompleteBatch.fire({ jobId: job.id, jobName: job.name, total: passed + failed, passed, failed });
     }
   }
 
@@ -442,7 +497,7 @@ export class JobRunner implements vscode.Disposable {
     const shellPath = (config.get<string>('shellPath', 'bash') || 'bash').trim() || 'bash';
     const shellArgs = config.get<string[] | null>('shellArgs', null);
     const envSetting = config.get<Record<string, string>>('env', {});
-    const maxBytes = Math.max(1, config.get<number>('logMaxSizeMB', 200)) * MB;
+    const maxBytes = resolveLogParseBudgetMB(config) * MB;
     // 0 means "no limit" for either -- see logRetention.ts's planPrune.
     const retention: RetentionOptions = {
       maxCount: Math.max(0, config.get<number>('logRetentionCount', 20)),
@@ -664,7 +719,7 @@ export class JobRunner implements vscode.Disposable {
   /**
    * Called with each new chunk a run's FileTailer reads off its log file --
    * the only path output reaches the parser now, whether the job is live or
-   * reattached after a reload (see runLane's spawn comment). `logMaxSizeMB`
+   * reattached after a reload (see runLane's spawn comment). `logParseBudgetMB`
    * used to cap what got written to the log file itself; now the OS writes
    * that file directly (the whole point of this redesign), so it instead
    * caps how much gets fed into in-memory parsing/counting per run -- the
@@ -979,7 +1034,7 @@ export class JobRunner implements vscode.Disposable {
   private startReattachment(job: JobDefinition, pid: number, pidStartTime: number | undefined, logPath: string): void {
     const config = vscode.workspace.getConfiguration('eda-job-runner', this.workspaceFolder.uri);
     const globalPostSetupCwd = config.get<string>('postSetupCwd', '');
-    const maxParseBytes = Math.max(1, config.get<number>('logMaxSizeMB', 200)) * MB;
+    const maxParseBytes = resolveLogParseBudgetMB(config) * MB;
 
     this.diagnostics.clearJob(job.id);
     const run: ReattachRun = {
@@ -1273,6 +1328,7 @@ export class JobRunner implements vscode.Disposable {
       }
     }
     this._onDidChangeStatus.dispose();
+    this._onDidCompleteBatch.dispose();
     // Running jobs are intentionally left detached and running — closing the
     // sidebar or window shouldn't kill an overnight regression. A job we were
     // re-tailing just goes back to "running (detached)" for whatever session
@@ -1280,28 +1336,17 @@ export class JobRunner implements vscode.Disposable {
   }
 }
 
+// Deliberately NOT `exec ${resolvedCommand}`: exec replaces the shell
+// process with the *first* simple command it's given, so if the command
+// itself contains further "&&"/";"/"|" steps (extremely common -- "make
+// clean && make compile", "vlog ... && vsim ..."), everything after the
+// first step would silently never run once that first program's process
+// exits. The extra bash layer this costs is harmless: detached:true +
+// setsid already puts the whole tree in one process group, so
+// kill(-pgid) still reaches everything regardless of how many shells are
+// nested.
 function buildShellCommand(setup: JobsFileSetup | undefined, resolvedCommand: string, workspaceRoot: string): string {
-  const steps: string[] = [];
-  if (setup?.script && setup.script.trim().length > 0) {
-    const scriptPath = path.isAbsolute(setup.script) ? setup.script : path.join(workspaceRoot, setup.script);
-    steps.push(`source "${scriptPath}"`);
-  }
-  for (const cmd of setup?.commands ?? []) {
-    if (cmd.trim().length > 0) {
-      steps.push(cmd);
-    }
-  }
-  // Deliberately NOT `exec ${resolvedCommand}`: exec replaces the shell
-  // process with the *first* simple command it's given, so if the command
-  // itself contains further "&&"/";"/"|" steps (extremely common -- "make
-  // clean && make compile", "vlog ... && vsim ..."), everything after the
-  // first step would silently never run once that first program's process
-  // exits. The extra bash layer this costs is harmless: detached:true +
-  // setsid already puts the whole tree in one process group, so
-  // kill(-pgid) still reaches everything regardless of how many shells are
-  // nested.
-  steps.push(resolvedCommand);
-  return steps.join(' && ');
+  return buildSetupChain(setup, resolvedCommand, workspaceRoot);
 }
 
 /** Turn a lane label ("3/10", "#2") into a filesystem-safe log filename suffix. */
