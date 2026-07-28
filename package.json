@@ -2,7 +2,7 @@
   "name": "eda-job-runner",
   "displayName": "EDA Job Runner",
   "description": "Tool-agnostic sidebar for running and tracking EDA compile/simulation jobs (Xcelium, Questa, or any custom script) without leaving VS Code.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "publisher": "CaioPlazas",
   "license": "GPL-3.0",
   "icon": "media/icon.png",
@@ -69,7 +69,7 @@
     "viewsWelcome": [
       {
         "view": "edaJobRunnerView",
-        "contents": "No jobs yet.\n[Create example jobs](command:eda-job-runner.createExampleJobs)\n[Add Job](command:eda-job-runner.addJob)\n\nExample jobs need nothing installed — try Run, Stop, and the log.\n\nSetting up real tools takes three steps:\n[① Environment](command:eda-job-runner.configureShell) → [② Tool](command:eda-job-runner.configureTools) → [③ Job](command:eda-job-runner.addJob)",
+        "contents": "No EDA jobs configured yet.\n[Add Job](command:eda-job-runner.addJob)\n\nJobs are stored in `.vscode/eda-jobs.json` and can also be edited by hand.",
         "when": "workspaceFolderCount != 0"
       },
       {
@@ -127,10 +127,6 @@
         "command": "eda-job-runner.refreshValueLists",
         "title": "EDA: Refresh Value Lists",
         "icon": "$(refresh)"
-      },
-      {
-        "command": "eda-job-runner.createExampleJobs",
-        "title": "EDA: Create Example Jobs"
       },
       {
         "command": "eda-job-runner.openLogViewer",
@@ -288,7 +284,7 @@
         },
         {
           "command": "eda-job-runner.configureJob",
-          "when": "view == edaJobRunnerView && viewItem =~ /^edaJob-/",
+          "when": "view == edaJobRunnerView && viewItem =~ /^(edaJob-|edaJobGroup-)/",
           "group": "inline@2"
         },
         {
@@ -496,12 +492,6 @@
         "command": "eda-job-runner.runDefaultJob",
         "key": "f5",
         "when": "edaJobRunner.hasDefaultJob && !inDebugMode"
-      },
-      {
-        "command": "eda-job-runner.runDefaultJob",
-        "key": "ctrl+alt+r",
-        "mac": "cmd+alt+r",
-        "when": "edaJobRunner.hasDefaultJob"
       }
     ],
     "configuration": {

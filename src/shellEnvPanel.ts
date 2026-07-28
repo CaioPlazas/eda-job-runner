@@ -5,14 +5,11 @@ import { JobStore } from './jobStore';
 import { ToolStore } from './toolStore';
 import { JobRunner } from './jobRunner';
 import { LogManager } from './logManager';
-import { detectVscodeShell } from './shellDetect';
 import { defaultArgsForShell, substituteVars } from './shellInvocation';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 import { runProbeChecks, PROBE_CSS } from './webviewProbe';
-import { STEPS_CSS, STEPS_JS, stepperHtml, stepIntroHtml, stepRecipeHtml, nextStepButtonHtml, StepId } from './webviewSteps';
-import { computeStepStatus, doneLineFor, recordShellTestPass } from './setupState';
 
 interface SaveMessage {
   type: 'save';
@@ -27,10 +24,6 @@ interface SaveMessage {
   logRetentionCount: string;
   logRetentionMaxSizeMB: string;
   maxConcurrentJobs: string;
-}
-
-interface DetectMessage {
-  type: 'detect';
 }
 
 interface ShellTestProbeMessage {
@@ -52,11 +45,6 @@ interface ResolvePathMessage {
   value: string;
 }
 
-interface OpenStepMessage {
-  type: 'openStep';
-  step: StepId;
-}
-
 interface CancelMessage {
   type: 'cancel';
 }
@@ -67,10 +55,8 @@ interface CleanAllLogsMessage {
 
 type WebviewMessage =
   | SaveMessage
-  | DetectMessage
   | ShellTestProbeMessage
   | ResolvePathMessage
-  | OpenStepMessage
   | CancelMessage
   | CleanAllLogsMessage
   | BrowseMessage
@@ -88,8 +74,7 @@ export class ShellEnvPanel {
     toolStore: ToolStore,
     folder: vscode.WorkspaceFolder,
     logManager: LogManager,
-    jobRunner: JobRunner,
-    context: vscode.ExtensionContext
+    jobRunner: JobRunner
   ): void {
     if (ShellEnvPanel.current) {
       ShellEnvPanel.current.panel.reveal();
@@ -101,7 +86,7 @@ export class ShellEnvPanel {
       vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true }
     );
-    ShellEnvPanel.current = new ShellEnvPanel(panel, jobStore, toolStore, folder, logManager, jobRunner, context);
+    ShellEnvPanel.current = new ShellEnvPanel(panel, jobStore, toolStore, folder, logManager, jobRunner);
   }
 
   private constructor(
@@ -110,8 +95,7 @@ export class ShellEnvPanel {
     private readonly toolStore: ToolStore,
     private readonly folder: vscode.WorkspaceFolder,
     private readonly logManager: LogManager,
-    private readonly jobRunner: JobRunner,
-    private readonly context: vscode.ExtensionContext
+    private readonly jobRunner: JobRunner
   ) {
     this.panel = panel;
     this.render();
@@ -131,8 +115,6 @@ export class ShellEnvPanel {
     const shellArgs = config.get<string[] | null>('shellArgs', null);
     const env = config.get<Record<string, string>>('env', {});
     const setup = this.jobStore.getSetup();
-    const detected = detectVscodeShell();
-    const status = computeStepStatus(this.toolStore, this.jobStore, this.jobRunner, this.context, this.folder);
     return {
       shellPath,
       shellArgsAuto: !shellArgs || shellArgs.length === 0,
@@ -148,12 +130,7 @@ export class ShellEnvPanel {
       logRetentionMaxSizeMB: Math.max(0, config.get<number>('logRetentionMaxSizeMB', 0)),
       maxConcurrentJobs: Math.max(0, config.get<number>('maxConcurrentJobs', 0)),
       setupChecks: config.get<string[]>('setupChecks', []).join('\n'),
-      registeredTools: this.toolStore.getTools().map(t => ({ name: t.displayName || t.command, command: t.command })),
-      detectedShellMatches: detected.path === shellPath,
-      detectedShellPath: detected.path,
-      detectedShellSource: detected.source,
-      status,
-      doneLine: doneLineFor(1, status, this.toolStore, this.jobStore, this.jobRunner)
+      registeredTools: this.toolStore.getTools().map(t => ({ name: t.displayName || t.command, command: t.command }))
     };
   }
 
@@ -162,8 +139,6 @@ export class ShellEnvPanel {
       case 'cancel':
         this.panel.dispose();
         return;
-      case 'detect':
-        return this.onDetect();
       case 'shellTestProbe':
         return this.onShellTestProbe(msg);
       case 'resolvePath':
@@ -176,17 +151,6 @@ export class ShellEnvPanel {
         return handleBrowseMessage(msg, this.panel.webview, this.folder);
       case 'clientError':
         return handleClientErrorMessage(msg);
-      case 'openStep':
-        await vscode.commands.executeCommand(
-          msg.step === 1
-            ? 'eda-job-runner.configureShell'
-            : msg.step === 2
-              ? 'eda-job-runner.configureTools'
-              : msg.step === 3
-                ? 'eda-job-runner.addJob'
-                : 'eda-job-runner.configureParams'
-        );
-        return;
     }
   }
 
@@ -217,27 +181,6 @@ export class ShellEnvPanel {
     void vscode.window.showInformationMessage(
       `EDA Job Runner: deleted ${result.files} log file${result.files === 1 ? '' : 's'} (${formatBytes(result.bytes)})${skippedNote}.`
     );
-  }
-
-  private onDetect(): void {
-    const detected = detectVscodeShell();
-    // Only safe to leave "Auto" checked if the detected args are exactly
-    // what defaultArgsForShell would already produce for this shell at Save
-    // time -- otherwise checking Auto here would make onSave discard the
-    // very args just filled in and shown to the user (shellArgsAuto ? undefined
-    // : ... -- see onSave below), silently reverting to the generic per-shell
-    // default instead of what was actually detected.
-    const isDefaultArgs = arraysEqual(detected.args, defaultArgsForShell(detected.path));
-    void this.panel.webview.postMessage({
-      type: 'detected',
-      shellPath: detected.path,
-      shellArgs: detected.args.join('\n'),
-      shellArgsIsDefault: isDefaultArgs,
-      env: Object.entries(detected.env)
-        .map(([k, v]) => `${k}=${v}`)
-        .join('\n'),
-      source: detected.source
-    });
   }
 
   private async onResolvePath(msg: ResolvePathMessage): Promise<void> {
@@ -345,16 +288,6 @@ export class ShellEnvPanel {
       const alsoResults = run.results.slice(toolChecks.length);
 
       const allOk = !run.launchError && run.results.every(r => r.ok);
-      if (allOk) {
-        recordShellTestPass(this.context, this.folder, {
-          shellPath,
-          shellArgs,
-          env,
-          setupScript: setup.script,
-          setupCommands: setup.commands,
-          postSetupCwd: msg.postSetupCwd.trim()
-        });
-      }
 
       // Persist the user-authored "Also check" list so it becomes a
       // reusable site smoke test, independent of the main Save button.
@@ -368,9 +301,7 @@ export class ShellEnvPanel {
         toolResults,
         alsoResults,
         launchError: run.launchError,
-        allOk,
-        stepStatus: computeStepStatus(this.toolStore, this.jobStore, this.jobRunner, this.context, this.folder),
-        doneLine: doneLineFor(1, computeStepStatus(this.toolStore, this.jobStore, this.jobRunner, this.context, this.folder), this.toolStore, this.jobStore, this.jobRunner)
+        allOk
       });
     } finally {
       this.probing = false;
@@ -387,10 +318,6 @@ export class ShellEnvPanel {
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
-}
-
-function arraysEqual(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
 function parseLines(text: string): string[] {
@@ -437,21 +364,12 @@ interface PanelState {
   maxConcurrentJobs: number;
   setupChecks: string;
   registeredTools: { name: string; command: string }[];
-  detectedShellMatches: boolean;
-  detectedShellPath: string;
-  detectedShellSource: string;
-  status: import('./webviewSteps').StepStatus;
-  doneLine: string | undefined;
 }
 
 export function renderHtml(webview: vscode.Webview, state: PanelState): string {
   const nonce = getNonce();
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-  const detectNoteHtml = state.detectedShellMatches
-    ? `✓ Matches your VS Code terminal shell.`
-    : `Your VS Code terminal uses <code>${esc(state.detectedShellPath)}</code> (${esc(state.detectedShellSource)}). <button type="button" class="secondary" id="useDetected">Use it</button>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -490,7 +408,6 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
   label.check input { width: auto; margin-top: 0; }
   ${HELP_CSS}
   ${BROWSE_CSS}
-  ${STEPS_CSS}
   ${PROBE_CSS}
   .row { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
   .row label { margin-top: 0; }
@@ -522,7 +439,6 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
   #saveOut { margin-top: 8px; font-size: 0.85em; min-height: 1.2em; }
   #saveOut.error { color: var(--vscode-errorForeground); }
   #saveOut.ok { color: var(--vscode-charts-green); }
-  #detectNote { margin-top: 6px; font-size: 0.85em; color: var(--vscode-descriptionForeground); min-height: 1em; }
   .pathCheck { margin-top: 4px; font-size: 0.85em; color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); min-height: 1.2em; }
   .pathCheck .yes { color: var(--vscode-charts-green); }
   .pathCheck .no { color: var(--vscode-charts-red, var(--vscode-errorForeground)); }
@@ -537,15 +453,6 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       'workspace (they can also be set in User settings). Environment setup (sourced ' +
       'script + pre-commands) is saved to <code>.vscode/eda-jobs.json</code>.'
   )}</h2>
-
-  ${stepperHtml(1, state.status)}
-  ${stepIntroHtml(1, state.status.env, state.doneLine)}
-  ${stepRecipeHtml(1, state.status.env, !state.shellPath && !state.setupScript && state.setupCommands.length === 0)}
-
-  <div class="actions">
-    <button class="secondary" id="detect">Use My VS Code Terminal Shell</button>
-  </div>
-  <div id="detectNote">${detectNoteHtml}</div>
 
   <label for="shellPath">Shell path ${help(
     'Shell binary (name on PATH or absolute path), e.g. <code>bash</code>, <code>zsh</code>, <code>tcsh</code>. Provenance: whatever shell your tool already runs correctly under, in a plain terminal.'
@@ -667,7 +574,6 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
   <div class="actions">
     <button class="primary" id="test">Test Shell Setup</button>
     <button class="secondary" id="save">Save</button>
-    ${nextStepButtonHtml(1)}
     <button class="secondary" id="cancel">Cancel</button>
   </div>
   <div id="saveOut"></div>
@@ -677,14 +583,12 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
     const vscode = acquireVsCodeApi();
     ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
-    ${STEPS_JS}
     const $ = id => document.getElementById(id);
     const $req = id => { const el = $(id); if (!el) { throw new Error('missing element #' + id); } return el; };
     const autoEl = $req('shellArgsAuto');
     const argsWrap = $req('argsWrap');
     const testOut = $req('testOut');
     const saveOut = $req('saveOut');
-    const detectNote = $req('detectNote');
     const limitByCountEl = $req('limitByCount');
     const logRetentionCountEl = $req('logRetentionCount');
     const limitBySizeEl = $req('limitBySize');
@@ -722,14 +626,6 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       };
     }
 
-    $req('detect').addEventListener('click', () => {
-      detectNote.textContent = 'Detecting…';
-      vscode.postMessage({ type: 'detect' });
-    });
-    const useDetectedBtn = $('useDetected');
-    if (useDetectedBtn) {
-      useDetectedBtn.addEventListener('click', () => vscode.postMessage({ type: 'detect' }));
-    }
 
     $req('test').addEventListener('click', () => {
       testOut.style.display = 'block';
@@ -809,29 +705,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
     window.addEventListener('message', event => {
       const m = event.data;
       if (!m) { return; }
-      if (m.type === 'detected') {
-        // Only ask before overwriting a field that actually has unsaved
-        // content different from what was just detected -- an empty field,
-        // or one that already matches, needs no confirmation.
-        const wouldOverwrite =
-          ($req('shellPath').value && $req('shellPath').value !== m.shellPath) ||
-          ($req('shellArgs').value && $req('shellArgs').value !== m.shellArgs) ||
-          (m.env && $req('env').value && $req('env').value !== m.env);
-        if (wouldOverwrite && !confirm('This will replace your current Shell path/arguments/environment fields with the detected values. Continue?')) {
-          detectNote.textContent = 'Detection cancelled -- your current fields were left as-is.';
-          return;
-        }
-        $req('shellPath').value = m.shellPath;
-        $req('shellArgs').value = m.shellArgs;
-        if (m.env) { $req('env').value = m.env; }
-        // Only safe to check Auto when the detected args ARE the generic
-        // per-shell default -- otherwise Save would discard these detected
-        // args entirely (shellArgsAuto true -> onSave persists no override)
-        // and silently fall back to that generic default instead.
-        autoEl.checked = m.shellArgsIsDefault;
-        argsWrap.classList.toggle('hidden', autoEl.checked);
-        detectNote.textContent = 'Filled from ' + m.source + '. Review, then Save.';
-      } else if (m.type === 'shellTestProbed') {
+      if (m.type === 'shellTestProbed') {
         renderProbeResult(m);
       } else if (m.type === 'saveError') {
         saveOut.className = 'error';

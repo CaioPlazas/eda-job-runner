@@ -328,6 +328,20 @@ export class JobRunner implements vscode.Disposable {
   }
 
   /**
+   * A job that once ran as a repeat-count batch keeps its lane-group history
+   * (and stays rendered as a group row) even after its `runCount` is edited
+   * back down to a plain single run -- only `runBatch` ever resets
+   * `laneGroups` on its own. Starting a fresh single run should always leave
+   * the job in a clean, flat state without a separate manual "Clear Run
+   * History" step first.
+   */
+  private clearStaleLaneGroup(jobId: string): void {
+    if (this.laneGroups.delete(jobId)) {
+      this._onDidChangeStatus.fire(jobId);
+    }
+  }
+
+  /**
    * `forcedCommand`, set by "Re-run Last", replays one exact prior resolved
    * command verbatim -- no `${param:...}` prompt, no fresh `${randomSeed}`,
    * and always a single run regardless of the job's repeat count, since it's
@@ -360,6 +374,7 @@ export class JobRunner implements vscode.Disposable {
     }
 
     if (options?.forcedCommand !== undefined) {
+      this.clearStaleLaneGroup(job.id);
       await this.runLane(job, job.id, undefined, true, options.forcedCommand);
       return;
     }
@@ -404,6 +419,7 @@ export class JobRunner implements vscode.Disposable {
       return;
     }
 
+    this.clearStaleLaneGroup(job.id);
     await this.runLane(job, job.id, undefined, true, template);
   }
 

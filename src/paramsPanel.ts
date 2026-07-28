@@ -1,21 +1,18 @@
 import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
-import { ToolStore } from './toolStore';
-import { JobRunner } from './jobRunner';
 import { GlobalParam, ValueList } from './types';
 import { HELP_CSS, help } from './webviewHelp';
 import { discoverList } from './toolIntrospect';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
-import { STEPS_CSS, STEPS_JS, stepperHtml, stepIntroHtml, stepRecipeHtml, setupErrorHtml, StepId } from './webviewSteps';
-import { computeStepStatus, doneLineFor } from './setupState';
+import { SETUP_ERROR_CSS, OPEN_STEP_JS, setupErrorHtml, StepId } from './webviewSteps';
 
-interface SaveParamsMessage {
-  type: 'saveParams';
+interface SaveMessage {
+  type: 'save';
   params: { name: string; value: string }[];
 }
-interface CloseMessage {
-  type: 'close';
+interface CancelMessage {
+  type: 'cancel';
 }
 interface OpenStepMessage {
   type: 'openStep';
@@ -29,6 +26,7 @@ interface AddListMessage {
   pattern: string;
   insertTemplate: string;
   scanDir: string;
+  params: { name: string; value: string }[];
 }
 interface RefreshListMessage {
   type: 'refreshList';
@@ -38,18 +36,21 @@ interface RefreshListMessage {
   pattern: string;
   insertTemplate: string;
   scanDir: string;
+  params: { name: string; value: string }[];
 }
 interface RemoveListMessage {
   type: 'removeList';
   name: string;
+  params: { name: string; value: string }[];
 }
 interface RefreshAllListsMessage {
   type: 'refreshAllLists';
+  params: { name: string; value: string }[];
 }
 
 type WebviewMessage =
-  | SaveParamsMessage
-  | CloseMessage
+  | SaveMessage
+  | CancelMessage
   | OpenStepMessage
   | AddListMessage
   | RefreshListMessage
@@ -63,15 +64,19 @@ export class ParamsPanel {
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
+  /**
+   * Unsaved parameter rows carried across a list add/refresh/remove, which
+   * otherwise reload the whole webview (`render()`) and silently discard
+   * anything typed-but-not-yet-Saved -- params only persist via the
+   * explicit Save button. Cleared once an actual Save happens.
+   */
+  private draftParams: GlobalParam[] | undefined;
   /** The probe command behind a list's current scanError, by list name -- transient, never persisted, shown via setupErrorHtml. */
   private readonly lastProbeCommands = new Map<string, string | undefined>();
 
   static createOrShow(
     jobStore: JobStore,
-    toolStore: ToolStore,
-    folder: vscode.WorkspaceFolder,
-    jobRunner: JobRunner,
-    context: vscode.ExtensionContext
+    folder: vscode.WorkspaceFolder
   ): void {
     if (ParamsPanel.current) {
       ParamsPanel.current.panel.reveal();
@@ -81,16 +86,13 @@ export class ParamsPanel {
       enableScripts: true,
       retainContextWhenHidden: true
     });
-    ParamsPanel.current = new ParamsPanel(panel, jobStore, toolStore, folder, jobRunner, context);
+    ParamsPanel.current = new ParamsPanel(panel, jobStore, folder);
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly jobStore: JobStore,
-    private readonly toolStore: ToolStore,
-    private readonly folder: vscode.WorkspaceFolder,
-    private readonly jobRunner: JobRunner,
-    private readonly context: vscode.ExtensionContext
+    private readonly folder: vscode.WorkspaceFolder
   ) {
     this.panel = panel;
     this.render();
@@ -101,20 +103,17 @@ export class ParamsPanel {
   }
 
   private render(): void {
-    const status = computeStepStatus(this.toolStore, this.jobStore, this.jobRunner, this.context, this.folder);
     this.panel.webview.html = renderHtml(
       this.panel.webview,
-      this.jobStore.getParams(),
+      this.draftParams ?? this.jobStore.getParams(),
       this.jobStore.getLists(),
-      this.lastProbeCommands,
-      status,
-      doneLineFor(4, status, this.toolStore, this.jobStore, this.jobRunner)
+      this.lastProbeCommands
     );
   }
 
   private async onMessage(msg: WebviewMessage): Promise<void> {
     switch (msg.type) {
-      case 'close':
+      case 'cancel':
         this.panel.dispose();
         return;
       case 'openStep':
@@ -128,14 +127,14 @@ export class ParamsPanel {
                 : 'eda-job-runner.configureParams'
         );
         return;
-      // Registry model (T3.2): every param row autosaves (debounced
-      // client-side), so there is nothing left to discard -- no draft
-      // tracking needed, and closing the panel is always safe.
-      case 'saveParams': {
+      case 'save': {
         const params: GlobalParam[] = msg.params
           .map(p => ({ name: p.name.trim(), value: p.value }))
           .filter(p => p.name.length > 0);
         await this.jobStore.setParams(params);
+        this.draftParams = undefined;
+        void vscode.window.showInformationMessage('EDA Job Runner: parameters saved.');
+        this.panel.dispose();
         return;
       }
       case 'addList':
@@ -147,6 +146,7 @@ export class ParamsPanel {
           // incomplete list row itself isn't discarded either.
           return;
         }
+        this.draftParams = msg.params;
         const scanDir = msg.scanDir.trim() || undefined;
         const list: ValueList = {
           name,
@@ -178,15 +178,18 @@ export class ParamsPanel {
         return;
       }
       case 'removeList': {
+        this.draftParams = msg.params;
         const lists = this.jobStore.getLists().filter(l => l.name !== msg.name);
         await this.jobStore.setLists(lists);
         this.render();
         return;
       }
-      case 'refreshAllLists':
+      case 'refreshAllLists': {
+        this.draftParams = msg.params;
         await vscode.commands.executeCommand('eda-job-runner.refreshValueLists');
         this.render();
         return;
+      }
       case 'browse':
         return handleBrowseMessage(msg, this.panel.webview, this.folder);
       case 'clientError':
@@ -206,12 +209,9 @@ export function renderHtml(
   webview: vscode.Webview,
   params: GlobalParam[],
   lists: ValueList[],
-  probeCommands?: Map<string, string | undefined>,
-  status?: import('./webviewSteps').StepStatus,
-  doneLine?: string
+  probeCommands?: Map<string, string | undefined>
 ): string {
   const nonce = getNonce();
-  const effectiveStatus: import('./webviewSteps').StepStatus = status ?? { env: 'todo', tool: 'todo', job: 'todo', params: 'todo' };
   // Guards against a param/list value containing "</script>" breaking out of
   // the embedded script block, same convention as jobConfigPanel.ts's customArgsJson.
   const paramsJson = JSON.stringify(params).replace(/</g, '\\u003c');
@@ -240,7 +240,7 @@ export function renderHtml(
   h2:first-child { margin-top: 0; }
   ${HELP_CSS}
   ${BROWSE_CSS}
-  ${STEPS_CSS}
+  ${SETUP_ERROR_CSS}
   .paramRow { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
   .paramRow input { width: auto; flex: 1 1 200px; margin: 0; }
   .paramRow .pName { flex: 1 1 220px; }
@@ -276,7 +276,6 @@ export function renderHtml(
   .secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
   .err { color: var(--vscode-errorForeground); }
   .hint { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
-  .savedFlash { font-size: 0.85em; color: var(--vscode-charts-green); }
   #paramsWrap { margin-top: 14px; }
   #listsWrap { margin-top: 14px; }
   .listItem {
@@ -299,10 +298,6 @@ export function renderHtml(
 <body>
   <h2>Parameters &amp; Value Lists</h2>
 
-  ${stepperHtml(4, effectiveStatus)}
-  ${stepIntroHtml(4, effectiveStatus.params, doneLine)}
-  ${stepRecipeHtml(4, effectiveStatus.params, params.length === 0 && lists.length === 0)}
-
   <h3>Parameters ${help(
     "Workspace-wide named values, referenced in a job's Command (including the " +
       "Tool builder's free-text fields) as <code>" +
@@ -319,8 +314,8 @@ export function renderHtml(
   <h3>Value lists ${help(
     'A named list of values (e.g. a test list), discovered from a command\'s stdout or a file, ' +
       'surfaced as a dropdown in any job\'s Configure form. <b>Attach one to a specific flag</b> from ' +
-      "Tool Setup's per-option \"value source\" column (which can also create one inline), or a job can " +
-      "attach one for itself only, from its own Configure form. Leave a list unattached for a value with " +
+      "Tool Setup's per-option \"value source\" column, or a job can attach one for itself only, from its " +
+      "own Configure form. Leave a list unattached for a value with " +
       'no real CLI flag to attach to (e.g. a plusarg like <code>+UVM_TESTNAME=</code>) — an unattached list ' +
       "keeps its own row in a job's Configure form, with an insert template controlling exactly how a picked " +
       'value is written into the Command.'
@@ -330,43 +325,17 @@ export function renderHtml(
   <button class="secondary" id="refreshAllLists" type="button" style="margin-top:10px;">↻ Refresh all</button>
 
   <div class="actions">
-    <button type="button" class="secondary" data-open-step="3">Add Job →</button>
-    <button class="secondary" id="close">Close</button>
-    <span class="savedFlash hidden" id="savedFlash">Saved ✓</span>
+    <button class="primary" id="save">Save</button>
+    <button class="secondary" id="cancel">Cancel</button>
   </div>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
-    ${STEPS_JS}
+    ${OPEN_STEP_JS}
     const paramsWrap = document.getElementById('paramsWrap');
     const listsWrap = document.getElementById('listsWrap');
-    const savedFlashEl = document.getElementById('savedFlash');
-    let savedFlashTimer;
-
-    function collectParams() {
-      return Array.from(paramsWrap.querySelectorAll('.paramRow')).map(row => ({
-        name: row.querySelector('.pName').value,
-        value: row.querySelector('.pValue').value
-      }));
-    }
-
-    // Registry model (T3.2): debounced autosave on input, immediate on
-    // blur/change -- mirrors jobConfigPanel.ts's experimentalAutoSaveJobConfig
-    // debounce. There is no Save/Cancel here anymore: a param row IS the
-    // saved state, same as every other registry-style row in this panel
-    // (a value list already saved immediately before this change).
-    let paramSaveTimer;
-    function scheduleParamSave() {
-      clearTimeout(paramSaveTimer);
-      paramSaveTimer = setTimeout(() => {
-        vscode.postMessage({ type: 'saveParams', params: collectParams() });
-        savedFlashEl.classList.remove('hidden');
-        clearTimeout(savedFlashTimer);
-        savedFlashTimer = setTimeout(() => savedFlashEl.classList.add('hidden'), 1600);
-      }, 400);
-    }
 
     function addParamRow(name, value) {
       const row = document.createElement('div');
@@ -388,12 +357,7 @@ export function renderHtml(
       removeBtn.type = 'button';
       removeBtn.className = 'secondary';
       removeBtn.textContent = 'Remove';
-      removeBtn.addEventListener('click', () => { row.remove(); scheduleParamSave(); });
-
-      nameInput.addEventListener('input', scheduleParamSave);
-      valueInput.addEventListener('input', scheduleParamSave);
-      nameInput.addEventListener('blur', scheduleParamSave);
-      valueInput.addEventListener('blur', scheduleParamSave);
+      removeBtn.addEventListener('click', () => row.remove());
 
       row.appendChild(nameInput);
       row.appendChild(valueInput);
@@ -404,7 +368,17 @@ export function renderHtml(
     document.getElementById('addParam').addEventListener('click', () => addParamRow());
     (${paramsJson}).forEach(p => addParamRow(p.name, p.value));
 
-    document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'close' }));
+    function collectParams() {
+      return Array.from(paramsWrap.querySelectorAll('.paramRow')).map(row => ({
+        name: row.querySelector('.pName').value,
+        value: row.querySelector('.pValue').value
+      }));
+    }
+
+    document.getElementById('save').addEventListener('click', () => {
+      vscode.postMessage({ type: 'save', params: collectParams() });
+    });
+    document.getElementById('cancel').addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
 
     // Existing lists render read-only-ish (name locked once saved, matching
     // the old Tool Setup behavior) with immediate Refresh/Remove; the blank
@@ -524,7 +498,8 @@ export function renderHtml(
           source: sourceInput.value,
           pattern: patternInput.value,
           insertTemplate: templateInput.value,
-          scanDir: scanDirInput.value
+          scanDir: scanDirInput.value,
+          params: collectParams()
         });
       });
       removeBtn.addEventListener('click', () => {
@@ -536,7 +511,7 @@ export function renderHtml(
           scanDirInput.value = '';
           return;
         }
-        vscode.postMessage({ type: 'removeList', name: list.name });
+        vscode.postMessage({ type: 'removeList', name: list.name, params: collectParams() });
       });
 
       listsWrap.appendChild(row);
@@ -545,7 +520,7 @@ export function renderHtml(
     (${listsJson}).forEach(l => addListRow(l));
     document.getElementById('addList').addEventListener('click', () => addListRow(null));
     document.getElementById('refreshAllLists').addEventListener('click', () => {
-      vscode.postMessage({ type: 'refreshAllLists' });
+      vscode.postMessage({ type: 'refreshAllLists', params: collectParams() });
     });
   </script>
 </body>

@@ -180,11 +180,11 @@ function checkState(name, html) {
   checkState('jobConfig-nolists', renderHtml(fakeWebview, job, [tool], folders, undefined, false, globalParams, templates, []));
   const addNoTemplatesHtml = renderHtml(fakeWebview, undefined, [tool], folders, undefined, false, globalParams, [], lists);
   checkState('jobConfig-new-notemplates', addNoTemplatesHtml);
-  // T2.2: the template row is absent (hidden) when there are zero templates, present when there are.
-  check(addNoTemplatesHtml.includes('class="templateRow hidden"'), 'template row is hidden with zero templates');
-  check(!addHtml.includes('class="templateRow hidden"'), 'template row is shown when templates exist');
-  // D10: the stepper renders only when adding a job, never when configuring an existing one.
-  check(addHtml.includes('class="stepper"'), 'jobConfig-new (Add) shows the stepper');
+  // The template row always renders, regardless of whether any templates exist yet.
+  check(addNoTemplatesHtml.includes('class="templateRow"'), 'template row renders with zero templates');
+  check(addHtml.includes('class="templateRow"'), 'template row renders when templates exist');
+  // The stepper was removed; neither Add nor Configure should render one.
+  check(!addHtml.includes('class="stepper"'), 'jobConfig-new (Add) has no stepper');
   check(!configureHtml.includes('class="stepper"'), 'jobConfig (Configure existing) has no stepper');
   check(addHtml.includes('id="willRun"') && configureHtml.includes('id="willRun"'), 'Will-run preview is present in both Add and Configure (verification, not onboarding)');
 }
