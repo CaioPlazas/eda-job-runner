@@ -97,7 +97,15 @@ export class ParamsPanel {
     this.panel = panel;
     this.render();
     this.disposables.push(
-      this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
+      this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => {
+        // A rejected promise here (e.g. an I/O error mid-scan) would
+        // otherwise be an unhandled rejection VS Code's event emitter never
+        // surfaces -- the panel just silently stops responding to that
+        // message with no indication why.
+        this.onMessage(msg).catch(err => {
+          void vscode.window.showErrorMessage(`EDA Job Runner: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }),
       this.panel.onDidDispose(() => this.cleanup())
     );
   }
@@ -148,6 +156,10 @@ export class ParamsPanel {
         }
         this.draftParams = msg.params;
         const scanDir = msg.scanDir.trim() || undefined;
+        // Seed with the currently-stored values (refreshList only -- addList
+        // has none yet) so discoverList can fall back to them instead of
+        // wiping a working list to empty on a transient scan failure.
+        const previousValues = msg.type === 'refreshList' ? this.jobStore.getLists().find(l => l.name === name)?.values ?? [] : [];
         const list: ValueList = {
           name,
           command: msg.sourceType === 'command' ? source : undefined,
@@ -155,7 +167,7 @@ export class ParamsPanel {
           pattern: msg.pattern.trim() || undefined,
           insertTemplate: msg.insertTemplate.trim() || undefined,
           scanDir,
-          values: []
+          values: previousValues
         };
         const { list: discovered, probeCommand } = await discoverList(list, this.jobStore, this.folder, scanDir);
         if (discovered.scanError) {

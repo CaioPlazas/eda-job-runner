@@ -202,30 +202,41 @@ export async function discoverList(
   const command = list.command?.trim();
   const file = list.file?.trim();
 
-  if (command) {
-    const { output, launchError, probeCommand } = await runProbe(command, jobStore, folder, scanDir);
-    if (launchError) {
-      return { list: { ...list, values: [], scanError: launchError }, probeCommand };
-    }
-    const values = parseListLines(output, list.pattern);
-    return {
-      list: { ...list, values, scanError: values.length === 0 ? 'command produced no list items' : undefined },
-      probeCommand
-    };
-  }
+  let values: string[] = [];
+  let scanError: string | undefined;
+  let probeCommand: string | undefined;
 
-  if (file) {
+  if (command) {
+    const probed = await runProbe(command, jobStore, folder, scanDir);
+    probeCommand = probed.probeCommand;
+    if (probed.launchError) {
+      scanError = probed.launchError;
+    } else {
+      values = parseListLines(probed.output, list.pattern);
+      scanError = values.length === 0 ? 'command produced no list items' : undefined;
+    }
+  } else if (file) {
     try {
       const filePath = resolveListFilePath(file, folder, scanDir);
       const text = await readCapped(filePath);
-      const values = parseListLines(text, list.pattern);
-      return { list: { ...list, values, scanError: values.length === 0 ? 'file has no list items' : undefined } };
+      values = parseListLines(text, list.pattern);
+      scanError = values.length === 0 ? 'file has no list items' : undefined;
     } catch (err) {
-      return { list: { ...list, values: [], scanError: `Could not read file: ${describe(err)}` } };
+      scanError = `Could not read file: ${describe(err)}`;
     }
+  } else {
+    scanError = 'no command or file source set';
   }
 
-  return { list: { ...list, values: [], scanError: 'no command or file source set' } };
+  // A transient failure (or a scan that legitimately comes back empty)
+  // shouldn't silently wipe out a list that previously had real, working
+  // values -- keep the old values on screen alongside the new scanError so
+  // the failure is visible without discarding working data.
+  if (scanError && values.length === 0 && list.values.length > 0) {
+    values = list.values;
+  }
+
+  return { list: { ...list, values, scanError }, probeCommand };
 }
 
 /**

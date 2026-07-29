@@ -440,6 +440,20 @@ async function stopFolder(jobStore: JobStore, jobRunner: JobRunner, item: Folder
     return;
   }
   const jobs = jobStore.getJobsInFolder(item.folderName);
+  const runningCount = jobs.filter(job => jobRunner.getStatus(job.id).state === 'running').length;
+  // A single running job is as cheap to re-run as the plain stopJob command
+  // already is, but killing several at once in one click deserves the same
+  // affected-count warning deleteFolder gives for a comparable blast radius.
+  if (runningCount > 1) {
+    const confirm = await vscode.window.showWarningMessage(
+      `Stop all ${runningCount} running jobs in folder "${item.folderName}"?`,
+      { modal: true },
+      'Stop all'
+    );
+    if (confirm !== 'Stop all') {
+      return;
+    }
+  }
   await Promise.all(jobs.map(job => jobRunner.stopAllRuns(job.id)));
 }
 

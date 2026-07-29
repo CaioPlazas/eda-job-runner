@@ -104,7 +104,8 @@ export class LogManager {
     jobId: string,
     retention: RetentionOptions,
     laneSuffix?: string,
-    root: string = this.resolveRoot()
+    root: string = this.resolveRoot(),
+    exclude: Set<string> = new Set()
   ): Promise<{ logPath: string; handle: fs.promises.FileHandle }> {
     const dir = path.join(root, jobId);
     await fs.promises.mkdir(dir, { recursive: true });
@@ -113,7 +114,7 @@ export class LogManager {
     if (!laneSuffix) {
       await this.relinkLatest(dir, logPath);
     }
-    await this.prune(jobId, retention, root);
+    await this.prune(jobId, retention, root, exclude);
     await this.rememberRoot(root);
     return { logPath, handle };
   }
@@ -338,10 +339,11 @@ export class LogManager {
     await fs.promises.symlink(path.basename(logPath), linkPath).catch(() => undefined);
   }
 
-  private async prune(jobId: string, retention: RetentionOptions, root: string): Promise<void> {
+  /** `exclude` (see `JobRunner.getActiveLogPaths`) keeps retention pruning from unlinking a log a live/reattached run still has open -- same hazard `cleanAllLogs` guards against. */
+  private async prune(jobId: string, retention: RetentionOptions, root: string, exclude: Set<string> = new Set()): Promise<void> {
     const runs = await this.listRuns(jobId, root);
     const withSizes = await Promise.all(runs.map(async p => ({ path: p, size: await this.fileSize(p) })));
-    const toDelete = planPrune(withSizes, retention);
+    const toDelete = planPrune(withSizes, retention).filter(p => !exclude.has(p));
     await Promise.all(toDelete.map(p => fs.promises.unlink(p).catch(() => undefined)));
   }
 }

@@ -91,6 +91,8 @@ export class JobConfigPanel {
   private readonly disposables: vscode.Disposable[] = [];
   /** The job this panel saves to. Undefined until a brand-new job's first Save creates one. */
   private currentJobId: string | undefined;
+  /** Guards against two rapid Save clicks on a brand-new job both racing past the `currentJobId === undefined` check and creating two duplicate jobs. */
+  private saving = false;
 
   static createOrShow(
     jobStore: JobStore,
@@ -148,7 +150,15 @@ export class JobConfigPanel {
       jobStore.getLists()
     );
     this.disposables.push(
-      this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
+      this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => {
+        // A rejected promise here (e.g. an I/O error mid-save) would
+        // otherwise be an unhandled rejection VS Code's event emitter never
+        // surfaces -- the panel just silently stops responding to that
+        // message with no indication why.
+        this.onMessage(msg).catch(err => {
+          void vscode.window.showErrorMessage(`EDA Job Runner: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }),
       this.panel.onDidDispose(() => this.cleanup())
     );
   }
@@ -183,7 +193,18 @@ export class JobConfigPanel {
       terminal.sendText(msg.command);
       return;
     }
+    if (this.saving) {
+      return;
+    }
+    this.saving = true;
+    try {
+      await this.save(msg);
+    } finally {
+      this.saving = false;
+    }
+  }
 
+  private async save(msg: SaveMessage): Promise<void> {
     const name = msg.name.trim();
     const command = msg.command.trim();
     const cwd = msg.cwd.trim() || '.';
