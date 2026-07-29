@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.0 — Tool Setup: "Search deeper" for tools with unusual `--help` formats
+
+Real installed tools like Questa's `qrun`/`vlog`/`vsim`/`vrun` turned out to
+use several `--help` conventions Tool Setup's flag scanner had never seen:
+flags flush against column 0 or indented past the usual 2-4 spaces, flag
+spellings joined with `" / "` instead of a comma, a value placeholder glued
+or space-separated as `<angle-brackets>` instead of a bare word, and every
+line of output prefixed with `# ` (a Tcl-shell artifact). All were silently
+dropped before, with no indication anything had gone wrong.
+
+**Tool Setup:**
+- New **Search deeper** button, offered whenever a scan finds zero options.
+  It re-parses the help text already captured for that variant with a
+  looser set of rules covering the formats above — no re-running the tool.
+  Left as an explicit, opt-in action rather than folded into the default
+  scan, so well-behaved tools keep exactly the same conservative parsing
+  they always have.
+- Regression tests built from real captured `qrun`/`vlog`/`vsim`/`vrun`
+  output.
+
 ## 1.2.0 — Questa's silent false-pass, and Tool Setup rough edges
 
 **Fixes:**

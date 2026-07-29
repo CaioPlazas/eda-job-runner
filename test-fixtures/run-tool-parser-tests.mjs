@@ -5,7 +5,7 @@ import { execSync } from 'child_process';
 execSync('npx esbuild ./src/toolOptionParser.ts --bundle --format=esm --outfile=/tmp/toolOptionParser.mjs', {
   stdio: 'inherit'
 });
-const { parseHelpOutput, detectSubcommandChoices, mergeFavorites, parseChoices } = await import(
+const { parseHelpOutput, parseHelpOutputDeep, detectSubcommandChoices, mergeFavorites, parseChoices } = await import(
   '/tmp/toolOptionParser.mjs'
 );
 
@@ -187,6 +187,100 @@ optional arguments:
   check(parseChoices('SEED') === undefined, 'parseChoices leaves a plain metavar alone');
   check(parseChoices(undefined) === undefined, 'parseChoices(undefined) -> undefined');
   check(parseChoices('{}') === undefined, 'parseChoices empty braces -> undefined');
+}
+
+// --- "search deeper" fixtures below: real (trimmed) excerpts captured from an
+// installed Questa Altera FPGA Starter Edition, which surfaced formats the
+// default parser was never built for. Each case asserts BOTH that the
+// default `parseHelpOutput` stays at zero (opt-in only, no behavior change
+// for the well-tested default path) AND that `parseHelpOutputDeep` recovers
+// the real flags. ---
+
+// --- zero-indent flag column (e.g. real `vlog -help all` / `qrun -help all`) ---
+{
+  const help = `------------------------------------General------------------------------------
+General Category for option
+
+--------------------------------------------------------------------------------
+-32                             Run in 32-bit mode
+-F <filename>                   Specify a file containing more command line
+                                arguments.
+-O0                             This option may have a moderate negative impact
+                                on performance.
+-work <path>                    Specify library WORK
+`;
+  const strict = parseHelpOutput(help);
+  check(eq(strict, []), `zero-indent flags: default parser stays at zero (opt-in only) (got ${JSON.stringify(strict)})`);
+  const deep = parseHelpOutputDeep(help);
+  check(
+    eq(deep, [
+      { flags: ['-32'], description: 'Run in 32-bit mode' },
+      { flags: ['-F'], metavar: '<filename>', description: 'Specify a file containing more command line' },
+      { flags: ['-O0'], description: 'This option may have a moderate negative impact' },
+      { flags: ['-work'], metavar: '<path>', description: 'Specify library WORK' }
+    ]),
+    `zero-indent flags: deep parser recovers them, dashes-only separator not mistaken for a flag (got ${JSON.stringify(deep)})`
+  );
+}
+
+// --- 6-space indent, " / "-joined flags, glued flag+placeholder (e.g. real `vrun -help`) ---
+{
+  const help = `Usage:
+  vrun [-run] [<options>] <runnable> [<runnable> [...]]
+    Execute named runnables (context chains)
+      -32 / -64                 Set 32/64-bit option for merge operations
+      -g<name>=<value>          Define a default value for a parameter
+      -G<Name>=<Value>          Define an override value for a parameter
+      -j <integer>              Limit number of concurrently running Actions
+`;
+  const strict = parseHelpOutput(help);
+  check(eq(strict, []), `6-space indent + non-comma flag join: default parser stays at zero (got ${JSON.stringify(strict)})`);
+  const deep = parseHelpOutputDeep(help);
+  check(
+    eq(deep, [
+      { flags: ['-32', '-64'], description: 'Set 32/64-bit option for merge operations' },
+      { flags: ['-g'], metavar: '<name>=<value>', description: 'Define a default value for a parameter' },
+      { flags: ['-G'], metavar: '<Name>=<Value>', description: 'Define an override value for a parameter' },
+      { flags: ['-j'], metavar: '<integer>', description: 'Limit number of concurrently running Actions' }
+    ]),
+    `deep parser splits " / "-joined flags and parses glued flag+placeholder syntax (got ${JSON.stringify(deep)})`
+  );
+}
+
+// --- every line comment-prefixed (e.g. real `vsim -help all`, routed through a Tcl shell) ---
+{
+  const help = `# Questa Altera Starter FPGA Edition-64 vsim 2025.2 Simulator
+# --------------------------------------------------------------------------------
+# -32                             Run in 32-bit mode.
+# -AStime                         Enables support for atto second time unit.
+# -G<Name>=<Value>                This option may have a lower negative impact on
+`;
+  const strict = parseHelpOutput(help);
+  check(eq(strict, []), `comment-prefixed help: default parser stays at zero (got ${JSON.stringify(strict)})`);
+  const deep = parseHelpOutputDeep(help);
+  check(
+    eq(deep, [
+      { flags: ['-32'], description: 'Run in 32-bit mode.' },
+      { flags: ['-AStime'], description: 'Enables support for atto second time unit.' },
+      { flags: ['-G'], metavar: '<Name>=<Value>', description: 'This option may have a lower negative impact on' }
+    ]),
+    `deep parser strips the uniform "# " prefix before parsing (got ${JSON.stringify(deep)})`
+  );
+}
+
+// --- comment-prefix strip requires ALL non-blank lines to share it, not just most ---
+{
+  const help = `usage: prog [options]
+# -x    a real flag, but this help text is not comment-wrapped
+  -y    another real flag
+`;
+  const deep = parseHelpOutputDeep(help);
+  check(
+    eq(deep, [
+      { flags: ['-y'], description: 'another real flag' }
+    ]),
+    `mixed comment/non-comment lines: prefix left alone, "# -x" line not treated as a flag (got ${JSON.stringify(deep)})`
+  );
 }
 
 console.log(failures === 0 ? '\nAll tool-parser tests passed.' : `\n${failures} tool-parser test(s) FAILED.`);
