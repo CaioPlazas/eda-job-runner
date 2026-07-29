@@ -12,7 +12,8 @@ import { FileTailer } from './tailer';
 export class LogLiveView {
   private static readonly openByFile = new Map<string, vscode.Terminal>();
 
-  static show(jobName: string, filePath: string): void {
+  /** `onClose`, if given, fires when the user actually closes this tail's terminal -- not when `show()` just re-focuses an already-open one for the same file. Lets a caller keep its own "which files are being tailed" record in sync. */
+  static show(jobName: string, filePath: string, onClose?: () => void): void {
     const existing = LogLiveView.openByFile.get(filePath);
     if (existing) {
       existing.show();
@@ -37,6 +38,7 @@ export class LogLiveView {
         tailer.stop();
         writeEmitter.dispose();
         LogLiveView.openByFile.delete(filePath);
+        onClose?.();
       },
       // Read-only: swallow input.
       handleInput: () => undefined

@@ -27,6 +27,10 @@ import { ToolStore } from './toolStore';
 import { ToolSetupPanel } from './toolSetupPanel';
 import { scanTool, scanAllLists } from './toolIntrospect';
 import { planListMigration } from './listMigration';
+import { parseLogHeader } from './logIndex';
+
+/** Live-tail terminals open at persist time (jobId -> filePath), so a still-running (reattached) job's live view can be silently reopened after a window reload instead of leaving the user to notice and re-trigger it. */
+const LIVE_LOG_STORAGE_KEY = 'eda-job-runner.liveLogViews';
 
 export function activate(context: vscode.ExtensionContext): void {
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -65,7 +69,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const statusBar = new StatusBarController(jobStore, jobRunner);
   context.subscriptions.push(statusBar);
 
-  const logFollow = new LogFollowController(jobRunner);
+  const logFollow = new LogFollowController(jobRunner, context.workspaceState);
   context.subscriptions.push(logFollow);
 
   void migrateMaxConcurrentJobs(folder);
@@ -165,7 +169,7 @@ export function activate(context: vscode.ExtensionContext): void {
       item ? openLogForJob(item.job, item.status.logPath) : undefined
     ),
     vscode.commands.registerCommand('eda-job-runner.openLogHistory', (item: EdaTreeElement) =>
-      openLogHistory(logManager, item)
+      openLogHistory(logManager, jobRunner, item)
     ),
     vscode.commands.registerCommand('eda-job-runner.followLog', async (item: JobTreeItem) => {
       if (!item) {
@@ -175,13 +179,14 @@ export function activate(context: vscode.ExtensionContext): void {
       await openLogForJob(item.job, item.status.logPath);
     }),
     vscode.commands.registerCommand('eda-job-runner.liveLog', (item: JobTreeItem) =>
-      item ? openLiveLog(jobRunner, folder, item.job) : undefined
+      item ? openLiveLog(jobRunner, folder, item.job, context.workspaceState) : undefined
     )
   );
 
   void (async () => {
     await Promise.all([jobStore.load(), toolStore.load()]);
     jobRunner.beginReattachment(id => jobStore.getJob(id));
+    await restoreLiveLogViews(jobStore, jobRunner, context.workspaceState);
     await migrateLegacyToolLists(toolStore, jobStore);
     await rescanAllTools(toolStore, jobStore, folder);
   })();
@@ -423,14 +428,39 @@ async function deleteFolder(jobStore: JobStore, item: FolderTreeItem): Promise<v
  * finished, so this plain sequential loop naturally never overlaps two
  * jobs, independent of experimentalMultipleRuns. A cancelled `${param:...}`
  * prompt just skips that one job; the loop continues.
+ *
+ * `jobsOverride` lets the "Retry Failed" action below re-invoke this with
+ * just the subset that failed, instead of the whole folder.
  */
-async function runFolder(jobStore: JobStore, jobRunner: JobRunner, item: FolderTreeItem): Promise<void> {
+async function runFolder(
+  jobStore: JobStore,
+  jobRunner: JobRunner,
+  item: FolderTreeItem,
+  jobsOverride?: JobDefinition[]
+): Promise<void> {
   if (!item) {
     return;
   }
-  const jobs = jobStore.getJobsInFolder(item.folderName);
+  const jobs = jobsOverride ?? jobStore.getJobsInFolder(item.folderName);
+  const failed: JobDefinition[] = [];
   for (const job of jobs) {
     await jobRunner.run(job);
+    if (jobRunner.getStatus(job.id).state === 'failed') {
+      failed.push(job);
+    }
+  }
+  // A single-job folder already gets that job's own pass/fail toast --
+  // this summary (and the retry it offers) only earns its keep once a
+  // batch of several jobs can partially fail.
+  if (jobs.length > 1 && failed.length > 0) {
+    const passed = jobs.length - failed.length;
+    const choice = await vscode.window.showWarningMessage(
+      `Folder "${item.folderName}" finished — ${passed} passed, ${failed.length} failed.`,
+      'Retry Failed'
+    );
+    if (choice === 'Retry Failed') {
+      await runFolder(jobStore, jobRunner, item, failed);
+    }
   }
 }
 
@@ -480,7 +510,7 @@ async function moveJobToFolder(jobStore: JobStore, item: EdaTreeElement): Promis
   await jobStore.moveJobToFolder(item.job.id, choice === NONE ? undefined : choice);
 }
 
-function openLiveLog(jobRunner: JobRunner, folder: vscode.WorkspaceFolder, job: JobDefinition): void {
+function openLiveLog(jobRunner: JobRunner, folder: vscode.WorkspaceFolder, job: JobDefinition, memento: vscode.Memento): void {
   const workspaceRoot = folder.uri.fsPath;
   let filePath: string | undefined;
   if (job.logFile && job.logFile.trim().length > 0) {
@@ -498,7 +528,37 @@ function openLiveLog(jobRunner: JobRunner, folder: vscode.WorkspaceFolder, job: 
     );
     return;
   }
-  LogLiveView.show(job.name, filePath);
+  void setLiveLogEntry(memento, job.id, filePath);
+  LogLiveView.show(job.name, filePath, () => void setLiveLogEntry(memento, job.id, undefined));
+}
+
+async function setLiveLogEntry(memento: vscode.Memento, jobId: string, filePath: string | undefined): Promise<void> {
+  const entries = { ...memento.get<Record<string, string>>(LIVE_LOG_STORAGE_KEY, {}) };
+  if (filePath) {
+    entries[jobId] = filePath;
+  } else {
+    delete entries[jobId];
+  }
+  await memento.update(LIVE_LOG_STORAGE_KEY, entries);
+}
+
+/**
+ * Silently reopens a live-tail terminal for every job that still has one
+ * recorded and is still actually running (a still-alive reattached job, not
+ * a stale entry from a job that finished or was deleted while the window
+ * was closed) -- otherwise the user has to notice the live view is gone and
+ * manually re-trigger "Live Log" after every reload.
+ */
+async function restoreLiveLogViews(jobStore: JobStore, jobRunner: JobRunner, memento: vscode.Memento): Promise<void> {
+  const entries = memento.get<Record<string, string>>(LIVE_LOG_STORAGE_KEY, {});
+  for (const [jobId, filePath] of Object.entries(entries)) {
+    const job = jobStore.getJob(jobId);
+    if (!job || jobRunner.getStatus(jobId).state !== 'running') {
+      await setLiveLogEntry(memento, jobId, undefined);
+      continue;
+    }
+    LogLiveView.show(job.name, filePath, () => void setLiveLogEntry(memento, jobId, undefined));
+  }
 }
 
 async function openLogForJob(job: JobDefinition, logPath: string | undefined): Promise<void> {
@@ -510,7 +570,7 @@ async function openLogForJob(job: JobDefinition, logPath: string | undefined): P
   await vscode.window.showTextDocument(doc, { preview: false });
 }
 
-async function openLogHistory(logManager: LogManager, item: EdaTreeElement): Promise<void> {
+async function openLogHistory(logManager: LogManager, jobRunner: JobRunner, item: EdaTreeElement): Promise<void> {
   if (!item) {
     return;
   }
@@ -533,6 +593,26 @@ async function openLogHistory(logManager: LogManager, item: EdaTreeElement): Pro
   if (!choice) {
     return;
   }
+
+  // A recorded `# command:` header (see jobRunner.ts's runLane) means this
+  // exact past run can be replayed, not just viewed -- older logs written
+  // before that header existed just fall back to opening, same as before.
+  const { head } = await logManager.readHeadTail(choice.logPath);
+  const command = parseLogHeader(head).command;
+  if (command) {
+    const action = await vscode.window.showQuickPick(['Open Log', 'Re-run This Command'], {
+      title: path.basename(choice.logPath, '.log'),
+      placeHolder: command
+    });
+    if (!action) {
+      return;
+    }
+    if (action === 'Re-run This Command') {
+      void jobRunner.run(item.job, { forcedCommand: command });
+      return;
+    }
+  }
+
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(choice.logPath));
   await vscode.window.showTextDocument(doc, { preview: false });
 }
@@ -564,13 +644,17 @@ function notifyOnCompletion(jobStore: JobStore, jobRunner: JobRunner, jobId: str
       status.exitCode === 0 && errs > 0
         ? `${errs} error${errs === 1 ? '' : 's'} in log`
         : `exit ${status.exitCode ?? '?'}`;
-    void vscode.window
-      .showWarningMessage(`"${name}" failed (${reason}).`, 'Open Log')
-      .then(choice => {
-        if (choice === 'Open Log') {
-          void openLogForJob(job, status.logPath);
-        }
-      });
+    // 'Re-run Last' replays this exact resolved command again -- the same
+    // action the reRunLast command/inline icon offers, surfaced right where
+    // a failure is first seen instead of making the user go find the row.
+    const actions = status.resolvedCommand ? ['Open Log', 'Re-run Last'] : ['Open Log'];
+    void vscode.window.showWarningMessage(`"${name}" failed (${reason}).`, ...actions).then(choice => {
+      if (choice === 'Open Log') {
+        void openLogForJob(job, status.logPath);
+      } else if (choice === 'Re-run Last' && status.resolvedCommand) {
+        void jobRunner.run(job, { forcedCommand: status.resolvedCommand });
+      }
+    });
   }
   // 'killed' is always user-initiated (they just clicked Stop) — no toast needed.
 }

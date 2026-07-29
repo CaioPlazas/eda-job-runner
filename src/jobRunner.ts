@@ -185,6 +185,7 @@ function resolveLogParseBudgetMB(config: vscode.WorkspaceConfiguration): number 
 }
 const STATUS_STORAGE_KEY = 'eda-job-runner.jobStatuses';
 const PARAM_VALUES_STORAGE_KEY = 'eda-job-runner.jobParamValues';
+const LANE_GROUPS_STORAGE_KEY = 'eda-job-runner.laneGroups';
 // Matches CSI ANSI escape sequences (color codes, cursor movement, etc.)
 // commonly emitted by EDA tools and Makefiles with colorized output.
 const ANSI_PATTERN = /\x1B\[[0-9;]*[a-zA-Z]/g;
@@ -222,12 +223,16 @@ export class JobRunner implements vscode.Disposable {
   private readonly detachedStopping = new Set<string>();
   /**
    * Lane-group tracking for a job that has run as a sequential repeat-count
-   * batch (a job can never run concurrently with itself — see `run()`). Not
-   * persisted — live-session only, same tradeoff as the "detached across
-   * reload" primary-slot handling below, just not carried across a window
-   * reload. A job with no entry here (the common case, runCount 1) renders
-   * as a single flat row using `statuses`, exactly as before this feature
-   * existed.
+   * batch (a job can never run concurrently with itself — see `run()`).
+   * Persisted (see LANE_GROUPS_STORAGE_KEY) so a batch's per-lane history
+   * -- and its per-lane Re-run Last targets -- survive a window reload, the
+   * same way the primary slot's `statuses` does. Unlike the primary slot,
+   * a lane still `running` at reload time has no pid-based reattachment
+   * path (only the primary slot is tracked that way), so the constructor
+   * converts any such lane to 'killed' on load rather than leaving a ghost
+   * "running" row nothing can ever resolve. A job with no entry here (the
+   * common case, runCount 1) renders as a single flat row using `statuses`,
+   * exactly as before this feature existed.
    */
   private readonly laneGroups = new Map<string, Map<string, JobRunStatus>>();
   private readonly laneCompletionResolvers = new Map<string, (state: JobRunState) => void>();
@@ -257,6 +262,22 @@ export class JobRunner implements vscode.Disposable {
     this.paramValues = new Map(
       Object.entries(memento.get<Record<string, Record<string, string>>>(PARAM_VALUES_STORAGE_KEY, {}))
     );
+    const storedLaneGroups = memento.get<Record<string, Record<string, JobRunStatus>>>(LANE_GROUPS_STORAGE_KEY, {});
+    for (const [jobId, group] of Object.entries(storedLaneGroups)) {
+      this.laneGroups.set(
+        jobId,
+        new Map(
+          Object.entries(group).map(([laneKey, status]) => [
+            laneKey,
+            // No pid-based reattachment path exists for a non-primary lane
+            // (see the class field doc comment) -- a lane that was still
+            // running when the window closed can only ever be shown as
+            // interrupted, never actually resumed.
+            status.state === 'running' ? { ...status, state: 'killed' as const, endTime: Date.now() } : status
+          ])
+        )
+      );
+    }
     // A "running" status left over from a previous session means the extension
     // host restarted (window reload, VS Code exit) and we lost the stdio/exit
     // handle. If the pid is still alive, keep showing it as running (detached)
@@ -327,6 +348,7 @@ export class JobRunner implements vscode.Disposable {
       return;
     }
     this.laneGroups.delete(jobId);
+    void this.persistLaneGroups();
     this._onDidChangeStatus.fire(jobId);
   }
 
@@ -340,6 +362,7 @@ export class JobRunner implements vscode.Disposable {
    */
   private clearStaleLaneGroup(jobId: string): void {
     if (this.laneGroups.delete(jobId)) {
+      void this.persistLaneGroups();
       this._onDidChangeStatus.fire(jobId);
     }
   }
@@ -457,6 +480,7 @@ export class JobRunner implements vscode.Disposable {
     // A fresh batch replaces any previous lane-group history for this job so
     // old and new batch results don't mix confusingly in the tree.
     this.laneGroups.set(job.id, new Map());
+    void this.persistLaneGroups();
     let passed = 0;
     let failed = 0;
     let stoppedByUser = false;
@@ -1258,6 +1282,7 @@ export class JobRunner implements vscode.Disposable {
     if (group) {
       group.set(run.laneKey, status);
       this.pruneLaneGroup(group);
+      void this.persistLaneGroups();
       if (!run.mirrorPrimary) {
         // A concurrent extra lane changed. Fire with no jobId — the tree
         // refreshes (it always re-reads getLanes/getStatus fresh) but this
@@ -1309,6 +1334,13 @@ export class JobRunner implements vscode.Disposable {
 
   private async persistStatuses(): Promise<void> {
     await this.memento.update(STATUS_STORAGE_KEY, Object.fromEntries(this.statuses));
+  }
+
+  private async persistLaneGroups(): Promise<void> {
+    const serialized = Object.fromEntries(
+      [...this.laneGroups].map(([jobId, group]) => [jobId, Object.fromEntries(group)])
+    );
+    await this.memento.update(LANE_GROUPS_STORAGE_KEY, serialized);
   }
 
   private async persistParamValues(): Promise<void> {
