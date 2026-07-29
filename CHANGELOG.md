@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.1 — Promoted to the stable channel
+
+No code changes from 1.4.0 — the Marketplace won't let the same version
+number be republished under a different release channel, so this version
+exists purely to carry 1.4.0's already-released functionality onto the
+**stable** (non-pre-release) channel for users who aren't opted into
+pre-releases.
+
 ## 1.4.0 — Easier to repeat, harder to lose
 
 Six follow-ups from the same bug hunt that shipped 1.3.1, this time about
