@@ -100,7 +100,15 @@ export class ShellEnvPanel {
     this.panel = panel;
     this.render();
     this.disposables.push(
-      this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
+      this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => {
+        // A rejected promise here (e.g. an I/O error mid-probe) would
+        // otherwise be an unhandled rejection VS Code's event emitter never
+        // surfaces -- the panel just silently stops responding to that
+        // message with no indication why.
+        this.onMessage(msg).catch(err => {
+          void vscode.window.showErrorMessage(`EDA Job Runner: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }),
       this.panel.onDidDispose(() => this.cleanup())
     );
   }

@@ -218,6 +218,8 @@ export class JobRunner implements vscode.Disposable {
   private readonly reattachedRuns = new Map<string, ReattachRun>();
   /** Still-running `runPostRunCommand` children -- unlike the job itself, killed on dispose() (see there) rather than left detached. */
   private readonly postRunChildren = new Set<cp.ChildProcess>();
+  /** jobIds currently running the detached-branch kill schedule in stop() -- guards a second rapid Stop click from starting a duplicate escalation. */
+  private readonly detachedStopping = new Set<string>();
   /**
    * Lane-group tracking for a job that has run as a sequential repeat-count
    * batch (a job can never run concurrently with itself — see `run()`). Not
@@ -538,7 +540,7 @@ export class JobRunner implements vscode.Disposable {
     }
 
     const laneSuffix = laneKey === job.id ? undefined : sanitizeLaneSuffix(label ?? laneKey);
-    const { logPath, handle: logHandle } = await this.logManager.createLogFile(job.id, retention, laneSuffix, logsRoot);
+    const { logPath, handle: logHandle } = await this.logManager.createLogFile(job.id, retention, laneSuffix, logsRoot, this.getActiveLogPaths());
     const startTime = Date.now();
     // The structured fields (seed/cwd/started) are written BEFORE the
     // free-text command line deliberately: the log viewer's header parser
@@ -642,6 +644,13 @@ export class JobRunner implements vscode.Disposable {
       if (!run.child.pid) {
         return;
       }
+      if (run.killRequested) {
+        // Already escalating from an earlier stop() call on this same run --
+        // let that chain run to completion instead of starting a second,
+        // independent one in parallel (which would overwrite run.killTimer
+        // and leave the first chain's pending timeout uncancelled).
+        return;
+      }
       // detached: true put the child in its own process group (its pid == pgid),
       // so signalling -pid reaches the whole make/shell/simulator tree, not just
       // the immediate child. This is what makes stop() actually free the license.
@@ -659,6 +668,12 @@ export class JobRunner implements vscode.Disposable {
     // No live ChildProcess handle — this is a "running (detached)" job left
     // over from before a window reload. We can still signal its process group
     // by pid, but since we'll never get an exit event for it, we poll instead.
+    if (this.detachedStopping.has(jobId)) {
+      // Already escalating from an earlier stop() call -- a second rapid
+      // click would otherwise send a duplicate signal sequence and race two
+      // setStatus() calls against stale snapshots.
+      return;
+    }
     const status = this.statuses.get(jobId);
     if (status?.state !== 'running' || !status.pid) {
       return;
@@ -671,8 +686,13 @@ export class JobRunner implements vscode.Disposable {
       this.setStatus(jobId, { ...status, state: 'idle', pid: undefined, pidStartTime: undefined, detached: undefined });
       return;
     }
-    await this.runDetachedKillSchedule(pid, status.pidStartTime, this.buildKillSchedule());
-    this.setStatus(jobId, { ...status, state: 'killed', endTime: Date.now(), detached: undefined });
+    this.detachedStopping.add(jobId);
+    try {
+      await this.runDetachedKillSchedule(pid, status.pidStartTime, this.buildKillSchedule());
+      this.setStatus(jobId, { ...status, state: 'killed', endTime: Date.now(), detached: undefined });
+    } finally {
+      this.detachedStopping.delete(jobId);
+    }
   }
 
   /** The `killSignals` setting (falling back to `killGracePeriodSeconds` per unset stage) as a concrete schedule. See killPlan.ts. */

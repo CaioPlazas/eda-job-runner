@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.3.1 — Data-loss and reliability fixes from a systematic bug hunt
+
+A pass over the extension specifically looking for irreversible actions
+with no confirmation and no safety net. Nine fixes, all internal
+robustness/correctness — no user-facing behavior changes except where noted.
+
+**Fixes:**
+- Automatic log retention pruning could unlink a log file a reattached
+  (post-reload) still-running job had open, freezing live tailing and
+  corrupting the trailer write — it now excludes every currently-live log,
+  the same guard the manual "Clean all logs" action already had.
+- `.vscode/eda-jobs.json`/`eda-tools.json` writes are now atomic
+  (write-temp-then-rename) and serialized, so a crash mid-write can no
+  longer corrupt either file, and two overlapping saves can no longer
+  silently lose one of them.
+- Refreshing a value list (Parameters panel or the "Refresh Value Lists"
+  command) no longer wipes a previously-working list to empty on a
+  transient scan failure — it keeps the old values on screen alongside the
+  new error.
+- Double-clicking Save on a brand-new job could create two duplicate job
+  entries; fixed with a save-in-progress guard.
+- Rescanning two variants of the same tool in quick succession could
+  silently discard whichever one's scan landed first; both are now kept.
+- Four of five webview panels (Job, Tool Setup, Shell & Environment,
+  Parameters) could fail an action (e.g. a disk error mid-save) with
+  nothing shown to the user; they now surface an error message like the
+  Log Viewer panel already did.
+- **Behavior change:** stopping a folder with more than one running job now
+  asks for confirmation first, matching the folder-delete confirmation's
+  existing "how many jobs does this affect" wording.
+- Fixed a performance issue where a long-running detached job with many
+  parsed errors could re-stat every error's file on every ~500ms
+  reattach-tailer tick, stuttering the UI; file resolution is now cached
+  per run.
+- Double-clicking Stop before the first kill signal's grace period elapsed
+  could start a second, independent kill-escalation sequence; a second
+  click now no-ops while one is already in progress.
+
 ## 1.3.0 — Tool Setup: "Search deeper" for tools with unusual `--help` formats
 
 Real installed tools like Questa's `qrun`/`vlog`/`vsim`/`vrun` turned out to

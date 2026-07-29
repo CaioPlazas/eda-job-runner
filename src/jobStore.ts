@@ -11,6 +11,8 @@ export class JobStore implements vscode.Disposable {
   private data: JobsFile = emptyJobsFile();
   private readonly disposables: vscode.Disposable[] = [];
   private readonly jobsFileUri: vscode.Uri;
+  /** Chains persist() calls so overlapping writes land on disk in the order they were issued -- see persist(). */
+  private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly workspaceFolder: vscode.WorkspaceFolder) {
     this.jobsFileUri = vscode.Uri.joinPath(workspaceFolder.uri, '.vscode', 'eda-jobs.json');
@@ -316,12 +318,28 @@ export class JobStore implements vscode.Disposable {
     }
   }
 
+  /**
+   * Snapshots `this.data` synchronously (so callers that mutate `this.data`
+   * then `await this.persist()` back-to-back never interleave their
+   * snapshots), then queues the actual disk write behind any write already
+   * in flight. Without the queue, two overlapping writes could complete out
+   * of order and leave the earlier, staler snapshot as the on-disk result.
+   */
   private async persist(): Promise<void> {
+    const text = JSON.stringify(this.data, null, 2) + '\n';
+    const write = this.writeQueue.then(() => this.writeAtomic(text));
+    this.writeQueue = write.catch(() => undefined);
+    await write;
+    this._onDidChangeJobs.fire();
+  }
+
+  /** Writes to a sibling temp file then renames over the target, so a crash mid-write can never leave `.vscode/eda-jobs.json` truncated/corrupt. */
+  private async writeAtomic(text: string): Promise<void> {
     const dir = vscode.Uri.joinPath(this.workspaceFolder.uri, '.vscode');
     await vscode.workspace.fs.createDirectory(dir);
-    const text = JSON.stringify(this.data, null, 2) + '\n';
-    await vscode.workspace.fs.writeFile(this.jobsFileUri, Buffer.from(text, 'utf8'));
-    this._onDidChangeJobs.fire();
+    const tmpUri = this.jobsFileUri.with({ path: `${this.jobsFileUri.path}.tmp-${randomUUID()}` });
+    await vscode.workspace.fs.writeFile(tmpUri, Buffer.from(text, 'utf8'));
+    await vscode.workspace.fs.rename(tmpUri, this.jobsFileUri, { overwrite: true });
   }
 
   dispose(): void {

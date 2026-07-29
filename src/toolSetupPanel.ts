@@ -189,7 +189,15 @@ export class ToolSetupPanel {
     this.panel = panel;
     this.render();
     this.disposables.push(
-      this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => this.onMessage(msg)),
+      this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => {
+        // A rejected promise here (e.g. an I/O error mid-scan) would
+        // otherwise be an unhandled rejection VS Code's event emitter never
+        // surfaces -- the panel just silently stops responding to that
+        // message with no indication why.
+        this.onMessage(msg).catch(err => {
+          void vscode.window.showErrorMessage(`EDA Job Runner: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }),
       this.panel.onDidDispose(() => this.cleanup())
     );
   }
@@ -373,10 +381,23 @@ export class ToolSetupPanel {
           this.folder,
           tool.scanDir
         );
-        const variants = tool.variants.slice();
-        variants[idx] = {
-          ...variants[idx],
-          options: mergeFavorites(variants[idx].options, result.options),
+        // Re-read the tool after the await instead of splicing back into the
+        // pre-await snapshot -- a concurrent rescan of a different variant on
+        // this same tool may have already written its own update, and
+        // splicing into the stale `tool.variants` here would silently
+        // discard it.
+        const freshTool = this.toolStore.getTool(msg.id);
+        if (!freshTool) {
+          return;
+        }
+        const freshIdx = freshTool.variants.findIndex(v => v.label === msg.label);
+        if (freshIdx === -1) {
+          return;
+        }
+        const variants = freshTool.variants.slice();
+        variants[freshIdx] = {
+          ...variants[freshIdx],
+          options: mergeFavorites(variants[freshIdx].options, result.options),
           rawHelp: result.rawHelp,
           scanError: result.scanError
         };
@@ -482,13 +503,20 @@ export class ToolSetupPanel {
         }
         const helpArg = tool.helpArg?.trim() || '--help';
         const result = await scanVariant(tool.command, selectArgs, helpArg, this.jobStore, this.folder, tool.scanDir);
+        // Re-read the tool after the await for the same reason as
+        // rescanVariant above -- a concurrent scan on another variant of
+        // this tool may have written its own update in the meantime.
+        const freshTool = this.toolStore.getTool(msg.id);
+        if (!freshTool) {
+          return;
+        }
         // Re-adding a label that already exists (nothing in the UI stops
         // this) used to be a bare replace, silently discarding the previous
         // variant's favorites and value-list attachments entirely -- route
         // it through the same merge every rescan path already uses instead.
-        const existing = tool.variants.find(v => v.label === label);
+        const existing = freshTool.variants.find(v => v.label === label);
         const options = existing ? mergeFavorites(existing.options, result.options) : result.options;
-        const variants = tool.variants.filter(v => v.label !== label);
+        const variants = freshTool.variants.filter(v => v.label !== label);
         variants.push({ label, selectArgs, options, rawHelp: result.rawHelp, scanError: result.scanError });
         await this.toolStore.updateTool(msg.id, { variants, lastScanned: Date.now() });
         this.addingVariantForToolId = undefined;

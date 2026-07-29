@@ -13,13 +13,31 @@ export class LogDiagnostics implements vscode.Disposable {
   private readonly collection: vscode.DiagnosticCollection;
   /** Diagnostics contributed per job id, so re-running a job replaces only its own. */
   private readonly byJob = new Map<string, vscode.Uri[]>();
+  /**
+   * Per-job resolvePath() memo. A detached/reattached run's ~500ms tailer
+   * poll re-feeds this class the *entire* accumulated issue list every tick
+   * (see jobRunner.ts's feedReattachLines), which without this cache means
+   * every unresolved issue gets up to 3 synchronous fs.statSync calls again
+   * every tick for as long as the run keeps producing errors. Scoped to a
+   * single run (dropped in clearJob) rather than kept forever, so a fresh
+   * run still re-resolves from scratch -- the tradeoff is a file created
+   * partway through a run that a prior check missed won't get picked up
+   * until the next run, which is an acceptable cost for not re-statting
+   * hundreds of paths on every tick.
+   */
+  private readonly resolveCache = new Map<string, Map<string, vscode.Uri | null>>();
 
   constructor(private readonly workspaceFolder: vscode.WorkspaceFolder) {
     this.collection = vscode.languages.createDiagnosticCollection('eda-job-runner');
   }
 
-  /** Clear a job's previous diagnostics (called when a run starts). */
+  /** Clear a job's previous diagnostics and resolvePath memo (called when a run starts). */
   clearJob(jobId: string): void {
+    this.clearCollection(jobId);
+    this.resolveCache.delete(jobId);
+  }
+
+  private clearCollection(jobId: string): void {
     const uris = this.byJob.get(jobId);
     if (uris) {
       for (const uri of uris) {
@@ -36,14 +54,14 @@ export class LogDiagnostics implements vscode.Disposable {
    * diagnostic with no valid location isn't actionable.
    */
   setJobIssues(jobId: string, jobCwdAbs: string, issues: LogIssue[]): void {
-    this.clearJob(jobId);
+    this.clearCollection(jobId);
 
     const grouped = new Map<string, vscode.Diagnostic[]>();
     for (const issue of issues) {
       if (!issue.file || issue.line === undefined) {
         continue;
       }
-      const resolved = this.resolvePath(issue.file, jobCwdAbs);
+      const resolved = this.resolvePath(jobId, issue.file, jobCwdAbs);
       if (!resolved) {
         continue;
       }
@@ -82,7 +100,23 @@ export class LogDiagnostics implements vscode.Disposable {
    *      here, because a bare name can match many files and a wrong jump is
    *      worse than none. Basename search could be a future opt-in.
    */
-  private resolvePath(file: string, jobCwdAbs: string): vscode.Uri | undefined {
+  private resolvePath(jobId: string, file: string, jobCwdAbs: string): vscode.Uri | undefined {
+    let cache = this.resolveCache.get(jobId);
+    if (!cache) {
+      cache = new Map();
+      this.resolveCache.set(jobId, cache);
+    }
+    const cacheKey = `${jobCwdAbs} ${file}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) {
+      return cached ?? undefined;
+    }
+    const resolved = this.resolvePathUncached(file, jobCwdAbs);
+    cache.set(cacheKey, resolved ?? null);
+    return resolved;
+  }
+
+  private resolvePathUncached(file: string, jobCwdAbs: string): vscode.Uri | undefined {
     if (path.isAbsolute(file)) {
       return existsFile(file) ? vscode.Uri.file(file) : undefined;
     }
