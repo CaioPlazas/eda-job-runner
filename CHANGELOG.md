@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4.0 — Easier to repeat, harder to lose
+
+Six follow-ups from the same bug hunt that shipped 1.3.1, this time about
+actions you'd want to redo but couldn't without extra manual work.
+
+**New:**
+- A repeat-count batch's per-lane run history now survives a window reload
+  instead of collapsing to a flat row — a lane still "running" when the
+  window closed is shown as interrupted rather than stuck.
+- **Re-run Last** is now also an inline hover icon on the job row (next to
+  Run/Configure), not just a right-click menu item.
+- The job-failure notification now offers a **Re-run Last** button directly,
+  alongside Open Log.
+- **Open Log History** can now replay a past run's exact recorded command,
+  not just view its log.
+- Running a folder with more than one job now offers **Retry Failed** when
+  some (but not all) jobs failed, instead of requiring a full re-run.
+- A **Follow Running Log** or **Live Log** view left open on a still-running
+  job now silently reopens after a window reload instead of being lost.
+
 ## 1.3.1 — Data-loss and reliability fixes from a systematic bug hunt
 
 A pass over the extension specifically looking for irreversible actions
