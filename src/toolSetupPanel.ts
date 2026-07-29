@@ -11,6 +11,7 @@ import { runProbeChecks } from './webviewProbe';
 import { SETUP_ERROR_CSS, OPEN_STEP_JS, setupErrorHtml, StepId } from './webviewSteps';
 import { buildSetupChain } from './setupChain';
 import { BUILTIN_SEED_PATTERNS } from './seedDetect';
+import { shellQuote } from './shellQuote';
 
 interface ScanNewMessage {
   type: 'scanNew';
@@ -1424,10 +1425,6 @@ export function renderHtml(
   </script>
 </body>
 </html>`;
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 function getNonce(): string {

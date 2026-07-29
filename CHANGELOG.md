@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.5.0 — Job row click swap, and a real argument-quoting bug fix
+
+**Changed:**
+- Clicking a job row now opens **Configure** again, instead of the log.
+  The inline icon on the right (previously the Configure gear) is now
+  **Open Log** instead. A job's own log is still one click away — it's
+  just the icon and the row click that traded places. Unaffected: a
+  specific run inside an expanded repeat-count batch still opens its own
+  log on click (there's no per-run "configure"), and a batch group header's
+  inline icon is still Configure (a group has no single log to open).
+
+**Fixes:**
+- A real bug: an option/Custom-Arg value typed into the Job Configuration
+  builder (e.g. a tool's `-arguments` flag) got silently cut apart at run
+  time if it contained a space, comma, or quote — completely standard for
+  verification tool invocations (`+define+FOO=1,BAR=2`, a quoted compile
+  arg, a filelist path with spaces). The builder now shell-quotes any typed
+  value that isn't a plain bareword before splicing it into the command, so
+  it always arrives as the single argument you typed.
+
 ## 1.4.1 — Promoted to the stable channel
 
 No code changes from 1.4.0 — the Marketplace won't let the same version

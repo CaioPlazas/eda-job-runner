@@ -10,6 +10,7 @@ import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 import { runProbeChecks, PROBE_CSS } from './webviewProbe';
+import { shellQuote } from './shellQuote';
 
 interface SaveMessage {
   type: 'save';
@@ -322,10 +323,6 @@ export class ShellEnvPanel {
       d.dispose();
     }
   }
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 function parseLines(text: string): string[] {
