@@ -3,7 +3,7 @@ import { ToolStore } from './toolStore';
 import { JobStore } from './jobStore';
 import { ToolDefinition, ToolOption, ToolVariant, ValueList, JobsFileSetup } from './types';
 import { scanVariant, scanTool } from './toolIntrospect';
-import { detectSubcommandChoices, mergeFavorites, parseChoices } from './toolOptionParser';
+import { detectSubcommandChoices, mergeFavorites, parseChoices, parseHelpOutputDeep } from './toolOptionParser';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
@@ -101,6 +101,21 @@ interface TryHelpArgMessage {
   id: string;
   helpArg: string;
 }
+/**
+ * "Search deeper": re-parse a variant's already-captured `rawHelp` with the
+ * looser `parseHelpOutputDeep` rules instead of re-running the tool -- for
+ * help text whose format the default scan's conservative parser can't read
+ * (see toolOptionParser.ts). Only offered when a scan found zero options.
+ */
+interface DeepParseVariantMessage {
+  type: 'deepParseVariant';
+  id: string;
+  label: string;
+}
+/** Same as DeepParseVariantMessage, but for the top-level scan of a tool that hasn't been added yet (`pendingAdd`). */
+interface DeepParsePendingMessage {
+  type: 'deepParsePending';
+}
 interface OpenStepMessage {
   type: 'openStep';
   step: StepId;
@@ -125,6 +140,8 @@ type WebviewMessage =
   | CloseMessage
   | FindItMessage
   | TryHelpArgMessage
+  | DeepParseVariantMessage
+  | DeepParsePendingMessage
   | OpenStepMessage
   | BrowseMessage
   | ClientErrorMessage;
@@ -364,6 +381,41 @@ export class ToolSetupPanel {
           scanError: result.scanError
         };
         await this.toolStore.updateTool(msg.id, { variants, lastScanned: Date.now() });
+        this.render();
+        return;
+      }
+
+      case 'deepParseVariant': {
+        const tool = this.toolStore.getTool(msg.id);
+        if (!tool) {
+          return;
+        }
+        const idx = tool.variants.findIndex(v => v.label === msg.label);
+        if (idx === -1) {
+          return;
+        }
+        const variants = tool.variants.slice();
+        variants[idx] = {
+          ...variants[idx],
+          options: mergeFavorites(variants[idx].options, parseHelpOutputDeep(variants[idx].rawHelp ?? ''))
+        };
+        await this.toolStore.updateTool(msg.id, { variants });
+        this.render();
+        return;
+      }
+
+      case 'deepParsePending': {
+        const pending = this.pendingAdd;
+        if (!pending) {
+          return;
+        }
+        this.pendingAdd = {
+          ...pending,
+          topLevel: {
+            ...pending.topLevel,
+            options: parseHelpOutputDeep(pending.topLevel.rawHelp ?? '')
+          }
+        };
         this.render();
         return;
       }
@@ -653,6 +705,18 @@ export function renderHtml(
              <button class="secondary small" data-try-helparg-custom-id="${esc(tool.id)}" data-try-helparg-custom-label="${esc(v.label)}" type="button">Retry with this</button>
            </div>`
         : '';
+    // Offered whenever a scan found zero options, independent of scanError --
+    // some tools (e.g. mock_tool.sh's "report" sub-command) are genuinely
+    // flagless, in which case a click here just confirms that; others simply
+    // use a help-text format the default conservative parser can't read (see
+    // toolOptionParser.ts's parseHelpOutputDeep), in which case it recovers
+    // real flags from the very same captured output -- no re-run needed.
+    const deepParseButton =
+      v.options.length === 0
+        ? `<div class="actions">
+             <button class="secondary small" data-deep-id="${esc(tool.id)}" data-deep-label="${esc(v.label)}" type="button" title="Re-parse the captured output above with looser rules, for tools whose help text doesn't follow common flag-listing conventions.">Search deeper</button>
+           </div>`
+        : '';
     return `<details class="variant" open>
       <summary>${esc(label)} — ${v.options.length} option${v.options.length === 1 ? '' : 's'}${
       v.scanError ? ' <span class="err">⚠ scan issue</span>' : ''
@@ -666,6 +730,7 @@ export function renderHtml(
       </summary>
       ${v.scanError ? setupErrorHtml(outcomeMessage(outcome, v.scanError), probeCommand) : ''}
       ${helpArgLadder}
+      ${deepParseButton}
       ${renderOptionRowsEditable(tool, v.label, v.options)}
       <details><summary class="rawSummary">Show output</summary><pre>${esc(v.rawHelp ?? '')}</pre></details>
     </details>`;
@@ -755,6 +820,13 @@ export function renderHtml(
                <button class="secondary small" id="tryHelpArgH" data-pending-command="${esc(pendingAdd.command)}" data-pending-displayname="${esc(pendingAdd.displayName)}" data-pending-scandir="${esc(pendingAdd.scanDir)}">Try -h</button>
                <input type="text" id="tryHelpArgCustomInput" placeholder="e.g. -help all" />
                <button class="secondary small" id="tryHelpArgCustomBtn" data-pending-command="${esc(pendingAdd.command)}" data-pending-displayname="${esc(pendingAdd.displayName)}" data-pending-scandir="${esc(pendingAdd.scanDir)}">Retry with this</button>
+             </div>`
+          : ''
+      }
+      ${
+        pendingAdd.topLevel.options.length === 0
+          ? `<div class="actions">
+               <button class="secondary small" id="deepParsePendingBtn" type="button" title="Re-parse the captured output below with looser rules, for tools whose help text doesn't follow common flag-listing conventions.">Search deeper</button>
              </div>`
           : ''
       }
@@ -1051,6 +1123,15 @@ export function renderHtml(
         });
       }
     }
+    {
+      const deepPendingBtn = $('deepParsePendingBtn');
+      if (deepPendingBtn) {
+        deepPendingBtn.addEventListener('click', () => {
+          showBusy();
+          vscode.postMessage({ type: 'deepParsePending' });
+        });
+      }
+    }
     // At most one tool is ever in edit mode at a time -- a class, not an id,
     // since renderTool re-renders per-tool (see wrap.querySelector('.editCommand') below).
     const editCommandEl = document.querySelector('.editCommand');
@@ -1155,6 +1236,14 @@ export function renderHtml(
     wire('[data-remove-tool]', btn => vscode.postMessage({ type: 'removeTool', id: btn.getAttribute('data-remove-tool') }));
     wire('[data-edit-tool]', btn => vscode.postMessage({ type: 'startEdit', id: btn.getAttribute('data-edit-tool') }));
     wire('[data-start-addvariant]', btn => vscode.postMessage({ type: 'startAddVariant', id: btn.getAttribute('data-start-addvariant') }));
+    wire('[data-deep-id]', btn => {
+      showBusy();
+      vscode.postMessage({
+        type: 'deepParseVariant',
+        id: btn.getAttribute('data-deep-id'),
+        label: btn.getAttribute('data-deep-label')
+      });
+    });
     wire('[data-rescan-variant-id]', btn => {
       showBusy();
       vscode.postMessage({
