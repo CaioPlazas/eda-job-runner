@@ -2,7 +2,7 @@
   "name": "eda-job-runner",
   "displayName": "EDA Job Runner",
   "description": "Tool-agnostic sidebar for running and tracking EDA compile/simulation jobs (Xcelium, Questa, or any custom script) without leaving VS Code.",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "publisher": "CaioPlazas",
   "license": "GPL-3.0",
   "icon": "media/icon.png",
@@ -288,8 +288,13 @@
           "group": "inline@2"
         },
         {
+          "command": "eda-job-runner.openLog",
+          "when": "view == edaJobRunnerView && viewItem =~ /^edaJob-/",
+          "group": "inline@3"
+        },
+        {
           "command": "eda-job-runner.configureJob",
-          "when": "view == edaJobRunnerView && viewItem =~ /^(edaJob-|edaJobGroup-)/",
+          "when": "view == edaJobRunnerView && viewItem =~ /^edaJobGroup-/",
           "group": "inline@3"
         },
         {

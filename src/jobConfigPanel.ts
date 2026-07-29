@@ -798,6 +798,15 @@ export function renderHtml(
       const t = template && template.trim().length > 0 ? template : '\${value}';
       return t.split('\${value}').join(value);
     }
+    // Mirrors shellQuoteIfNeeded in src/shellQuote.ts (duplicated here since
+    // this script runs in the webview sandbox, not as an importable module).
+    // A free-typed argument value with a space/quote/etc. would otherwise be
+    // spliced unquoted into the Command string and get split apart by bash
+    // at run time -- wrap it in single quotes (POSIX-safe) whenever it isn't
+    // already a plain bareword.
+    function shellQuoteIfNeeded(s) {
+      return /^[\w@%+=:,./-]+$/.test(s) ? s : "'" + s.split("'").join("'\\''") + "'";
+    }
     function effectiveTemplate(list) {
       const override = LIST_OVERRIDES[list.name];
       return (override && override.trim().length > 0) ? override : (list.insertTemplate || '\${value}');
@@ -1171,8 +1180,15 @@ export function renderHtml(
         o.textContent = v;
         select.appendChild(o);
       });
-      // Pre-select the value whose templated fragment is already in the command.
-      const preset = (list.values || []).find(v => text.indexOf(applyInsertTemplate(row.dataset.template, v)) !== -1);
+      // Pre-select the value whose templated fragment is already in the command --
+      // checked both unquoted (a job saved before values were quoted, or a plain
+      // bareword that was never quoted to begin with) and quoted (the current
+      // builder's own output), so reopening either kind of existing job still
+      // recognizes its picked value.
+      const preset = (list.values || []).find(v =>
+        text.indexOf(applyInsertTemplate(row.dataset.template, v)) !== -1 ||
+        text.indexOf(applyInsertTemplate(row.dataset.template, shellQuoteIfNeeded(v))) !== -1
+      );
       if (preset) { select.value = preset; }
       syncTitle(select);
       select.addEventListener('change', () => { syncTitle(select); onBuilderChange(); });
@@ -1279,13 +1295,13 @@ export function renderHtml(
         parts.push(preferred);
         const valueInput = row.querySelector('.optValue');
         if (valueInput && valueInput.value.trim()) {
-          parts.push(valueInput.value.trim());
+          parts.push(shellQuoteIfNeeded(valueInput.value.trim()));
         }
       });
       listsWrap.querySelectorAll('.listRow').forEach(row => {
         const select = row.querySelector('.listValue');
         if (select && select.value.trim()) {
-          parts.push(applyInsertTemplate(row.dataset.template, select.value.trim()));
+          parts.push(applyInsertTemplate(row.dataset.template, shellQuoteIfNeeded(select.value.trim())));
         }
       });
       customArgsWrap.querySelectorAll('.customArgRow').forEach(row => {
@@ -1293,7 +1309,7 @@ export function renderHtml(
         if (!arg) { return; }
         parts.push(arg);
         const val = row.querySelector('.caVal').value.trim();
-        if (val) { parts.push(val); }
+        if (val) { parts.push(shellQuoteIfNeeded(val)); }
       });
       return parts.join(' ');
     }

@@ -5,12 +5,13 @@ import { JobDefinition } from './types';
 
 /**
  * One tree row for a single run. For a job that has never had more than one
- * tracked run (the common case), this is the job's only row and behaves
- * exactly as before this feature existed: clicking it opens Configure.
+ * tracked run (the common case), this is the job's only row: clicking it
+ * opens Configure, with "Open Log" moved to the inline icon on the right
+ * (swapped back from the log-on-click / gear-for-Configure arrangement).
  * When it's a lane inside a JobGroupTreeItem (`laneKey !== job.id`), it
  * represents one specific run (a sequential repeat-count iteration, or a
- * concurrent extra instance) — clicking it opens that run's own log instead,
- * since "configure" is a job-level action available on the group header.
+ * concurrent extra instance) — clicking it still opens that run's own log,
+ * since "configure" is a job-level action, not something a single run has.
  */
 export class JobTreeItem extends vscode.TreeItem {
   public readonly isLane: boolean;
@@ -32,7 +33,9 @@ export class JobTreeItem extends vscode.TreeItem {
     );
     this.contextValue = isLane ? `edaJobRun-${status.state}` : `edaJob-${status.state}`;
     this.iconPath = iconForState(status);
-    this.command = { command: 'eda-job-runner.openLog', title: 'Open Log', arguments: [this] };
+    this.command = isLane
+      ? { command: 'eda-job-runner.openLog', title: 'Open Log', arguments: [this] }
+      : { command: 'eda-job-runner.configureJob', title: 'Configure', arguments: [this] };
   }
 }
 
