@@ -1,6 +1,18 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { FileTailer } from './tailer';
+import { readTailChunk } from './logManager';
+
+/**
+ * How much of an already-written log is replayed when a live view opens. The
+ * view starts at end-of-file rather than replaying everything: a job that has
+ * been running all night has a log far larger than a terminal's scrollback can
+ * hold, and pushing all of it through a pseudo-terminal in one write froze the
+ * window (this view also reopens by itself for every running job after a
+ * reload). This seed is just enough recent context to see where the run is;
+ * the full log is one click away as a normal editor tab.
+ */
+const SEED_TAIL_BYTES = 16 * 1024;
 
 /**
  * A live, self-refreshing log viewer: a read-only pseudo-terminal that the
@@ -23,7 +35,12 @@ export class LogLiveView {
     const writeEmitter = new vscode.EventEmitter<string>();
     // Pseudo-terminals want CRLF line endings; the file uses LF.
     const emit = (text: string) => writeEmitter.fire(text.replace(/\r?\n/g, '\r\n'));
-    const tailer = new FileTailer(filePath, emit);
+    // Built in open(), once the seed read below knows which offset to continue
+    // from -- see SEED_TAIL_BYTES for why this doesn't replay from byte 0.
+    let tailer: FileTailer | undefined;
+    // The seed read is async, so the terminal can be closed before it lands;
+    // without this, that would start a polling tailer nothing ever stops.
+    let closed = false;
 
     const pty: vscode.Pseudoterminal = {
       onDidWrite: writeEmitter.event,
@@ -32,10 +49,32 @@ export class LogLiveView {
         if (!fs.existsSync(filePath)) {
           emit('\x1b[2m(waiting for the file to appear…)\x1b[0m\n');
         }
-        tailer.start();
+        void readTailChunk(filePath, SEED_TAIL_BYTES)
+          .then(seed => {
+            if (seed.truncated) {
+              emit(
+                `\x1b[2m(showing the last ${Math.round(SEED_TAIL_BYTES / 1024)} KB — open the log file for everything before this)\x1b[0m\n`
+              );
+            }
+            if (seed.text) {
+              emit(seed.text);
+            }
+            return seed.endOffset;
+          })
+          .catch(() => 0)
+          .then(startAt => {
+            if (closed) {
+              return;
+            }
+            // Continue from exactly where the seed stopped, so nothing written
+            // in between is skipped or shown twice.
+            tailer = new FileTailer(filePath, emit, undefined, { startAt });
+            tailer.start();
+          });
       },
       close: () => {
-        tailer.stop();
+        closed = true;
+        tailer?.stop();
         writeEmitter.dispose();
         LogLiveView.openByFile.delete(filePath);
         onClose?.();

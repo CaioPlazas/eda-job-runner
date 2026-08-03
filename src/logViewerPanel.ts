@@ -2,10 +2,10 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { JobStore } from './jobStore';
-import { LogManager } from './logManager';
+import { LogManager, readFully } from './logManager';
 import { ToolStore } from './toolStore';
 import { JobDefinition } from './types';
-import { parseLogHeader, parseLogTrailer, parseLogFilename, searchMatches } from './logIndex';
+import { parseLogHeader, parseLogTrailer, parseLogFilename, matchesLowercased } from './logIndex';
 import { detectSeed } from './seedDetect';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 
@@ -189,9 +189,11 @@ export class LogViewerPanel {
     const truncated = logPaths.length > scanned.length;
     const matched: string[] = [];
     let contentCapped = false;
+    // Lowercased once here rather than per file (see matchesLowercased).
+    const needle = q.toLowerCase();
     for (let i = 0; i < scanned.length; i += READ_CONCURRENCY) {
       const batch = scanned.slice(i, i + READ_CONCURRENCY);
-      const results = await Promise.all(batch.map(p => this.searchOne(p, q)));
+      const results = await Promise.all(batch.map(p => this.searchOne(p, needle)));
       results.forEach((result, idx) => {
         if (result.matched) {
           matched.push(batch[idx]);
@@ -204,7 +206,8 @@ export class LogViewerPanel {
     void this.panel.webview.postMessage({ type: 'searchResult', matched, truncated, contentCapped });
   }
 
-  private async searchOne(logPath: string, query: string): Promise<{ matched: boolean; capped: boolean }> {
+  /** `lowercasedQuery` is pre-lowercased by `search()` -- see matchesLowercased. */
+  private async searchOne(logPath: string, lowercasedQuery: string): Promise<{ matched: boolean; capped: boolean }> {
     let handle: fs.promises.FileHandle;
     try {
       handle = await fs.promises.open(logPath, 'r');
@@ -213,16 +216,15 @@ export class LogViewerPanel {
     }
     try {
       const size = (await handle.stat()).size;
-      const len = Math.min(SEARCH_FILE_CAP, size);
-      const buf = Buffer.alloc(len);
-      if (len > 0) {
-        await handle.read(buf, 0, len, 0);
-      }
-      return { matched: searchMatches(buf.toString('utf8'), query), capped: size > SEARCH_FILE_CAP };
+      // readFully, not a single read(): a short read (routine on NFS) used to
+      // leave the rest of the buffer as NUL bytes, so a search could report
+      // "no match" for text the file definitely contains.
+      const buf = await readFully(handle, Math.min(SEARCH_FILE_CAP, size), 0);
+      return { matched: matchesLowercased(buf.toString('utf8'), lowercasedQuery), capped: size > SEARCH_FILE_CAP };
     } catch {
       return { matched: false, capped: false };
     } finally {
-      await handle.close();
+      await handle.close().catch(() => undefined);
     }
   }
 
@@ -483,11 +485,18 @@ export function renderHtml(webview: vscode.Webview): string {
       return rows.slice().sort((a, b) => (b.started || '').localeCompare(a.started || ''));
     }
 
+    // Which <details> sections the user has open, by key, so a filter change
+    // doesn't silently collapse an expanded job group (the rebuilt markup used
+    // to come back closed every time).
+    const OPEN_GROUPS = new Set(['__all__']);
+
     function render() {
       const visible = sortedByDateDesc(applyFilters());
       const groupsEl = \$req('groups');
 
-      let html = '<details open><summary>All logs (' + visible.length + ')</summary>' + tableHtml(visible) + '</details>';
+      const openAttr = key => (OPEN_GROUPS.has(key) ? ' open' : '');
+      let html = '<details data-group="__all__"' + openAttr('__all__') + '><summary>All logs (' + visible.length + ')</summary>' +
+        tableHtml(visible) + '</details>';
 
       const byJob = new Map();
       visible.forEach(r => {
@@ -503,21 +512,44 @@ export function renderHtml(webview: vscode.Webview): string {
         const name = jobRows[0].jobName;
         const folder = jobRows[0].folder;
         const heading = name + (folder ? ' (' + folder + ')' : '') + ' — ' + jobRows.length + ' run' + (jobRows.length === 1 ? '' : 's');
-        html += '<details><summary>' + esc(heading) + '</summary>' + tableHtml(jobRows) + '</details>';
+        html += '<details data-group="' + esc(jobId) + '"' + openAttr(jobId) + '><summary>' + esc(heading) + '</summary>' +
+          tableHtml(jobRows) + '</details>';
       });
 
       groupsEl.innerHTML = html;
-      groupsEl.querySelectorAll('tbody tr').forEach(tr => {
-        tr.addEventListener('click', () => vscode.postMessage({ type: 'openLog', logPath: tr.getAttribute('data-log') }));
-      });
     }
 
-    document.querySelectorAll('.statusCheck').forEach(c => c.addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); }));
-    \$req('filterJob').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
-    \$req('filterFolder').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
-    \$req('seedFilter').addEventListener('input', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
-    \$req('dateFrom').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
-    \$req('dateTo').addEventListener('change', () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); });
+    // One delegated listener for the whole table area instead of one per row:
+    // every run is rendered twice (All logs + its job group), so a workspace
+    // with a few hundred retained runs was wiring up thousands of listeners on
+    // every keystroke in a filter box.
+    \$req('groups').addEventListener('click', e => {
+      const tr = e.target.closest('tbody tr');
+      if (tr && tr.hasAttribute('data-log')) {
+        vscode.postMessage({ type: 'openLog', logPath: tr.getAttribute('data-log') });
+      }
+    });
+    \$req('groups').addEventListener('toggle', e => {
+      const key = e.target.getAttribute && e.target.getAttribute('data-group');
+      if (!key) { return; }
+      if (e.target.open) { OPEN_GROUPS.add(key); } else { OPEN_GROUPS.delete(key); }
+    }, true);
+
+    const onFilterChanged = () => { SEARCH_MATCHED = null; updateSearchStatus(); render(); };
+    // Typing in a free-text filter re-renders every row, so coalesce keystrokes
+    // instead of rebuilding the whole table between two letters.
+    let filterDebounce;
+    const onFilterTyped = () => {
+      clearTimeout(filterDebounce);
+      filterDebounce = setTimeout(onFilterChanged, 150);
+    };
+
+    document.querySelectorAll('.statusCheck').forEach(c => c.addEventListener('change', onFilterChanged));
+    \$req('filterJob').addEventListener('change', onFilterChanged);
+    \$req('filterFolder').addEventListener('change', onFilterChanged);
+    \$req('seedFilter').addEventListener('input', onFilterTyped);
+    \$req('dateFrom').addEventListener('change', onFilterChanged);
+    \$req('dateTo').addEventListener('change', onFilterChanged);
 
     \$req('clearFilters').addEventListener('click', () => {
       Array.from(\$req('filterJob').options).forEach(o => o.selected = false);

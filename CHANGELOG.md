@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.6.0 — Save keeps the window open, and a robustness pass
+
+**Changed:**
+- **Saving never closes a window any more.** The Parameters & Value Lists
+  screen was the last one that did; it now shows a `Saved ✓` next to the
+  button and stays where it is, like every other screen. Only Cancel closes.
+- Starting to describe a new value list and then refreshing a *different*
+  list no longer throws away what you typed.
+- **Live Log** opens at the end of the log instead of replaying the whole
+  file into the terminal — it shows the last 16 KB and then streams. On an
+  overnight run that replay could hang the window for a long time; the full
+  log is still one click away as a normal file.
+
+**Fixes for things that could get stuck:**
+- A job still running from before a window reload could be started a **second
+  time** from Run Folder, the F5 default-job shortcut, or "Re-run This
+  Command" — leaving the original process running with no way to stop it (and
+  its tool licence checked out) until it finished on its own. Those paths now
+  say it's already running.
+- **Stop Folder** put up a "Stop all N running jobs?" confirmation and then
+  did nothing at all for jobs resumed after a reload. It now stops them.
+- If anything went wrong while a job was being wrapped up (a full disk, an
+  unreachable log directory), the job could be left showing **"running"
+  forever** — refusing to start again, spinning in the sidebar, and hanging a
+  "Run Folder" batch with no way to cancel. Same for a resumed job that
+  finished. Both now always reach a real end state and report what failed.
+- A run's **last lines could be missed**, which for a job with a pass pattern
+  could report a passing run as failed.
+- **Tool Setup** could be left behind a permanent "Scanning…" overlay if a
+  scan failed in an unexpected way, with no way out but closing and reopening
+  it.
+- "Clean all logs" could delete the log of a job that was still running, in
+  the brief window right after a reload.
+- Log searches could miss text that was really there, and a log's header
+  could be misread, on network filesystems that return partial reads.
+
+**Faster:**
+- Reloading the window while a job with a very large log is running no longer
+  freezes the extension: the catch-up read is done in slices instead of
+  pulling the whole file into memory at once.
+- The **Log Viewer** no longer rebuilds every row on every keystroke in a
+  filter box, and expanded job groups stay expanded when you change a filter.
+- The sidebar no longer rebuilds itself once a second while it isn't even
+  visible, and "Clean all logs" checks file sizes in parallel instead of one
+  at a time.
+- The Problems panel is no longer rebuilt several times a second while a
+  resumed job is producing errors.
+
+**Also fixed:** the "Will run" preview under Command stayed stale after
+ticking an option in the tool builder, switching variant, or adding a
+parameter override (and with auto-save on, those edits weren't saved either).
+
 ## 1.5.0 — Job row click swap, and a real argument-quoting bug fix
 
 **Changed:**

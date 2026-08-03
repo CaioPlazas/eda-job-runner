@@ -1318,6 +1318,11 @@ export function renderHtml(
       const built = buildCommandFromBuilder();
       if (built === null) { return; }
       commandEl.value = built;
+      // Assigning .value doesn't fire 'input', so anything listening to the
+      // Command field (the "Will run" preview, auto-save) never heard about a
+      // builder-driven change and sat there showing a stale command. Same
+      // dispatch webviewBrowse.ts does after writing a picked path into a field.
+      commandEl.dispatchEvent(new Event('input', { bubbles: true }));
       updateHint();
     }
 
@@ -1553,10 +1558,14 @@ export function renderHtml(
 
       let debounce;
       const scheduleRequest = () => { clearTimeout(debounce); debounce = setTimeout(request, 250); };
-      document.querySelectorAll('input, textarea, select').forEach(el => {
-        el.addEventListener('input', scheduleRequest);
-        el.addEventListener('change', scheduleRequest);
-      });
+      // Delegated, not one listener per field: renderOptions/renderLists rebuild
+      // their inputs whenever the tool or variant changes, and param-override /
+      // custom-arg rows are created on demand -- none of which existed when a
+      // one-time querySelectorAll ran, so edits to them never reached the
+      // preview at all. Capture phase, since 'change' doesn't bubble from every
+      // control in every engine.
+      document.addEventListener('input', scheduleRequest, true);
+      document.addEventListener('change', scheduleRequest, true);
       request();
     })();
 
@@ -1574,12 +1583,17 @@ export function renderHtml(
           vscode.postMessage(collectSaveMessage());
         }, 300);
       };
-      document.querySelectorAll('input, textarea, select').forEach(el => {
-        el.addEventListener('input', scheduleAutoSave);
-        el.addEventListener('change', scheduleAutoSave);
-        el.addEventListener('blur', scheduleAutoSave);
-        el.addEventListener('keydown', e => { if (e.key === 'Enter' && el.tagName !== 'TEXTAREA') { scheduleAutoSave(); } });
-      });
+      // Delegated for the same reason as the preview's listeners above: fields
+      // created later (option flags, value lists, param overrides, custom args)
+      // were never covered by a one-time enumeration, so editing them silently
+      // didn't auto-save. 'blur' doesn't bubble either -- hence capture phase.
+      document.addEventListener('input', scheduleAutoSave, true);
+      document.addEventListener('change', scheduleAutoSave, true);
+      document.addEventListener('blur', scheduleAutoSave, true);
+      document.addEventListener('keydown', e => {
+        const el = e.target;
+        if (e.key === 'Enter' && el && el.tagName && el.tagName !== 'TEXTAREA') { scheduleAutoSave(); }
+      }, true);
     }
 
     window.addEventListener('message', event => {
