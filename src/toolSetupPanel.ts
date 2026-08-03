@@ -197,6 +197,12 @@ export class ToolSetupPanel {
         // message with no indication why.
         this.onMessage(msg).catch(err => {
           void vscode.window.showErrorMessage(`EDA Job Runner: ${err instanceof Error ? err.message : String(err)}`);
+          // Every scan-like action puts a "Scanning…" overlay up client-side
+          // (see showBusy) and relies on the render() at the end of its
+          // handler to take it back down. On this path that render() never
+          // happened, which left the whole panel covered by an unclickable
+          // overlay with no way out but closing and reopening it.
+          this.render();
         });
       }),
       this.panel.onDidDispose(() => this.cleanup())

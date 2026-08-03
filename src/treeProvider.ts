@@ -103,10 +103,45 @@ export type EdaTreeNode = EdaTreeElement | FolderTreeItem;
 export class JobTreeProvider implements vscode.TreeDataProvider<EdaTreeNode> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  /**
+   * Whether the sidebar is actually on screen (see `bindVisibility`). A running
+   * job ticks once a second so its elapsed time stays live, and every tick
+   * rebuilds every row -- worth it when someone is looking at the tree,
+   * pure waste when the view is collapsed or another container is showing.
+   * Undefined until bound, which reads as "assume visible".
+   */
+  private viewVisible: boolean | undefined;
+  /** A refresh that was skipped while hidden, to be replayed on the way back in. */
+  private missedRefresh = false;
 
   constructor(private readonly jobStore: JobStore, private readonly jobRunner: JobRunner) {
-    jobStore.onDidChangeJobs(() => this._onDidChangeTreeData.fire());
-    jobRunner.onDidChangeStatus(() => this._onDidChangeTreeData.fire());
+    jobStore.onDidChangeJobs(() => this.refresh());
+    jobRunner.onDidChangeStatus(() => this.refresh());
+  }
+
+  /**
+   * Wires this provider to its TreeView's visibility. Called from activate()
+   * right after createTreeView, since a provider can't reach its own view.
+   */
+  bindVisibility(view: vscode.TreeView<EdaTreeNode>, disposables: vscode.Disposable[]): void {
+    this.viewVisible = view.visible;
+    disposables.push(
+      view.onDidChangeVisibility(e => {
+        this.viewVisible = e.visible;
+        if (e.visible && this.missedRefresh) {
+          this.missedRefresh = false;
+          this._onDidChangeTreeData.fire();
+        }
+      })
+    );
+  }
+
+  private refresh(): void {
+    if (this.viewVisible === false) {
+      this.missedRefresh = true;
+      return;
+    }
+    this._onDidChangeTreeData.fire();
   }
 
   getTreeItem(element: EdaTreeNode): vscode.TreeItem {

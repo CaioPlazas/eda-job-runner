@@ -355,7 +355,9 @@ awaits a specific lane finishing), `activeBatchJobs`, `promptingJobs`,
 #### 5.4.2 The spawn pipeline (`run()` → `runLane()`)
 
 `run(job, options?)`: guards (job already running / prompting / batching →
-info message and return; multiple-jobs-off and something else already
+info message and return; **job still running detached from before a window
+reload** — `reattachedRuns.has(id)`, or a persisted `running` + `detached`
+status — → info message and return; multiple-jobs-off and something else already
 running → warning and return) → if `options.forcedCommand` set (Re-run
 Last), skip straight to a single `runLane()` → else parse+prompt for
 `${param:...}` → substitute `${var:...}` → if `runCount > 1`, delegate to
@@ -389,6 +391,21 @@ deliberately the same mechanism a reattached (post-reload) job uses to
 resume (`feedReattachChunk`), so live and reattached runs share one code
 path instead of one being a bespoke special case of the other.
 
+The detached-run guard above is not redundant with the tree hiding Run on a
+running job: **Run Folder, the default-job keybinding (F5) and Log History's
+"Re-run This Command" all call `run()` directly**, bypassing the tree's
+context-value gate. Without it, a job resumed after a reload could be started a
+second time, and the new lane's `setStatus` would overwrite the recorded `pid`
+— leaving the original process unreachable by Stop (and its tool licence
+checked out) until it exited on its own. Any *new* entry point that starts a
+job must go through `run()` for this reason.
+
+Everything between `createLogFile()` and the `ActiveRun` being constructed is
+wrapped in `try/catch` that closes the log handle and rethrows: until that
+object exists nothing owns the `FileHandle`, and `finish()` is what would
+normally close it, so a failure in between (ENOSPC, a stale NFS handle, a
+synchronous spawn failure) leaked one descriptor per attempt.
+
 `child.on('exit', ...)` / `child.on('error', ...)` both call `finish()`.
 
 #### 5.4.3 Reload survival ("detached" / "reattached")
@@ -410,8 +427,15 @@ listening on), the job **keeps running even if the extension host restarts**
    `logPath`, `startReattachment()` builds a `ReattachRun`, starts its own
    `FileTailer` from byte 0 (there's no persisted `ParseState` to resume
    from — counts are rebuilt from scratch, cumulative over the whole
-   captured file so far) feeding `feedReattachChunk`, and starts a 1s
-   `pollReattachment` interval.
+   captured file so far; that catch-up read is sliced by
+   `REATTACH_READ_CHUNK`, see 5.9) feeding `feedReattachChunk`, and starts a
+   1s `pollReattachment` interval. A job whose **definition no longer exists**
+   (deleted, or hand-edited out of the JSON, while it was running) is
+   reattached too — with parsing off and the tailer started at EOF, since
+   there's no job left to read `parseProblems`/patterns from. Skipping it
+   outright (the original behaviour) left a `running` status nothing could
+   ever resolve: invisible in the tree, yet enough to keep `hasAnyRunning()`
+   true and the 1s ticker firing for the rest of the session.
 3. `pollReattachment()` fires once the identity-verified pid disappears:
    forces one final tailer poll (the process's own writes are already
    durable on disk by the time its pid vanishes, but the tailer only notices
@@ -427,7 +451,11 @@ listening on), the job **keeps running even if the extension host restarts**
 Note `stop()`'s own detached branch (no live `ActiveRun` for `laneKey ===
 jobId`): it can still signal the process group by its verified pid — it
 just has to *poll* for death instead of getting a real Node `'exit'` event
-(`runDetachedKillSchedule`).
+(`runDetachedKillSchedule`). **`stopAllRuns(jobId)` must fall through to
+`stop(jobId)` when no live lane matches** — it builds its lane list from
+`activeRuns`, which a detached run is never in, so without that fallback
+"Stop Folder" (which counts running jobs by *status*, so it does see them)
+put up a "Stop all N running jobs?" modal and then signalled nothing at all.
 
 #### 5.4.4 Kill / stop (`stop()`, `killPlan.ts`)
 
@@ -452,7 +480,18 @@ No live `ActiveRun` (a "running (detached)" job) → the polling variant,
 
 #### 5.4.5 Finishing a run (`finish()`) — read this before touching lifecycle code
 
-`finish(run, state, exitCode, signal)` is `async` and does, **in this exact
+`finish()` is a thin wrapper (re-entrancy guard, then
+`try { finalizeRun(...) } catch { record a terminal status } finally { free
+the lane }`) around **`finalizeRun()`**, which holds the actual sequence. The
+split exists so the last two steps below can never be skipped: they used to be
+plain statements at the end of one long method, so any throw in between left
+the lane in `activeRuns` with an unresolved completion promise — the job
+reported "already running" for the rest of the session, its spinner never
+cleared, the 1s ticker never stopped, and a `runFolder` loop awaiting that lane
+hung forever with no way to cancel. Both call sites are `void`ed event
+handlers, so the rejection wasn't even visible.
+
+`finalizeRun(run, state, exitCode, signal)` is `async` and does, **in this exact
 order** (the ordering is load-bearing, see the in-code comments and Part 2
 bug #7 in `PLAN.md`'s Phase 12 for why):
 
@@ -474,8 +513,8 @@ bug #7 in `PLAN.md`'s Phase 12 for why):
 7. `runPostRunCommand()` — fire-and-forget, skipped for a `'killed'` state.
 8. `setLaneStatus()` — routes the final status to the persisted primary slot
    (if `mirrorPrimary`) and/or the `laneGroups` entry.
-9. **Only now** — `this.activeRuns.delete(run.laneKey)`, then
-   `resolveLaneCompletion()`.
+9. **Only now**, back in `finish()`'s `finally` —
+   `this.activeRuns.delete(run.laneKey)`, then `resolveLaneCompletion()`.
 
 **Why step 9 is last, not right after the exit event fires**: `run()`'s own
 double-start guard is `this.activeRuns.has(job.id)`. If the entry were
@@ -489,9 +528,28 @@ incorrectly resolve the new run's completion promise. Keeping the guard
 "hot" for the entire duration of `finish()`'s cleanup closes this race
 entirely. (Fixed in the Phase 12 review — see `PLAN.md`.)
 
+`pollReattachment()` (the no-live-child equivalent, 5.4.3) has the identical
+shape and for the identical reason: it sets `finalizing` and clears its own
+poll timer up front, so its body lives in `finalizeReattachedRun()` inside a
+`try/catch/finally` that always stops the tailer and drops the
+`reattachedRuns` entry. Without it, one rejection stranded the job at
+"running (resumed)" with nothing left to re-check it.
+
 #### 5.4.6 Output → parser wiring (`feedChunk`/`feedLines`, and the reattach equivalents)
 
-Every chunk the `FileTailer` reads is ANSI-stripped (`ANSI_PATTERN`) before
+**The parse budget is charged before the chunk is touched, not after.**
+`run.parseBytesFed += Buffer.byteLength(chunk)` and the `> maxParseBytes`
+check are the first things `feedChunk`/`feedReattachChunk` do; only a chunk
+that fits the budget gets ANSI-stripped and split. Charging afterwards (the
+original order) meant the budget *described* work already done instead of
+bounding it — harmless for a 500ms live delta, but on the reattach path, where
+one catch-up read can be an entire multi-hundred-MB log, it was the difference
+between a bounded parse and stripping + line-splitting the whole thing.
+(Side effect worth knowing: the budget now counts raw bytes rather than
+ANSI-stripped ones, so a heavily colorized log reaches the cap marginally
+sooner.)
+
+Every chunk that clears the budget is ANSI-stripped (`ANSI_PATTERN`) before
 anything else touches it. Two independent consumers, both gated
 independently: the structured issue parser (`logParser.ts`'s `parseLine`,
 only if `parseProblems`) and the fail/pass regex scan
@@ -522,11 +580,16 @@ notification/cleanup action, not a second tracked job.
 
 #### 5.4.8 `dispose()`
 
-Clears the 1s tick timer, stops every reattached run's tailer/poll timer,
+Clears the 1s tick timer, stops every reattached **and live** run's tailer
+(plus any pending `killTimer`) and closes each live run's log `FileHandle`,
 **SIGKILLs every still-tracked `postRunChildren`** (see 5.4.7), disposes the
 status-change emitter. Deliberately does **NOT** touch any live `ActiveRun`'s
-child process — running jobs are intentionally left detached and running;
-closing the sidebar/window must never kill an overnight regression run.
+child **process** — running jobs are intentionally left detached and running;
+closing the sidebar/window must never kill an overnight regression run. The
+distinction to keep straight: the *child* is the user's and survives; the
+*tailer and descriptor* are ours and must not. On a plain host exit the OS
+would reclaim them anyway, but on a disable/reinstall or workspace-folder
+change the host survives and every leftover tailer keeps polling forever.
 
 ### 5.5 `treeProvider.ts` — the sidebar tree
 
@@ -548,6 +611,18 @@ dispatch on `kind` and delegate the actual array math to `JobStore`'s
 both `JobTreeItem` and (partially) `StatusBarController`. `formatDuration`
 (exported) is the shared `m:ss` / `Ns` formatter used by the tree, the
 status bar, and `extension.ts`'s completion toasts.
+
+**Refreshes are gated on the view actually being visible.** `_onDidChangeTreeData`
+is a bare `EventEmitter<void>`, so every fire rebuilds every row (each one
+constructing a `MarkdownString` tooltip), and `jobRunner`'s 1s ticker fires
+continuously while anything runs — so `refresh()` drops the event when
+`TreeView.visible` is false, records `missedRefresh`, and replays one refresh
+on `onDidChangeVisibility`. `activate()` wires this via
+`treeProvider.bindVisibility(treeView, context.subscriptions)` right after
+`createTreeView`, since a provider can't reach its own view. The status bar
+subscribes to `jobRunner.onDidChangeStatus` separately and is unaffected. (The
+"proper" fix — `fire(element)` for just the running rows — needs a cached
+element map and touches drag-and-drop; deliberately not done.)
 
 ### 5.6 `logManager.ts` — log file storage, retention, and reads
 
@@ -582,25 +657,47 @@ cleanup).
 - `listAllJobIds(root?)` / `listAllRuns(roots?)` — cross-job enumeration for
   the Log Viewer; `listAllRuns` is NOT sorted (callers order by whatever
   field they display).
-- `readHeadTail(filePath)` — reads only the first+last `HEAD_TAIL_CAP` (4KB)
+- `readHeadTail(filePath)` — reads only the first+last `HEAD_TAIL_CAP` (16KB)
   of a file (enough for the structured header/trailer — see
   `logIndex.ts`), **cached** by `path + mtimeMs + size` in an in-memory
   `Map` (`headTailCache`, capped at `HEAD_TAIL_CACHE_CAP = 2000` entries,
   oldest-insertion-order eviction) — a finished run's log never changes
-  again, so a cache hit costs one `stat()` and zero reads. Skips the
-  redundant second ("tail") read entirely when the whole file already fits
-  within the head buffer (`size <= HEAD_TAIL_CAP`). Never throws — a
-  vanished/unreadable file yields empty strings (defensive against a
-  concurrent retention prune).
+  again, so a cache hit costs one `stat()` and zero reads. That's literal:
+  it `stat`s first and only `open`s on a miss (it used to open first, making
+  every hit an open+fstat+close — three NFS round-trips per row where one was
+  intended). Skips the redundant second ("tail") read entirely when the whole
+  file already fits within the head buffer (`size <= HEAD_TAIL_CAP`). Never
+  throws — a vanished/unreadable file yields empty strings (defensive against
+  a concurrent retention prune), and its `close()` is inside the catch, since
+  a close failure escaping a "never throws" API was enough to strand a
+  reattached job mid-finalize.
+- **`readFully(handle, length, position)`** (exported) — reads exactly
+  `length` bytes, **looping until the buffer is full or EOF**. `read(2)` may
+  return short and routinely does on NFS, which is where these logs live: a
+  single `handle.read(...)` that ignores `bytesRead` leaves the rest of the
+  buffer as NULs, which then read as real (empty) content — a log header
+  parsed wrong, or a full-text search reporting "no match" for text that is
+  right there. Use this for **every** positional read; `readHeadTail`, the
+  Log Viewer's `searchOne`, and `readTailChunk` all go through it.
+- **`readTailChunk(filePath, maxBytes)`** (exported, standalone) — the last
+  `maxBytes` as text *plus the offset that text ended at*, so a caller can
+  continue tailing from exactly there with no gap or overlap. Used by
+  `logLiveView.ts` (see 5.11) — standalone rather than a method because that
+  view owns no `LogManager`.
 - `totalSize(roots?, exclude?)` / `cleanAllLogs(roots?, exclude?)` — the
-  "clean all logs" button's summary + actual deletion. **`exclude`** (a
-  `Set<string>` of currently-live log paths, from
+  "clean all logs" button's summary + actual deletion, both built on the
+  private `sizeAllRuns()`, which stats in `STAT_CONCURRENCY`-wide batches
+  (serial `await`s meant a thousand-run workspace spent seconds of NFS
+  latency, twice: once for the confirmation, once for the deletion).
+  **`exclude`** (a `Set<string>` of currently-live log paths, from
   `JobRunner.getActiveLogPaths()`) is skipped entirely in both — deleting a
   log a running child still has open would freeze live tailing/counts and
-  orphan the eventual trailer write into a deleted inode. `cleanAllLogs`
-  also unlinks any `latest.log` symlink whose target isn't in `exclude`
-  (`unlinkStaleLatestSymlinks`), so a finished job's dangling symlink
-  doesn't survive a clean-all.
+  orphan the eventual trailer write into a deleted inode. Note
+  `getActiveLogPaths()` also covers a `running` status with no `ActiveRun` or
+  `ReattachRun` yet (the activation window before `beginReattachment`).
+  `cleanAllLogs` also unlinks any `latest.log` symlink whose target isn't in
+  `exclude` (`unlinkStaleLatestSymlinks`), so a finished job's dangling
+  symlink doesn't survive a clean-all.
 - `prune()` (private) — delegates the actual "which files to delete"
   decision entirely to the pure `planPrune()` in `logRetention.ts` (see
   5.11) — this method's only job is gathering `{path, size}` for every
@@ -619,7 +716,13 @@ alone exceeds a size cap.
 Owns the one shared `vscode.DiagnosticCollection` for the whole extension.
 `setJobIssues(jobId, jobCwdAbs, issues)` replaces a job's previous
 diagnostics wholesale (tracked per-job in `byJob: Map<string, vscode.Uri[]>`
-so re-running only clears its own). `resolvePath()` tries, in order:
+so re-running only clears its own). Because it rebuilds a `Range` +
+`Diagnostic` for **every** stored issue (up to `MAX_STORED_ISSUES = 5000`) on
+each call, callers must not invoke it per chunk: a live run pushes once, in
+`finish()`, and the reattach path goes through `jobRunner`'s
+`pushReattachDiagnostics()`, which skips when the issue count hasn't changed
+and otherwise rate-limits to `REATTACH_DIAGNOSTICS_INTERVAL_MS` (the final
+push passes `force`). `resolvePath()` tries, in order:
 absolute-and-exists, relative-to-job-cwd-and-exists, relative-to-workspace-
 root-and-exists — gives up (drops the issue from the Problems panel, though
 it still counted toward the error/warning badge) rather than guessing by
@@ -660,6 +763,29 @@ reattached run's tail (`ReattachRun.tailer`), and the completely separate
 "Live Log (tail)" feature (`logLiveView.ts`, tailing an arbitrary external
 file like an LSF `-o` output — has nothing to do with the job's own captured
 log).
+
+Three details that each exist because of a specific bug (v1.6.0):
+
+- **`pollOnce()` calls are serialized, never dropped.** They chain onto a
+  `queue` promise, so a call issued while another poll is in flight still runs
+  its own full drain afterwards. The original implementation returned early
+  when a poll was already running — which silently turned `finish()`'s
+  "guaranteed final read" into a no-op whenever the 500ms timer happened to
+  fire first, losing the tail of the log and, for a job with a `passPattern`,
+  reporting a passing run as **failed**. The timer path (not the explicit one)
+  is what coalesces: it skips its tick while `draining` is true.
+- **`maxBytesPerRead`** (default unbounded) bounds each read+emit; one
+  `pollOnce()` still catches up completely, looping with an `await` between
+  slices so the extension host isn't blocked building one whole-file string.
+  Only `ReattachRun` sets it (`REATTACH_READ_CHUNK`, 4MB).
+- **`startAt: 'beginning' | 'end' | <offset>`** (default `'beginning'`).
+  `'end'` is for a viewer that only wants new output; a numeric offset is for a
+  caller that already read the earlier bytes itself and knows exactly where it
+  stopped — `logLiveView.ts` seeds its terminal with `readTailChunk`'s last
+  16KB and then continues from that read's own end offset, so nothing is
+  skipped or shown twice. Anything that must rebuild cumulative state from a
+  whole run (the reattach path: error counts, Problems entries) has to stay on
+  `'beginning'`.
 
 ### 5.10 The pure decision modules (each with its own `test-fixtures/run-*-tests.mjs`)
 
@@ -781,7 +907,16 @@ log).
   from a job's own captured-output tailing; this is for `JobDefinition.logFile`
   (an external scheduler output file) or just live-viewing the current
   captured log in real time instead of relying on VS Code's passive
-  file-change reload of an editor tab.
+  file-change reload of an editor tab. **It starts at end-of-file, not byte 0**:
+  `open()` seeds the terminal with `readTailChunk`'s last `SEED_TAIL_BYTES`
+  (16KB, prefixed with a "showing the last N KB" note when the file is bigger)
+  and then tails from that read's own end offset. Replaying the whole file was
+  a hard freeze on an overnight run's log — the more so because
+  `extension.ts`'s `restoreLiveLogViews` reopens one of these automatically for
+  every still-running job after a reload, concurrently with that same job's
+  reattach catch-up. The seed read is async, so `close()` sets a `closed` flag
+  the continuation checks — otherwise closing the terminal first left a
+  polling tailer nothing would ever stop.
 
 ## 6. Webview panels (5 total) — the shared pattern
 
@@ -821,6 +956,29 @@ signature was made `export`able specifically to support that.
   `window.addEventListener('message', ...)` client-side. Every panel's
   message union is a TypeScript discriminated union (`type WebviewMessage =
   A | B | C`) switched over in `onMessage()`.
+- **Save never closes a panel; only Cancel/Close does.** The only thing that
+  may call `panel.dispose()` is a `cancel`/`close` message handler. A save-like
+  handler persists, then posts `{type:'saved'}` (and `{type:'saveError',
+  message}` from a `try/catch` around the write) and the client shows an
+  inline flash — `jobConfigPanel`, `shellEnvPanel` and `paramsPanel` all do
+  exactly this, and `toolSetupPanel`'s sub-form saves re-`render()` in place.
+  Disposing on save destroyed whatever else was mid-edit on the same screen
+  and made a failed write indistinguishable from a successful one. Each of
+  these also has a `saving`/`probing` re-entrancy boolean so a double-click
+  can't start two writes.
+- **A handler that can throw must leave the panel usable.** Every panel wraps
+  `onMessage(msg).catch(...)` to surface the error instead of dying silently;
+  `toolSetupPanel`'s also calls `render()` in that catch, because its
+  client-side `showBusy()` overlay is torn down only by the next full render —
+  without it, one failed scan left the panel behind an unclickable overlay
+  with no way out but closing and reopening it. Any panel that grows a busy
+  overlay needs the same.
+- **Client-side state that the user typed but hasn't committed must survive a
+  re-render.** A full-document reassignment throws away every uncommitted
+  field, so the panel keeps it host-side and replays it into `renderHtml`:
+  `paramsPanel`'s `draftParams` (typed parameter rows) and `draftLists`
+  (a half-filled "add a value list" row) are the worked example — the client
+  sends both with every message that triggers a render.
 - **Full-document reassignment vs. client-side patching**: four of the five
   panels (`jobConfigPanel`, `shellEnvPanel`, `paramsPanel`, `logViewerPanel`)
   reassign `panel.webview.html` on essentially every state-changing message
@@ -845,7 +1003,11 @@ signature was made `export`able specifically to support that.
   `window.onerror` back to the host as a `clientError` message, shown as a
   generic "a panel failed to initialize" notification — added after a
   v0.42.0 regression left an entire panel silently inert for a full
-  release with zero signal anywhere). `CLIENT_ERROR_JS` is always the
+  release with zero signal anywhere; it also listens for
+  `unhandledrejection`, tagged `kind: 'rejection'` so the notification says
+  "failed to finish" rather than "failed to initialize" — a rejected promise
+  never fires `error`, so async panel code used to fail with no signal at all,
+  the exact hole this bridge exists to close). `CLIENT_ERROR_JS` is always the
   **very first** thing after `const vscode = acquireVsCodeApi();` in every
   panel, ahead of even `BROWSE_JS` — an error-reporting bridge that isn't
   wired before everything else it's meant to catch is much less useful.
@@ -963,7 +1125,12 @@ mirror needs the same change.**
   (see 5.6).
 - **`paramsPanel.ts`**: the simplest panel — one array of `{name, value}`
   rows, Save replaces the whole `GlobalParam[]` list via
-  `jobStore.setParams()`.
+  `jobStore.setParams()`, then posts `{type:'saved'}` and stays open (6.1).
+  Note the value-list section shares the screen with the parameter rows but
+  persists *immediately* per action (Add/↻ Refresh/Remove each write and
+  re-render), while parameters only persist on Save — which is exactly why
+  both `draftParams` and `draftLists` exist: every list action re-renders the
+  whole document underneath whatever the user was typing.
 - **`logViewerPanel.ts`**: builds its table entirely from each log file's own
   header/trailer (`logIndex.ts`) via `readHeadTail` (cached, see 5.6) — **no
   separate persisted index of runs exists**; the log files on disk ARE the
@@ -972,9 +1139,20 @@ mirror needs the same change.**
   that many file handles at once. Full-text search (`searchOne`) reads a
   capped 5MB per file (`SEARCH_FILE_CAP`) across at most 300 files
   (`SEARCH_FILE_LIMIT`) — scoped to whatever's already filtered
-  (job/folder/status/seed/date), not the whole log set. The seed column
-  falls back to `detectSeed()` (the `# seed:` header field is only ever
-  populated when a job's Command used `${randomSeed}` directly).
+  (job/folder/status/seed/date), not the whole log set — with the query
+  lowercased once by `search()` and passed to `matchesLowercased()` rather
+  than re-lowercased per file. The seed column falls back to `detectSeed()`
+  (the `# seed:` header field is only ever populated when a job's Command used
+  `${randomSeed}` directly).
+
+  Client-side, `render()` rebuilds all of `#groups` and every run appears
+  **twice** (once under "All logs", once under its job's group), so the row
+  count is 2× the run count: it uses **one delegated `click` listener on
+  `#groups`** rather than one per `<tr>`, the free-text filters are debounced
+  ~150ms, and each `<details>`' open/closed state is tracked in `OPEN_GROUPS`
+  (keyed by `data-group`, captured via a capture-phase `toggle` listener since
+  `toggle` doesn't bubble) and re-applied on render — without that, expanding a
+  job group and then touching any filter silently collapsed it again.
 
 ## 7. `package.json` contribution surface (the extension manifest)
 
@@ -1291,7 +1469,20 @@ bolted on.
 7. **Never call a full webview re-render for a high-frequency interaction**
    if a targeted client-side DOM patch is feasible — see section 6.3's
    favorite-toggle pattern as the template to follow, including its
-   `data-orig-idx` idempotency trick if the patch involves reordering.
+   `data-orig-idx` idempotency trick if the patch involves reordering. In a
+   list the user can type-filter, also delegate the row listener to the
+   container instead of wiring one per row, and debounce the text input.
+7b. **Charge a budget *before* doing the work it bounds, not after** — see
+   5.4.6. A cap computed from the result of an expensive operation documents
+   the cost instead of preventing it.
+7c. **Any state that can only be left by closing a panel or reloading the
+   window is a bug, not an edge case.** The recurring shapes to check for
+   when adding code here: a guard flag set before an `await` with no
+   `finally` to clear it (`saving`, `probing`, `finalizing`); a cleanup step
+   written as the last statement of a long `async` method rather than in a
+   `finally` (see 5.4.5); a client-side overlay whose only teardown is the
+   next successful render (6.1); and a `void`ed async call with no `.catch`,
+   which makes all of the above invisible when they happen.
 8. **When embedding data into an inline `<script>` block, always
    `.replace(/</g, '\\u003c')` the JSON-stringified payload.**
 9. **Never special-case a specific EDA tool's name or CLI syntax** anywhere

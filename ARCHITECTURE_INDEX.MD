@@ -19,6 +19,8 @@ headings for your topic.
 | Understand why the Tool builder writes into Command | `src/jobConfigPanel.ts` (`builderOwns`/`onBuilderChange`/`refreshBuilderUI`) | §4.4, §6.2 |
 | Fix/extend the extension entry point, a command, a menu | `src/extension.ts`, `package.json` (`contributes.commands`/`menus`) | §5.1, §7 |
 | Fix a bug in **running/spawning/killing** a job | `src/jobRunner.ts` (the big one) | §5.4 (has sub-sections 5.4.1–5.4.8, read the matching one) |
+| Fix a **stuck state** (spinner never clears, "already running" forever, a panel behind a permanent overlay) | `src/jobRunner.ts` (`finish`/`finalizeRun`, `pollReattachment`), the panel's `onMessage(...).catch` | §10 item 7c first, then §5.4.5 / §6.1 |
+| Make something **faster** (big logs, many runs, a laggy panel) | `src/tailer.ts`, `src/logManager.ts`, `src/logViewerPanel.ts`, `src/treeProvider.ts` | §5.9, §5.6, §6.4, §5.5 |
 | Fix a **window-reload / reattach** bug | `src/jobRunner.ts` (`beginReattachment`/`startReattachment`/`pollReattachment`), `src/reattach.ts`, `src/procStat.ts` | §5.4.3 |
 | Fix a **kill/Stop** bug | `src/jobRunner.ts` (`stop`/`advanceKillSchedule`), `src/killPlan.ts` | §5.4.4 |
 | Fix a **finish()/status race** bug | `src/jobRunner.ts` (`finish`) | §5.4.5 — read this before touching lifecycle order |

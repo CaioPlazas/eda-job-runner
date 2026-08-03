@@ -65,6 +65,7 @@ export function activate(context: vscode.ExtensionContext): void {
     dragAndDropController: new EdaTreeDragAndDropController(jobStore)
   });
   context.subscriptions.push(treeView);
+  treeProvider.bindVisibility(treeView, context.subscriptions);
 
   const statusBar = new StatusBarController(jobStore, jobRunner);
   context.subscriptions.push(statusBar);

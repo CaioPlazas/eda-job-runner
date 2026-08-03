@@ -26,11 +26,73 @@ const HEAD_TAIL_CACHE_CAP = 2000;
 /** Workspace-state key: every logs root a per-job `logsDirectory` override has ever actually written to (see `resolveAllRoots`). */
 const KNOWN_ROOTS_STORAGE_KEY = 'eda-job-runner.knownLogRoots';
 
+// How many log files are statted/unlinked at once (see sizeAllRuns). Matches
+// logViewerPanel.ts's READ_CONCURRENCY: enough parallelism to hide NFS latency,
+// not so much that a thousand-run workspace opens a thousand handles at once.
+const STAT_CONCURRENCY = 20;
+
 interface HeadTailCacheEntry {
   mtimeMs: number;
   size: number;
   head: string;
   tail: string;
+}
+
+/**
+ * Read exactly `length` bytes at `position`, looping until the buffer is full
+ * or the file ends. `read(2)` is allowed to return fewer bytes than asked for
+ * and routinely does on NFS -- which is where these logs live. A single
+ * `handle.read(...)` that ignores its `bytesRead` result leaves the rest of a
+ * zero-filled buffer as NUL bytes, which then look like real (empty) content:
+ * a log header parses wrong, or a full-text search reports "no match" for text
+ * that is right there. Returns only the bytes actually read.
+ */
+export async function readFully(handle: fs.promises.FileHandle, length: number, position: number): Promise<Buffer> {
+  if (length <= 0) {
+    return Buffer.alloc(0);
+  }
+  // allocUnsafe, not alloc: every byte is either overwritten below or trimmed
+  // off by the subarray, and these buffers are megabytes each in the search path.
+  const buf = Buffer.allocUnsafe(length);
+  let filled = 0;
+  while (filled < length) {
+    const { bytesRead } = await handle.read(buf, filled, length - filled, position + filled);
+    if (bytesRead <= 0) {
+      break; // EOF (or the file shrank under us)
+    }
+    filled += bytesRead;
+  }
+  return filled === length ? buf : buf.subarray(0, filled);
+}
+
+/**
+ * The last `maxBytes` of a file as text, plus the offset that text ended at --
+ * the caller (the live-tail view) starts tailing from exactly there, so no
+ * bytes written between this read and the first poll are skipped or shown
+ * twice. Standalone rather than a LogManager method because that view has no
+ * LogManager instance. Never throws: an unreadable file yields empty text at
+ * offset 0, which tails the file from its start once it appears.
+ */
+export async function readTailChunk(
+  filePath: string,
+  maxBytes: number
+): Promise<{ text: string; endOffset: number; truncated: boolean }> {
+  let handle: fs.promises.FileHandle;
+  try {
+    handle = await fs.promises.open(filePath, 'r');
+  } catch {
+    return { text: '', endOffset: 0, truncated: false };
+  }
+  try {
+    const { size } = await handle.stat();
+    const length = Math.min(maxBytes, size);
+    const buf = await readFully(handle, length, size - length);
+    return { text: buf.toString('utf8'), endOffset: size, truncated: size > length };
+  } catch {
+    return { text: '', endOffset: 0, truncated: false };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }
 
 export class LogManager {
@@ -181,6 +243,22 @@ export class LogManager {
    * once their mtime/size move on.
    */
   async readHeadTail(filePath: string): Promise<{ head: string; tail: string; size: number }> {
+    // stat() first, open() only on a miss: the comment above promises a cache
+    // hit costs one stat, and the Log Viewer takes thousands of them per open
+    // -- opening first made every hit an open+fstat+close instead, three NFS
+    // round-trips where one was intended.
+    let size: number;
+    let mtimeMs: number;
+    try {
+      ({ size, mtimeMs } = await fs.promises.stat(filePath));
+    } catch {
+      return { head: '', tail: '', size: 0 };
+    }
+    const cached = this.headTailCache.get(filePath);
+    if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
+      return { head: cached.head, tail: cached.tail, size: cached.size };
+    }
+
     let handle: fs.promises.FileHandle;
     try {
       handle = await fs.promises.open(filePath, 'r');
@@ -188,30 +266,13 @@ export class LogManager {
       return { head: '', tail: '', size: 0 };
     }
     try {
-      const stat = await handle.stat();
-      const { size, mtimeMs } = stat;
-      const cached = this.headTailCache.get(filePath);
-      if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
-        return { head: cached.head, tail: cached.tail, size: cached.size };
-      }
-
-      const headLen = Math.min(HEAD_TAIL_CAP, size);
-      const headBuf = Buffer.alloc(headLen);
-      if (headLen > 0) {
-        await handle.read(headBuf, 0, headLen, 0);
-      }
+      const head = await readFully(handle, Math.min(HEAD_TAIL_CAP, size), 0);
       // The head read above already covers the whole file once it's no
       // bigger than the cap -- re-reading the same bytes as a "tail" would
       // just be redundant I/O for identical content.
-      let tail: string;
-      if (size <= HEAD_TAIL_CAP) {
-        tail = headBuf.toString('utf8');
-      } else {
-        const tailBuf = Buffer.alloc(HEAD_TAIL_CAP);
-        await handle.read(tailBuf, 0, HEAD_TAIL_CAP, size - HEAD_TAIL_CAP);
-        tail = tailBuf.toString('utf8');
-      }
-      const result = { head: headBuf.toString('utf8'), tail, size };
+      const tail =
+        size <= HEAD_TAIL_CAP ? head : await readFully(handle, HEAD_TAIL_CAP, size - HEAD_TAIL_CAP);
+      const result = { head: head.toString('utf8'), tail: tail.toString('utf8'), size };
       this.cacheHeadTail(filePath, mtimeMs, result);
       return result;
     } catch {
@@ -221,7 +282,9 @@ export class LogManager {
       // unhandled rejection -- treat it the same as "couldn't open".
       return { head: '', tail: '', size: 0 };
     } finally {
-      await handle.close();
+      // Inside its own catch: a close() failure escaping this "never throws"
+      // API used to be enough to strand a reattached job mid-finalize.
+      await handle.close().catch(() => undefined);
     }
   }
 
@@ -247,19 +310,34 @@ export class LogManager {
     roots: string[] = [this.resolveRoot()],
     exclude: Set<string> = new Set()
   ): Promise<{ files: number; bytes: number; skipped: number }> {
-    const runs = await this.listAllRuns(roots);
+    const { sizes, skipped } = await this.sizeAllRuns(roots, exclude);
     let bytes = 0;
-    let files = 0;
-    let skipped = 0;
-    for (const run of runs) {
-      if (exclude.has(run.logPath)) {
-        skipped++;
-        continue;
-      }
-      bytes += await this.fileSize(run.logPath);
-      files++;
+    for (const size of sizes.values()) {
+      bytes += size;
     }
-    return { files, bytes, skipped };
+    return { files: sizes.size, bytes, skipped };
+  }
+
+  /**
+   * Size of every non-excluded run log under `roots`, statted in bounded
+   * parallel batches like `listAllRuns`/`prune` already do -- serially awaiting
+   * one stat at a time meant a workspace with a thousand retained runs spent
+   * seconds of wall-clock on NFS latency alone, twice over (once for the
+   * clean-all confirmation, once for the deletion itself).
+   */
+  private async sizeAllRuns(
+    roots: string[],
+    exclude: Set<string>
+  ): Promise<{ sizes: Map<string, number>; skipped: number }> {
+    const runs = await this.listAllRuns(roots);
+    const targets = runs.filter(run => !exclude.has(run.logPath));
+    const sizes = new Map<string, number>();
+    for (let i = 0; i < targets.length; i += STAT_CONCURRENCY) {
+      const batch = targets.slice(i, i + STAT_CONCURRENCY);
+      const batchSizes = await Promise.all(batch.map(run => this.fileSize(run.logPath)));
+      batch.forEach((run, j) => sizes.set(run.logPath, batchSizes[j]));
+    }
+    return { sizes, skipped: runs.length - targets.length };
   }
 
   /**
@@ -277,21 +355,18 @@ export class LogManager {
     roots: string[] = [this.resolveRoot()],
     exclude: Set<string> = new Set()
   ): Promise<{ files: number; bytes: number; skipped: number }> {
-    const runs = await this.listAllRuns(roots);
+    const { sizes, skipped } = await this.sizeAllRuns(roots, exclude);
     let bytes = 0;
-    let files = 0;
-    let skipped = 0;
-    for (const run of runs) {
-      if (exclude.has(run.logPath)) {
-        skipped++;
-        continue;
+    const paths = [...sizes.keys()];
+    for (let i = 0; i < paths.length; i += STAT_CONCURRENCY) {
+      const batch = paths.slice(i, i + STAT_CONCURRENCY);
+      await Promise.all(batch.map(logPath => fs.promises.unlink(logPath).catch(() => undefined)));
+      for (const logPath of batch) {
+        bytes += sizes.get(logPath) ?? 0;
       }
-      bytes += await this.fileSize(run.logPath);
-      await fs.promises.unlink(run.logPath).catch(() => undefined);
-      files++;
     }
     await this.unlinkStaleLatestSymlinks(roots, exclude);
-    return { files, bytes, skipped };
+    return { files: paths.length, bytes, skipped };
   }
 
   /** Removes each job dir's `latest.log` symlink, unless it still points at a `exclude`d (currently-live) log. */

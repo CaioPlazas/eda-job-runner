@@ -5,6 +5,8 @@ export interface ClientErrorMessage {
   message: string;
   source?: string;
   line?: number;
+  /** 'rejection' for an unhandled promise rejection -- a failed async action, not a panel that never wired up. */
+  kind?: 'error' | 'rejection';
 }
 
 /**
@@ -16,7 +18,11 @@ export interface ClientErrorMessage {
  */
 export function handleClientErrorMessage(msg: ClientErrorMessage): void {
   console.error(`EDA Job Runner: webview client error: ${msg.message} (${msg.source ?? '?'}:${msg.line ?? '?'})`);
-  void vscode.window.showErrorMessage('EDA Job Runner: a panel failed to initialize. Please report this.');
+  void vscode.window.showErrorMessage(
+    msg.kind === 'rejection'
+      ? 'EDA Job Runner: something in this panel failed to finish. Please report this.'
+      : 'EDA Job Runner: a panel failed to initialize. Please report this.'
+  );
 }
 
 /**
@@ -32,6 +38,17 @@ export const CLIENT_ERROR_JS = `
       message: e.message || String(e.error || 'unknown error'),
       source: e.filename,
       line: e.lineno
+    });
+  });
+  // A rejected promise never fires 'error', so anything async in a panel's
+  // script (a probe round-trip, a seed read) could fail with no signal at all
+  // -- the same invisible-failure hole this whole bridge exists to close.
+  window.addEventListener('unhandledrejection', e => {
+    const reason = e.reason;
+    vscode.postMessage({
+      type: 'clientError',
+      kind: 'rejection',
+      message: 'unhandled rejection: ' + ((reason && reason.message) || String(reason))
     });
   });
 `;

@@ -119,5 +119,17 @@ export function searchMatches(content: string, query: string): boolean {
   if (!query.trim()) {
     return true;
   }
-  return content.toLowerCase().includes(query.toLowerCase());
+  return matchesLowercased(content, query.toLowerCase());
+}
+
+/**
+ * `searchMatches` with the query already lowercased by the caller. Searching
+ * hundreds of files re-lowercased the same query hundreds of times, once per
+ * multi-megabyte file -- trivial per call, not trivial 300 times over.
+ */
+export function matchesLowercased(content: string, lowercasedQuery: string): boolean {
+  if (!lowercasedQuery.trim()) {
+    return true;
+  }
+  return content.toLowerCase().includes(lowercasedQuery);
 }
