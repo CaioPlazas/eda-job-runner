@@ -4,7 +4,7 @@ import { JobStore } from './jobStore';
 import { ToolDefinition, ToolOption, ToolVariant, ValueList, JobsFileSetup } from './types';
 import { scanVariant, scanTool } from './toolIntrospect';
 import { detectSubcommandChoices, mergeFavorites, parseChoices, parseHelpOutputDeep } from './toolOptionParser';
-import { BASE_CSS } from './webviewTheme';
+import { BASE_CSS, FLASH_JS } from './webviewTheme';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
@@ -1029,6 +1029,7 @@ export function renderHtml(
     const vscode = acquireVsCodeApi();
     ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
+    ${FLASH_JS}
     ${OPEN_STEP_JS}
     const $ = id => document.getElementById(id);
     const $req = id => { const el = $(id); if (!el) { throw new Error('missing element #' + id); } return el; };

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
 import { GlobalParam, ValueList } from './types';
-import { BASE_CSS } from './webviewTheme';
+import { BASE_CSS, FLASH_JS } from './webviewTheme';
 import { HELP_CSS, help } from './webviewHelp';
 import { discoverList } from './toolIntrospect';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
@@ -357,6 +357,7 @@ export function renderHtml(
     const vscode = acquireVsCodeApi();
     ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
+    ${FLASH_JS}
     ${OPEN_STEP_JS}
     const paramsWrap = document.getElementById('paramsWrap');
     const listsWrap = document.getElementById('listsWrap');
@@ -417,6 +418,7 @@ export function renderHtml(
       } else if (m.type === 'saved') {
         saveOut.className = 'ok';
         saveOut.textContent = 'Saved ✓';
+        edaFlash(saveOut);
         setTimeout(() => {
           if (saveOut.textContent === 'Saved ✓') { saveOut.textContent = ''; saveOut.className = ''; }
         }, 4000);
@@ -447,7 +449,14 @@ export function renderHtml(
           row.remove();
           return;
         }
-        row.replaceWith(buildListRow(next, false));
+        // Every saved row is rebuilt on every patch, so animating all of them
+        // would flash the whole list when one of them changed. Compare the
+        // rendered status line and mark only the rows that actually moved.
+        const before = (row.querySelector('.listStatus') || {}).textContent;
+        const rebuilt = buildListRow(next, false);
+        const after = (rebuilt.querySelector('.listStatus') || {}).textContent;
+        if (before !== after) { rebuilt.classList.add('rowIn'); }
+        row.replaceWith(rebuilt);
         incoming.delete(name);
       });
       const drafts = Array.from(listsWrap.querySelectorAll('.listItem:not([data-list-name])'));
@@ -455,6 +464,8 @@ export function renderHtml(
         // The draft row this list was just created from, if it's still there.
         const draft = drafts.find(row => row.querySelector('.lName').value.trim() === list.name);
         const saved = buildListRow(list, false);
+        // Unambiguously new, so always worth marking.
+        saved.classList.add('rowIn');
         if (draft) {
           draft.replaceWith(saved);
           drafts.splice(drafts.indexOf(draft), 1);

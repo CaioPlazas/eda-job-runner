@@ -135,15 +135,39 @@ for (const token of ['--eda-size', '--eda-size-sm', '--eda-size-xs']) {
   check(m !== null && Number(m[1]) >= 11, `${token}'s floor is at least 11px (got ${m ? m[1] : '?'}px)`);
 }
 
-// --- Motion rules (Phase 3; assert nothing until motion lands) --------------
-// 1. nothing exceeds 200ms  2. reduced motion is honoured wherever motion exists.
+// --- Motion rules ----------------------------------------------------------
+// See src/webviewTheme.ts's header for the four rules these enforce.
 
+// Durations come from two places and BOTH have to be checked. An earlier
+// version of this test only scanned literal `123ms` inside a transition/
+// animation declaration, which silently missed every duration written as
+// `var(--eda-motion-slow)` -- i.e. almost all of them. Raising the token to
+// 350ms passed the gate. Don't narrow this back down.
 for (const [name, css] of Object.entries(styles)) {
-  const durations = [...css.matchAll(/(?:transition|animation)[^;{}]*?(\d+)ms/g)].map(m => Number(m[1]));
-  const tooSlow = durations.filter(d => d > 200);
-  check(tooSlow.length === 0, `${name}: no transition or animation exceeds 200ms${tooSlow.length ? ` (found ${tooSlow.join('ms, ')}ms)` : ''}`);
+  const tokenDurations = [...css.matchAll(/--eda-motion[a-z-]*:\s*(\d+(?:\.\d+)?)ms/g)].map(m => ({
+    ms: Number(m[1]),
+    where: 'token'
+  }));
+  const literalDurations = [...css.matchAll(/(?:transition|animation)[^;{}]*?(\d+(?:\.\d+)?)ms/g)].map(m => ({
+    ms: Number(m[1]),
+    where: 'literal'
+  }));
+  const durations = [...tokenDurations, ...literalDurations];
+  // The prefers-reduced-motion override deliberately uses 0.01ms; ignore it.
+  const tooSlow = durations.filter(d => d.ms > 200);
+  check(
+    tooSlow.length === 0,
+    `${name}: no transition or animation exceeds 200ms${
+      tooSlow.length ? ` (found ${tooSlow.map(d => `${d.ms}ms [${d.where}]`).join(', ')})` : ''
+    }`
+  );
+  check(tokenDurations.length > 0, `${name}: defines its motion durations as --eda-motion* tokens`);
   if (durations.length > 0) {
     check(css.includes('prefers-reduced-motion'), `${name}: has motion, so it honours prefers-reduced-motion`);
+    check(
+      /animation-iteration-count:\s*1\s*!important/.test(css),
+      `${name}: reduced-motion pins animation-iteration-count, or a looping animation survives it`
+    );
   }
 }
 
