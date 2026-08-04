@@ -311,6 +311,38 @@ merge (used by a rescan to touch only `variants`/`lastScanned` while leaving
 guarantees `variants[0]` exists with `label: ""` (the implicit top-level
 variant), inserting one if the loaded file lacks it.
 
+#### 5.3.1 Keeping memory and disk in agreement (`storeSync.ts`)
+
+Both stores hold an in-memory copy of a file that anything can change: the
+user by hand, a branch switch, a colleague's pull — the files are *designed*
+to be hand-edited and shared. Both also write that file themselves, and the
+`FileSystemWatcher` cannot tell the two apart. Each store therefore owns a
+`LoadGuard` (pure, `storeSync.ts`, tested by `run-store-sync-tests.mjs`) that
+closes two holes, both of which lost data silently:
+
+- **An older read could land last.** `load()` used to assign whatever it read,
+  unconditionally. Since every `persist()` triggers the watcher, loads and
+  writes overlap constantly, and two overlapping loads can finish out of
+  order — leaving memory holding an *older* snapshot than disk. Nothing looks
+  wrong, but the next edit is built on that stale object and written back,
+  reverting the newer change. `beginLoad()` now stamps each attempt and
+  `shouldApply()` refuses it if a newer load started, or if a write started,
+  while the read was in flight.
+- **We reloaded our own writes.** `beginWrite(text)` records the exact bytes;
+  `isSelfWrite(text)` recognises them coming back through the watcher and
+  skips the whole re-read/re-parse/re-fire cycle. (`persist()` still fires its
+  own change event — the suppression removes the *duplicate*, not the update.)
+
+`LoadGuard.revision` is exposed as `getRevision()`/`hasChangedSince(rev)` and
+increments on every load or write. That is the basis of the panel-side check
+in 6.1: a panel records the revision it rendered from and re-checks it before
+saving, so an edit that arrived underneath an open panel can't be silently
+overwritten by it.
+
+Deliberately **not** attempted: merging two versions of a file. These hold
+arbitrary user structure, and silently combining two edits of one job is a
+worse outcome than either one winning outright.
+
 ### 5.4 `jobRunner.ts` — the job execution engine (the biggest, most complex file)
 
 Owns everything about actually running a job: spawning, streaming output
@@ -1015,12 +1047,27 @@ signature was made `export`able specifically to support that.
   without it, one failed scan left the panel behind an unclickable overlay
   with no way out but closing and reopening it. Any panel that grows a busy
   overlay needs the same.
-- **Client-side state that the user typed but hasn't committed must survive a
-  re-render.** A full-document reassignment throws away every uncommitted
-  field, so the panel keeps it host-side and replays it into `renderHtml`:
-  `paramsPanel`'s `draftParams` (typed parameter rows) and `draftLists`
-  (a half-filled "add a value list" row) are the worked example — the client
-  sends both with every message that triggers a render.
+- **Don't re-render a whole document to change part of it.** Reassigning
+  `webview.html` is a page reload: it destroys every uncommitted field on the
+  screen — typed-but-unsaved rows, scroll position, focus, open `<details>`.
+  `paramsPanel.ts` is the worked example of the alternative: a list
+  Add/Refresh/Remove posts `{type:'lists', lists}` and the client's
+  `applyLists` swaps only the affected rows, keyed by `data-list-name`, never
+  touching parameter rows or a half-filled new-list row. `renderHtml` runs
+  exactly once, from the constructor. (Before that, this panel carried
+  `draftParams`/`draftLists` back and forth on every message purely to survive
+  its own re-renders — two workarounds for a page reload nobody needed.
+  Deleted.) `run-webview-smoke-tests.mjs` drives the patch through jsdom and
+  asserts the typed rows are still there afterwards.
+- **A panel that writes a whole structure must check the file hasn't moved.**
+  Panels hold a snapshot from when they rendered, and these JSON files change
+  from outside; saving used to write the snapshot straight over whatever had
+  arrived. Every panel that persists now records `store.getRevision()` at
+  render time and calls `confirmOverwriteIfStale` (`staleWrite.ts`) before
+  writing if `hasChangedSince(...)` — a modal for an explicit Save, and for
+  `jobConfigPanel`'s auto-save an inline `staleWriteHint` instead, because a
+  modal nobody asked for is its own kind of bug. Re-capture the revision after
+  a successful save, or the panel warns about its own write next time.
 - **Full-document reassignment vs. client-side patching**: four of the five
   panels (`jobConfigPanel`, `shellEnvPanel`, `paramsPanel`, `logViewerPanel`)
   reassign `panel.webview.html` on essentially every state-changing message
@@ -1165,14 +1212,16 @@ mirror needs the same change.**
   for cleanup-on-panel-close). "Clean all logs" reads `JobRunner.getActiveLogPaths()`
   and passes it through as `exclude` to both `totalSize`/`cleanAllLogs`
   (see 5.6).
-- **`paramsPanel.ts`**: the simplest panel — one array of `{name, value}`
-  rows, Save replaces the whole `GlobalParam[]` list via
-  `jobStore.setParams()`, then posts `{type:'saved'}` and stays open (6.1).
-  Note the value-list section shares the screen with the parameter rows but
-  persists *immediately* per action (Add/↻ Refresh/Remove each write and
-  re-render), while parameters only persist on Save — which is exactly why
-  both `draftParams` and `draftLists` exist: every list action re-renders the
-  whole document underneath whatever the user was typing.
+- **`paramsPanel.ts`**: one array of `{name, value}` rows, Save replaces the
+  whole `GlobalParam[]` list via `jobStore.setParams()`, then posts
+  `{type:'saved'}` and stays open (6.1). The thing to understand here is that
+  its two halves persist on different schedules: **value lists write
+  immediately** per action (Add / ↻ Refresh / Remove / Refresh all), while
+  **parameters only persist on Save**. So every list action lands in the
+  middle of parameter rows that exist only in the DOM — which is why those
+  actions must never re-render the document. They post a `lists` patch and
+  `applyLists` swaps just the affected rows (6.1). `render()` is called once,
+  from the constructor.
 - **`logViewerPanel.ts`**: builds its table entirely from each log file's own
   header/trailer (`logIndex.ts`) via `readHeadTail` (cached, see 5.6) — **no
   separate persisted index of runs exists**; the log files on disk ARE the

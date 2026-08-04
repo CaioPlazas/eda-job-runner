@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.7.0 — Your edits to the job file are safe now
+
+Both of this release's changes are about the same thing: not losing work you
+can't see being lost.
+
+**`.vscode/eda-jobs.json` and `eda-tools.json` are meant to be edited by hand
+and shared through git — and until now the extension didn't really cope with
+that.**
+
+- If you edited one of those files by hand (or switched branch, or pulled)
+  while a Configure / Tool Setup / Parameters / Shell & Environment window was
+  open, pressing Save in that window wrote what was on screen straight over
+  the change that had arrived, with no warning. Saving now checks first and
+  asks, so you can decide instead of finding out later. (An automatic save
+  never interrupts with a dialog — it says so inline and waits for you to
+  press Save.)
+- The extension could also end up disagreeing with the file it had just
+  written: two overlapping reloads could finish in the wrong order, leaving
+  the window holding an older version than the file. The next edit was then
+  built on that older version and written back, quietly undoing the newer one.
+  Reloads are now ordered, and the extension no longer re-reads its own writes
+  at all.
+
+**The Parameters & Value Lists window no longer rebuilds itself.** Adding,
+refreshing or removing a value list used to reload the whole window — which is
+why typing a parameter row and then refreshing a list needed special handling
+to not lose your typing. It now updates just the list that changed. Everything
+else on the screen — your typed parameter rows, a new list you're halfway
+through describing, your scroll position — stays exactly as it was.
+
 ## 1.6.1 — The sidebar stops repainting while a job runs
 
 **Fixed:**

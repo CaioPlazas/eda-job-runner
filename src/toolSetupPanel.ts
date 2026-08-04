@@ -12,6 +12,7 @@ import { SETUP_ERROR_CSS, OPEN_STEP_JS, setupErrorHtml, StepId } from './webview
 import { buildSetupChain } from './setupChain';
 import { BUILTIN_SEED_PATTERNS } from './seedDetect';
 import { shellQuote } from './shellQuote';
+import { confirmOverwriteIfStale } from './staleWrite';
 
 interface ScanNewMessage {
   type: 'scanNew';
@@ -164,6 +165,8 @@ export class ToolSetupPanel {
   private pendingAdd: PendingAdd | undefined;
   private editingToolId: string | undefined;
   private addingVariantForToolId: string | undefined;
+  /** Store revision this panel's rendered contents came from -- see staleWrite.ts. */
+  private renderedRevision = 0;
 
   static createOrShow(
     toolStore: ToolStore,
@@ -210,6 +213,9 @@ export class ToolSetupPanel {
   }
 
   private render(): void {
+    // See staleWrite.ts: an in-place edit form is filled from this snapshot,
+    // so saving it has to know whether the file moved underneath it.
+    this.renderedRevision = this.toolStore.getRevision();
     this.panel.webview.html = renderHtml(
       this.panel.webview,
       this.toolStore.getTools(),
@@ -466,6 +472,14 @@ export class ToolSetupPanel {
       case 'saveEdit': {
         const command = msg.command.trim();
         if (!command) {
+          return;
+        }
+        // This form was filled in from a snapshot of the tool as it was when
+        // the edit opened; saving writes all of those fields back at once.
+        if (
+          this.toolStore.hasChangedSince(this.renderedRevision) &&
+          !(await confirmOverwriteIfStale('.vscode/eda-tools.json', true))
+        ) {
           return;
         }
         const helpArg = msg.helpArg.trim() || '--help';

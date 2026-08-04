@@ -15,6 +15,7 @@ headings for your topic.
 | Understand the 3-layer architecture (pure/impure/webview) | — | §2 |
 | Add/change a `JobDefinition` or `ToolDefinition` field | `src/types.ts`, then `src/jobStore.ts` (`normalize`/`updateJob`/`addJob`/`duplicateJob` — **all four must be updated**) or `src/toolStore.ts` | §4.1, §5.3 |
 | Understand the two persisted `.vscode/*.json` files | `src/jobStore.ts`, `src/toolStore.ts` | §4.2, §5.3 |
+| Fix a **file-changed-on-disk / lost-edit** bug in either store | `src/storeSync.ts`, `src/staleWrite.ts`, then the store | §5.3.1, §6.1 |
 | Understand `${param:X}` / `${randomSeed}` / `${var:X}` | `src/paramSubstitution.ts`, `src/paramVars.ts` | §4.3, §5.10 |
 | Understand why the Tool builder writes into Command | `src/jobConfigPanel.ts` (`builderOwns`/`onBuilderChange`/`refreshBuilderUI`) | §4.4, §6.2 |
 | Fix/extend the extension entry point, a command, a menu | `src/extension.ts`, `package.json` (`contributes.commands`/`menus`) | §5.1, §7 |
@@ -87,6 +88,8 @@ and just want a one-line reminder of what it does before opening it.
 | `shellInvocation.ts` | Pure: per-shell-family argv assembly, `${command}` token, env/var substitution |
 | `statusBar.ts` | Status-bar "job running" indicator — the only thing that repaints on a timer |
 | `statusText.ts` | Pure: status→text for the tree/status bar/toasts; enforces "a row's text must not move on its own" |
+| `storeSync.ts` | Pure: `LoadGuard` — load/write sequencing, self-write suppression, the revision panels check before saving |
+| `staleWrite.ts` | The "this file changed on disk since you opened this panel" confirmation |
 | `tailer.ts` | `FileTailer` — polling `tail -f` (used 3 independent places) |
 | `toolIntrospect.ts` | Spawns a tool's `--help` / list-source command, impure half of tool scanning |
 | `toolOptionParser.ts` | Pure: `--help` text → flags, favorites-merge, choices, subcommand detection |

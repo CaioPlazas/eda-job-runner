@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import { ToolDefinition, ToolsFile, ToolVariant, ValueList, emptyToolsFile } from './types';
+import { LoadGuard } from './storeSync';
 
 /** A pre-global-lists tool's own `lists`, captured at load time so a one-time
  * startup migration (see `extension.ts`) can move it into `JobsFile.lists`.
@@ -22,6 +23,8 @@ export class ToolStore implements vscode.Disposable {
   private readonly toolsFileUri: vscode.Uri;
   /** Chains persist() calls so overlapping writes land on disk in the order they were issued -- see persist(). */
   private writeQueue: Promise<void> = Promise.resolve();
+  /** Same load/write sequencing JobStore uses -- see storeSync.ts. */
+  private readonly guard = new LoadGuard();
 
   constructor(private readonly workspaceFolder: vscode.WorkspaceFolder) {
     this.toolsFileUri = vscode.Uri.joinPath(workspaceFolder.uri, '.vscode', 'eda-tools.json');
@@ -40,18 +43,25 @@ export class ToolStore implements vscode.Disposable {
     );
   }
 
+  /** Same guarded shape as `JobStore.load()` -- see storeSync.ts for what the guard prevents. */
   async load(): Promise<void> {
+    const attempt = this.guard.beginLoad();
+    let nextData: ToolsFile;
+    let nextLegacy: LegacyToolLists[];
     try {
       const bytes = await vscode.workspace.fs.readFile(this.toolsFileUri);
       const text = Buffer.from(bytes).toString('utf8');
+      if (this.guard.isSelfWrite(text)) {
+        return; // our own persist() coming back around
+      }
       const parsed = text.trim().length === 0 ? emptyToolsFile() : (JSON.parse(text) as Partial<ToolsFile>);
       const { toolsFile, legacyLists } = normalize(parsed);
-      this.data = toolsFile;
-      this.legacyLists = legacyLists;
+      nextData = toolsFile;
+      nextLegacy = legacyLists;
     } catch (err) {
       if (isFileNotFound(err)) {
-        this.data = emptyToolsFile();
-        this.legacyLists = [];
+        nextData = emptyToolsFile();
+        nextLegacy = [];
       } else {
         vscode.window.showErrorMessage(
           `EDA Job Runner: failed to read .vscode/eda-tools.json (${describeError(err)}). ` +
@@ -60,7 +70,22 @@ export class ToolStore implements vscode.Disposable {
         return;
       }
     }
+    if (!this.guard.shouldApply(attempt)) {
+      return; // superseded mid-read; see JobStore.load()
+    }
+    this.data = nextData;
+    this.legacyLists = nextLegacy;
     this._onDidChangeTools.fire();
+  }
+
+  /** See `JobStore.getRevision()`. */
+  getRevision(): number {
+    return this.guard.revision;
+  }
+
+  /** See `JobStore.hasChangedSince()`. */
+  hasChangedSince(revision: number): boolean {
+    return this.guard.revision !== revision;
   }
 
   getTools(): ToolDefinition[] {
@@ -113,6 +138,7 @@ export class ToolStore implements vscode.Disposable {
    */
   private async persist(): Promise<void> {
     const text = JSON.stringify(this.data, null, 2) + '\n';
+    this.guard.beginWrite(text); // see JobStore.persist()
     const write = this.writeQueue.then(() => this.writeAtomic(text));
     this.writeQueue = write.catch(() => undefined);
     await write;
