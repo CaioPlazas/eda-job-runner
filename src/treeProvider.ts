@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
 import { JobRunner, JobRunStatus } from './jobRunner';
 import { JobDefinition } from './types';
-import { describeStatus, describeStatusLong, describeLiveProgress, formatDuration } from './statusText';
+import { describeStatusShort, describeStatusLong, describeLiveProgress, formatDuration } from './statusText';
+import { jobResourceUri, sidebarBadgesEnabled } from './treeDecorations';
 
 // formatDuration used to live here; re-exported so existing importers
 // (statusBar.ts, extension.ts) keep working while its definition sits in the
@@ -30,8 +31,18 @@ export class JobTreeItem extends vscode.TreeItem {
     // an id VS Code can't tell one refresh's lane rows from the next's and
     // treats them all as new, dropping selection and scroll position.
     this.id = isLane ? laneKey : job.id;
-    const statusText = describeStatus(status);
+    // describeStatusShort, not describeStatus: this slot renders smaller and
+    // dimmer than the label, so it carries one short segment and the badge
+    // (treeDecorations.ts) plus the hover tooltip carry the rest.
+    const statusText = describeStatusShort(status);
     this.description = !isLane && job.default ? `★ default${statusText ? ` · ${statusText}` : ''}` : statusText;
+    // Opts this row into its status badge. Only set when the feature is on, so
+    // switching it off returns the row to exactly its pre-badge behaviour
+    // rather than leaving a resourceUri whose decoration merely returns
+    // undefined -- resourceUri has its own effects on how VS Code renders a row.
+    if (sidebarBadgesEnabled()) {
+      this.resourceUri = jobResourceUri(laneKey);
+    }
     const defaultNote = !isLane && job.default ? '\n\n★ **Default job** — runs on F5 / "EDA: Run Default Job".' : '';
     // A running row's tooltip is deliberately left undefined and filled in by
     // JobTreeProvider.resolveTreeItem on hover: it's the one place elapsed
@@ -71,6 +82,9 @@ export class JobGroupTreeItem extends vscode.TreeItem {
   ) {
     super(job.name, expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     this.id = job.id;
+    if (sidebarBadgesEnabled()) {
+      this.resourceUri = jobResourceUri(job.id);
+    }
     const running = lanes.filter(l => l.status.state === 'running').length;
     const passed = lanes.filter(l => l.status.state === 'passed').length;
     const failed = lanes.filter(l => l.status.state === 'failed').length;
@@ -181,6 +195,14 @@ export class JobTreeProvider implements vscode.TreeDataProvider<EdaTreeNode> {
       view.onDidExpandElement(e => {
         if (e.element.id) {
           this.collapsed.delete(e.element.id);
+        }
+      }),
+      // Whether a row carries a resourceUri at all is decided in its
+      // constructor, so toggling the setting has to rebuild the rows -- the
+      // decoration provider re-firing on its own would not be enough.
+      vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('eda-job-runner.sidebarBadges')) {
+          this.refresh();
         }
       })
     );

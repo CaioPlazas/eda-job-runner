@@ -5,9 +5,8 @@ import { execSync } from 'child_process';
 execSync('npx esbuild ./src/statusText.ts --bundle --format=esm --platform=node --outfile=/tmp/statusText.mjs', {
   stdio: 'inherit'
 });
-const { describeStatus, describeStatusLong, describeLiveProgress, countSuffix, formatDuration } = await import(
-  '/tmp/statusText.mjs'
-);
+const { describeStatus, describeStatusShort, describeStatusLong, describeLiveProgress, countSuffix, formatDuration } =
+  await import('/tmp/statusText.mjs');
 
 let failures = 0;
 function check(cond, msg) {
@@ -95,6 +94,50 @@ check(
 check(
   describeStatusLong({ state: 'running', reattached: true }).includes('Resumed live tailing'),
   'a resumed run explains what resumed means'
+);
+
+// --- describeStatusShort: the sidebar's own, shorter text ------------------
+// Same no-clock invariant as describeStatus (it feeds the same tree row), plus
+// its own reason to exist: TreeItem.description renders smaller and dimmer than
+// the label, so it has to stay short enough not to be ellipsized. Counts moved
+// to the hover tooltip and pass/fail to a full-opacity badge.
+
+check(
+  describeStatusShort(runningEarly) === describeStatusShort(runningLater),
+  'a running row ignores elapsed time and in-progress counts here too'
+);
+check(!/\d/.test(describeStatusShort(runningLater)), 'a running row contains no digits at all -- nothing to tick');
+check(describeStatusShort(runningEarly) === 'running', 'plain running row reads "running"');
+check(
+  describeStatusShort({ state: 'running', startTime: started, reattached: true }) === 'running (resumed)',
+  'a resumed run still says so in the short form'
+);
+check(
+  describeStatusShort({ state: 'passed', startTime: started, endTime: started + 83_000 }) === 'passed 1:23',
+  `a passed row keeps its duration without parentheses (got ${JSON.stringify(
+    describeStatusShort({ state: 'passed', startTime: started, endTime: started + 83_000 })
+  )})`
+);
+check(
+  describeStatusShort({ state: 'passed', startTime: started, endTime: started + 83_000, errorCount: 4, warningCount: 2 }) ===
+    'passed 1:23',
+  'the short form drops the count suffix -- the badge and tooltip carry that now'
+);
+check(
+  describeStatusShort({ state: 'failed', exitCode: 1, errorCount: 9 }) === 'exit 1',
+  'a failed row reports its exit code and nothing else'
+);
+check(
+  describeStatusShort({ state: 'failed', exitCode: 0, errorCount: 3 }) === 'log errors',
+  'a zero-exit failure still explains it was the log that failed it'
+);
+check(describeStatusShort({ state: 'killed' }) === 'killed', 'a killed row reads "killed"');
+check(describeStatusShort({ state: 'idle' }) === '', 'an idle row has no status text at all');
+// The whole point of the short form: it must be shorter than what it replaced.
+check(
+  describeStatusShort({ state: 'passed', startTime: started, endTime: started + 83_000, errorCount: 4, warningCount: 2 }).length <
+    describeStatus({ state: 'passed', startTime: started, endTime: started + 83_000, errorCount: 4, warningCount: 2 }).length,
+  'the short form really is shorter than describeStatus for the same status'
 );
 
 // --- formatDuration -------------------------------------------------------

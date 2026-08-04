@@ -6,8 +6,8 @@
 export type StepId = 1 | 2 | 3 | 4;
 
 export const SETUP_ERROR_CSS = `
-  .setupError { border-left: 3px solid var(--vscode-charts-yellow); padding: 6px 10px; margin: 8px 0; font-size: 13px; }
-  .setupError .probeLine { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15)); padding: 4px 6px; margin: 6px 0; white-space: pre-wrap; }
+  .setupError { border-left: 3px solid var(--vscode-charts-yellow); padding: 6px 10px; margin: 8px 0; font-size: var(--eda-size); }
+  .setupError .probeLine { font-family: var(--vscode-editor-font-family, monospace); font-size: var(--eda-size-sm); background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15)); padding: 4px 6px; margin: 6px 0; white-space: pre-wrap; }
   .setupError .actions { margin-top: 8px; display: flex; gap: 8px; }
 `;
 

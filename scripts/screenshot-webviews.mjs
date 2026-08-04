@@ -36,6 +36,7 @@ const THEMES = {
   dark: {
     '--vscode-font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     '--vscode-font-size': '13px',
+    '--vscode-font-weight': 'normal',
     '--vscode-editor-font-family': 'Consolas, "Courier New", monospace',
     '--vscode-editor-font-size': '14px',
     '--vscode-editor-background': '#1e1e1e',
@@ -67,6 +68,7 @@ const THEMES = {
   light: {
     '--vscode-font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     '--vscode-font-size': '13px',
+    '--vscode-font-weight': 'normal',
     '--vscode-editor-font-family': 'Consolas, "Courier New", monospace',
     '--vscode-editor-font-size': '14px',
     '--vscode-editor-background': '#ffffff',
@@ -97,12 +99,36 @@ const THEMES = {
   }
 };
 
+// A real VS Code webview host injects its own <style> ahead of the panel's,
+// and that block -- not the panel -- is what sets the base font. No panel sets
+// `body { font-size }`, so without reproducing this the page falls back to
+// Chromium's default 16px while a real window renders at --vscode-font-size
+// (13px): every screenshot came out ~23% larger than what the user actually
+// sees, which is exactly how illegible sub-11px text passed this gate twice.
+// Keep this in sync with vs/workbench/contrib/webview/browser/pre/index.html.
+//
+// Wrapped in `:where()` deliberately. `page.addStyleTag` appends to the end of
+// <head>, i.e. AFTER the panel's own <style> -- the reverse of a real host,
+// where the injected block comes first and the panel overrides it. `:where()`
+// has zero specificity, so any plain `body { ... }` rule in a panel still wins
+// while unset properties (font-size, which no panel sets) fall through to
+// these. Without it, this block would clobber every panel's own body padding.
+const HOST_INJECTED_BODY_CSS = `
+  :where(body) {
+    font-family: var(--vscode-font-family);
+    font-weight: var(--vscode-font-weight);
+    font-size: var(--vscode-font-size);
+    margin: 0;
+    padding: 0 20px;
+  }
+`;
+
 function themeStyleTag(theme) {
   const vars = THEMES[theme];
   const body = Object.entries(vars)
     .map(([k, v]) => `${k}: ${v};`)
     .join(' ');
-  return `:root { ${body} } html, body { background: var(--vscode-editor-background); }`;
+  return `:root { ${body} } ${HOST_INJECTED_BODY_CSS} html, body { background: var(--vscode-editor-background); }`;
 }
 
 // Console errors that are expected/harmless and shouldn't fail the gate.

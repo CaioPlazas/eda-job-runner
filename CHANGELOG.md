@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.8.0 — Readable
+
+A pass over how the extension reads, not what it does. Nothing about the flow
+changed.
+
+**Text in the settings windows was too small, and the wrong setting controlled
+it.** Every field in every window was drawn in the *editor's* font at the
+*editor's* size — so setting `editor.fontSize` to 11 for dense HDL shrank every
+input in this extension to 11px while its own label stayed at 13px. Fields now
+use the interface font at a size that doesn't move when you change your editor,
+and only the fields where a stray space or quote actually matters — commands,
+regex patterns, paths, environment text, search boxes — stay monospaced.
+
+**Small text is no longer *very* small.** Hints, table headers, badges and
+option rows were sized as fractions of an already-small font, and in a few
+places those fractions multiplied: the Log Viewer's status badge — the most
+important cell in that table — was rendering at roughly 9.6px, and the
+"Copy / Open in terminal" buttons under a command preview at about 9.4px.
+Everything now comes from one size scale with a floor under it, so nothing can
+resolve that small again.
+
+**The sidebar shows a coloured status badge on each row.** A finished run's
+outcome used to live only in the dim, smaller text beside the job name — the
+least readable thing on screen carrying the thing you most want to see. Each
+row now also gets a ✓ / ✗ / ■ / ▶ in the matching colour, at full strength.
+The dim text is shorter to match, and hovering a row still shows everything.
+Turn it off with `eda-job-runner.sidebarBadges` if you prefer plain rows.
+
+**Also:** keyboard focus is now visible on buttons (it never was), and the
+empty dark bar that appeared under the Command field on a new job is gone.
+
 ## 1.7.0 — Your edits to the job file are safe now
 
 Both of this release's changes are about the same thing: not losing work you

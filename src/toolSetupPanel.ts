@@ -4,6 +4,7 @@ import { JobStore } from './jobStore';
 import { ToolDefinition, ToolOption, ToolVariant, ValueList, JobsFileSetup } from './types';
 import { scanVariant, scanTool } from './toolIntrospect';
 import { detectSubcommandChoices, mergeFavorites, parseChoices, parseHelpOutputDeep } from './toolOptionParser';
+import { BASE_CSS } from './webviewTheme';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
@@ -750,7 +751,7 @@ export function renderHtml(
         ? `<div class="actions">
              <button class="secondary small" data-try-helparg-id="${esc(tool.id)}" data-try-helparg-label="${esc(v.label)}" data-try-helparg="-help" type="button">Try -help</button>
              <button class="secondary small" data-try-helparg-id="${esc(tool.id)}" data-try-helparg-label="${esc(v.label)}" data-try-helparg="-h" type="button">Try -h</button>
-             <input type="text" class="tryHelpArgCustom" placeholder="e.g. -help all" data-custom-helparg-id="${esc(tool.id)}" data-custom-helparg-label="${esc(v.label)}" />
+             <input type="text" class="tryHelpArgCustom mono" placeholder="e.g. -help all" data-custom-helparg-id="${esc(tool.id)}" data-custom-helparg-label="${esc(v.label)}" />
              <button class="secondary small" data-try-helparg-custom-id="${esc(tool.id)}" data-try-helparg-custom-label="${esc(v.label)}" type="button">Retry with this</button>
            </div>`
         : '';
@@ -788,7 +789,7 @@ export function renderHtml(
   const renderAddVariantForm = (toolId: string): string => `
     <div class="variantRow" style="margin-top:12px;">
       <input type="text" placeholder="label (e.g. regression)" class="newVariantLabel" style="flex:1;" />
-      <input type="text" placeholder="selector args (e.g. --regression)" class="newVariantArgs" style="flex:1;" />
+      <input type="text" placeholder="selector args (e.g. --regression)" class="newVariantArgs mono" style="flex:1;" />
       <button class="primary small" data-confirm-addvariant="${esc(toolId)}" type="button">Add</button>
       <button class="secondary small" id="cancelAddVariant" type="button">Cancel</button>
     </div>`;
@@ -798,8 +799,8 @@ export function renderHtml(
       return `
     <div class="tool">
       <div class="toolHeader editForm">
-        <input type="text" class="editCommand" value="${esc(tool.command)}" style="flex:2;" />
-        <input type="text" class="editHelpArg" value="${esc(tool.helpArg || '--help')}" style="flex:1;" placeholder="--help" />
+        <input type="text" class="editCommand mono" value="${esc(tool.command)}" style="flex:2;" />
+        <input type="text" class="editHelpArg mono" value="${esc(tool.helpArg || '--help')}" style="flex:1;" placeholder="--help" />
         <button class="primary small" data-save-edit="${esc(tool.id)}" type="button">Save &amp; Rescan</button>
         <button class="secondary small" id="cancelEdit" type="button">Cancel</button>
       </div>
@@ -811,13 +812,13 @@ export function renderHtml(
           "Directory this tool's scans/rescans run from. Leave blank to use the workspace's postSetupCwd setting. " +
             'Register the same command twice with different scan directories (and names) if colleagues keep separate copies in different folders.'
         )}</label>
-        <input type="text" class="editScanDir" value="${esc(tool.scanDir ?? '')}" placeholder="(workspace default)" />
+        <input type="text" class="editScanDir mono" value="${esc(tool.scanDir ?? '')}" placeholder="(workspace default)" />
         <label>Seed pattern (regex, optional) ${help(
           "Recovers a run's seed for the Log Viewer's Seed column when a job's Command doesn't use " +
             '<code>${randomSeed}</code> (whose value is already captured directly). Capture group 1 is the seed. ' +
             "Overrides the built-in guessed patterns for every job using this tool. Leave blank to just use the guesses."
         )}</label>
-        <input type="text" class="editSeedPattern" value="${esc(tool.seedPattern ?? '')}" placeholder="e.g. MY_SEED=(\\d+)" />
+        <input type="text" class="editSeedPattern mono" value="${esc(tool.seedPattern ?? '')}" placeholder="e.g. MY_SEED=(\\d+)" />
         <div class="seedTester">
           <label>Try it: paste a sample log line</label>
           <textarea class="seedTesterSample" rows="2" placeholder="paste a line from a real run's output here"></textarea>
@@ -826,7 +827,7 @@ export function renderHtml(
         <label>Error pattern (regex, optional) ${help(
           "Treat any output line matching this as an error, added to this tool's error count and the Problems panel -- for output that doesn't match a built-in error format (UVM/Questa/Icarus/DSim/Verilator). Case-insensitive. Leave blank to rely on built-in parsing only."
         )}</label>
-        <input type="text" class="editErrorPattern" value="${esc(tool.errorPattern ?? '')}" placeholder="e.g. FAILED|Error:" />
+        <input type="text" class="editErrorPattern mono" value="${esc(tool.errorPattern ?? '')}" placeholder="e.g. FAILED|Error:" />
       </details>
     </div>`;
     }
@@ -867,7 +868,7 @@ export function renderHtml(
           ? `<div class="actions">
                <button class="secondary small" id="tryHelpArgDash" data-pending-command="${esc(pendingAdd.command)}" data-pending-displayname="${esc(pendingAdd.displayName)}" data-pending-scandir="${esc(pendingAdd.scanDir)}">Try -help</button>
                <button class="secondary small" id="tryHelpArgH" data-pending-command="${esc(pendingAdd.command)}" data-pending-displayname="${esc(pendingAdd.displayName)}" data-pending-scandir="${esc(pendingAdd.scanDir)}">Try -h</button>
-               <input type="text" id="tryHelpArgCustomInput" placeholder="e.g. -help all" />
+               <input type="text" class="mono" id="tryHelpArgCustomInput" placeholder="e.g. -help all" />
                <button class="secondary small" id="tryHelpArgCustomBtn" data-pending-command="${esc(pendingAdd.command)}" data-pending-displayname="${esc(pendingAdd.displayName)}" data-pending-scandir="${esc(pendingAdd.scanDir)}">Retry with this</button>
              </div>`
           : ''
@@ -909,7 +910,7 @@ export function renderHtml(
       <label for="newCommand">Command ${help(
         'Exactly what you type in a terminal to launch the tool. If it is a script in your project, use its path, or Browse…'
       )}</label>
-      <input id="newCommand" type="text" placeholder="your_run_script.py or /path/to/tool" />
+      <input id="newCommand" class="mono" type="text" placeholder="your_run_script.py or /path/to/tool" />
       <div class="hint" id="willScanPreview"></div>
       <div class="actions">
         <button class="secondary small" id="findIt" type="button">Find it</button>
@@ -920,13 +921,13 @@ export function renderHtml(
         <label for="newHelpArg">Help argument ${help(
           'Scanned through the same shell &amp; workspace setup chain a job uses (Shell &amp; Environment panel). Defaults to <code>--help</code>; change it if a scan comes back empty.'
         )}</label>
-        <input id="newHelpArg" type="text" value="--help" />
+        <input id="newHelpArg" class="mono" type="text" value="--help" />
         <label for="newDisplayName">Display name</label>
         <input id="newDisplayName" type="text" placeholder="(defaults to the command)" />
         <label for="newScanDir">Scan directory ${help(
           "Leave blank to use the workspace's postSetupCwd setting. Set this (with a distinguishing display name) to register the same command a second time for a different folder, e.g. colleagues keeping separate copies in work1/work2."
         )}</label>
-        <input id="newScanDir" type="text" placeholder="(workspace default)" />
+        <input id="newScanDir" class="mono" type="text" placeholder="(workspace default)" />
       </details>
       <div class="actions">
         <button class="primary" id="scanNew">Scan</button>
@@ -940,93 +941,60 @@ export function renderHtml(
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
 <title>Tool Setup</title>
 <style>
-  body {
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    padding: 24px;
-    max-width: min(1200px, 100%);
-    width: 100%;
-  }
-  h2 { margin-top: 0; }
-  h3 { margin-bottom: 8px; }
-  label { display: block; margin-top: 14px; font-weight: 600; }
-  input {
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 6px;
-    padding: 9px 12px;
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent);
-    border-radius: 2px;
-    font-family: var(--vscode-editor-font-family);
-    font-size: var(--vscode-editor-font-size);
-  }
-  input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-  option { background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
-  label.check { display: flex; align-items: center; gap: 8px; font-weight: 400; margin-top: 6px; }
-  label.check input { width: auto; margin-top: 0; }
-  .hint { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
+  ${BASE_CSS}
   ${HELP_CSS}
   ${BROWSE_CSS}
   ${SETUP_ERROR_CSS}
-  .err { color: var(--vscode-errorForeground); }
-  .actions { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
-  button {
-    padding: 6px 16px;
-    border: 1px solid transparent;
-    border-radius: 2px;
-    cursor: pointer;
-    font-family: var(--vscode-font-family);
-    font-size: var(--vscode-font-size);
-  }
-  button.small { padding: 2px 8px; font-size: 0.8em; margin-left: 8px; }
-  .primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-  .primary:hover { background: var(--vscode-button-hoverBackground); }
-  .secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-  .secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  h3 { margin-bottom: var(--eda-gap-sm); }
+  /* This panel's checkbox labels are per-flag list items, not section headings
+     -- the bold weight BASE_CSS gives label.check would be shouting here. */
+  label.check { font-weight: 400; margin-top: 6px; }
+  .actions { margin-top: var(--eda-gap-lg); }
+  button.small { padding: 2px var(--eda-gap-sm); font-size: var(--eda-size-sm); margin-left: var(--eda-gap-sm); }
   .addTool, .pendingAdd, .tool {
     margin-top: 20px;
-    padding: 14px 16px;
-    border: 1px solid var(--vscode-input-border, rgba(127,127,127,0.3));
-    border-radius: 4px;
+    padding: 14px var(--eda-gap-lg);
+    border: 1px solid var(--eda-border);
+    border-radius: var(--eda-radius);
   }
   .toolHeader { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .toolHeader.editForm input { margin-top: 0; }
-  .variant { margin-top: 10px; border-top: 1px solid var(--vscode-input-border, rgba(127,127,127,0.2)); padding-top: 8px; }
+  .variant { margin-top: 10px; border-top: 1px solid var(--vscode-input-border, rgba(127,127,127,0.2)); padding-top: var(--eda-gap-sm); }
   .variant summary { cursor: pointer; }
-  .addTool > summary { cursor: pointer; font-weight: 600; font-size: 1.05em; }
-  .rawSummary { cursor: pointer; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
-  .optFilterTool { margin-top: 8px; }
-  table.opts { border-collapse: collapse; margin-top: 8px; width: 100%; }
-  table.opts td { padding: 2px 10px 2px 0; vertical-align: top; font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
+  .addTool > summary { cursor: pointer; font-weight: 600; }
+  .rawSummary { cursor: pointer; font-size: var(--eda-size-sm); color: var(--vscode-descriptionForeground); }
+  .optFilterTool { margin-top: var(--eda-gap-sm); }
+  table.opts { border-collapse: collapse; margin-top: var(--eda-gap-sm); width: 100%; }
+  table.opts td { padding: 2px 10px 2px 0; vertical-align: top; font-family: var(--eda-mono); font-size: var(--eda-size-sm); }
+  /* --eda-size-sm rather than an em: this select is inside table.opts td, which
+     is itself --eda-size-sm, so a fractional em would compound to ~10px. */
   table.opts select.valueSourceSelect {
-    width: auto; margin-top: 0; padding: 2px 6px; font-size: 0.85em;
+    width: auto; margin-top: 0; padding: 2px 6px; font-size: var(--eda-size-sm);
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, transparent);
-    border-radius: 2px;
+    border-radius: var(--eda-radius-sm);
   }
   .favBtn {
-    background: none; border: none; cursor: pointer; padding: 0 4px 0 0; font-size: 1em;
+    background: none; border: none; cursor: pointer; padding: 0 var(--eda-gap-xs) 0 0; font-size: var(--eda-size);
     color: var(--vscode-descriptionForeground);
   }
   .favBtn.favOn { color: var(--vscode-charts-yellow, #e2c08d); }
   pre {
     margin-top: 6px;
-    padding: 8px;
+    padding: var(--eda-gap-sm);
     background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.1));
-    border-radius: 3px;
-    font-size: 0.8em;
+    border-radius: var(--eda-radius-sm);
+    font-size: var(--eda-size-sm);
     white-space: pre-wrap;
     max-height: 240px;
     overflow: auto;
   }
-  .variantRow { display: flex; gap: 8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+  .variantRow { display: flex; gap: var(--eda-gap-sm); margin-top: var(--eda-gap-sm); align-items: center; flex-wrap: wrap; }
   .variantRow input { margin-top: 0; }
-  .seedTester { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--vscode-input-border, rgba(127,127,127,0.25)); border-radius: 4px; }
+  .seedTester { margin-top: 10px; padding: var(--eda-gap-sm) 10px; border: 1px solid var(--vscode-input-border, rgba(127,127,127,0.25)); border-radius: var(--eda-radius); }
   .seedTester label { margin-top: 0; font-weight: 400; }
-  .seedTester textarea { width: 100%; box-sizing: border-box; margin-top: 4px; font-family: var(--vscode-editor-font-family); font-size: 0.85em; resize: vertical; }
+  .seedTester textarea { width: 100%; box-sizing: border-box; margin-top: var(--eda-gap-xs); font-family: var(--eda-mono); font-size: var(--eda-size-sm); resize: vertical; }
   .seedTesterResult { margin-top: 6px; }
   .busyOverlay {
     position: fixed;
@@ -1037,8 +1005,8 @@ export function renderHtml(
     justify-content: center;
     background: rgba(0, 0, 0, 0.35);
     color: #fff;
-    font-size: 1.1em;
-    font-family: var(--vscode-font-family);
+    font-size: var(--eda-size);
+    font-family: var(--eda-font);
   }
 </style>
 </head>
@@ -1414,7 +1382,7 @@ export function renderHtml(
         row.className = 'variantRow';
         row.innerHTML =
           '<input type="text" placeholder="label (e.g. regression)" class="manualLabel" style="flex:1;" />' +
-          '<input type="text" placeholder="selector args (e.g. --regression)" class="manualArgs" style="flex:1;" />' +
+          '<input type="text" placeholder="selector args (e.g. --regression)" class="manualArgs mono" style="flex:1;" />' +
           '<button class="secondary small" type="button">Remove</button>';
         row.querySelector('button').addEventListener('click', () => row.remove());
         $('manualVariants').appendChild(row);
