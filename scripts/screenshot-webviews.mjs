@@ -192,6 +192,60 @@ async function shoot(page, name) {
   console.log('  wrote', path.relative(repoRoot, file));
 }
 
+/**
+ * Layout assertions the screenshots themselves can't make.
+ *
+ * A `fullPage` screenshot expands the viewport to the document height, which
+ * composites a `position: sticky` element at the first viewport's bottom edge
+ * — so a sticky bar looks stranded mid-page in the PNG whether it is correct or
+ * broken. And horizontal overflow shows up as extra empty pixels nobody reads
+ * as a defect. Both need measuring, not looking at.
+ *
+ * This found a real pre-existing bug on its first run: `body { width: 100%;
+ * padding: 24px }` on default content-box sizing made every panel 48px wider
+ * than its viewport.
+ */
+async function checkLayout(page, label) {
+  const r = await page.evaluate(() => {
+    const bar = document.querySelector('.actions.sticky');
+    const out = {
+      viewportW: window.innerWidth,
+      viewportH: window.innerHeight,
+      scrollW: document.documentElement.scrollWidth,
+      docH: document.documentElement.scrollHeight,
+      bar: null
+    };
+    if (bar) {
+      const b = bar.getBoundingClientRect();
+      out.bar = {
+        bottom: Math.round(b.bottom),
+        left: Math.round(b.left),
+        right: Math.round(b.right),
+        // Opaque and on top? Hit-testing its own centre must land inside it.
+        covers: bar.contains(document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2))
+      };
+    }
+    return out;
+  });
+
+  if (r.scrollW > r.viewportW) {
+    failures.push(`${label}: horizontal overflow — document is ${r.scrollW}px wide in a ${r.viewportW}px viewport`);
+  }
+  if (r.bar) {
+    // Only meaningful when the page is actually taller than the viewport;
+    // otherwise there is nothing for a sticky element to stick to.
+    if (r.docH > r.viewportH && r.bar.bottom !== r.viewportH) {
+      failures.push(`${label}: sticky action bar is not pinned to the viewport bottom (${r.bar.bottom} vs ${r.viewportH})`);
+    }
+    if (r.bar.left !== 0 || r.bar.right !== r.viewportW) {
+      failures.push(`${label}: sticky action bar is not full-bleed (${r.bar.left}..${r.bar.right} of ${r.viewportW})`);
+    }
+    if (!r.bar.covers) {
+      failures.push(`${label}: sticky action bar is transparent or overlapped — content shows through it`);
+    }
+  }
+}
+
 async function run() {
   const browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true });
   try {
@@ -223,6 +277,7 @@ async function run() {
         await page.goto(`file://${path.join(htmlDir, htmlFile)}`);
         await page.addStyleTag({ content: themeStyleTag(theme) });
         console.log(`${name} (${theme}):`);
+        await checkLayout(page, `${name} (${theme})`);
         await shoot(page, `${name}-${theme}`);
 
         if (name === 'jobConfig') {

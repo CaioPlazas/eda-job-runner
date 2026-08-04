@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.8.1 — Structure
+
+Second of three visual passes. Still no flow changes.
+
+**Save is always reachable.** In Configure Job it sat below the whole form —
+roughly two screens down, on a window where saving is the point and (since
+1.6.0) doesn't close anything. Configure Job, Shell & Environment, Parameters
+and Tool Setup now keep their buttons in a bar pinned to the bottom of the
+window, with the form scrolling underneath.
+
+**Sections are cards.** Tool builder, Parameters and Advanced in Configure Job,
+and the two collapsible sections in Shell & Environment, are now bordered boxes
+like the tool and value-list cards already were — so a long form reads as a few
+grouped things instead of one continuous column.
+
+**The Log Viewer's column headers stay put** when you scroll a long run
+history. "0 / 2 / 5" across Exit / Errors / Warnings doesn't mean much once the
+header has scrolled away.
+
+**Fixed:** every settings window was 48 pixels wider than its own window,
+which could produce a horizontal scrollbar with nothing in it. The "Filter
+flags" boxes no longer stretch the full width of the window.
+
 ## 1.8.0 — Readable
 
 A pass over how the extension reads, not what it does. Nothing about the flow

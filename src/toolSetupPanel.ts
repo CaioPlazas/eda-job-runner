@@ -963,7 +963,7 @@ export function renderHtml(
   .variant summary { cursor: pointer; }
   .addTool > summary { cursor: pointer; font-weight: 600; }
   .rawSummary { cursor: pointer; font-size: var(--eda-size-sm); color: var(--vscode-descriptionForeground); }
-  .optFilterTool { margin-top: var(--eda-gap-sm); }
+  .optFilterTool { margin-top: var(--eda-gap-sm); max-width: 320px; }
   table.opts { border-collapse: collapse; margin-top: var(--eda-gap-sm); width: 100%; }
   table.opts td { padding: 2px 10px 2px 0; vertical-align: top; font-family: var(--eda-mono); font-size: var(--eda-size-sm); }
   /* --eda-size-sm rather than an em: this select is inside table.opts td, which
@@ -1021,7 +1021,7 @@ export function renderHtml(
 
   ${pendingHtml}
 
-  <div class="actions">
+  <div class="actions sticky">
     <button class="secondary" id="close">Close</button>
   </div>
 

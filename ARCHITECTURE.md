@@ -1058,6 +1058,13 @@ signature was made `export`able specifically to support that.
   last silently clobbers panel layout. It deliberately does **not** style bare
   `<details>`: `toolSetupPanel` uses `<details>` for its tool/variant cards,
   where a shared top border would be wrong, so each panel keeps its own.
+- **One page-level action row per panel may be `class="actions sticky"`**, and
+  only one: Tool Setup nests several `.actions` inside its tool cards and those
+  must scroll normally. Configure Job's Save sat under ~160 lines of form, on a
+  panel where Save is pressed repeatedly and (since v1.6.0) doesn't close
+  anything. Any inline save confirmation belongs *inside* that bar, or it
+  scrolls underneath it. Section boxes use `details.card`, also opt-in, because
+  `toolSetupPanel`'s `<details>` already *are* its cards.
 - **Two type rules, enforced by `test-fixtures/run-webview-theme-tests.mjs`**
   (which scans each panel's real rendered `<style>`, so a violation reintro-
   duced via any shared constant is caught too):
@@ -1434,6 +1441,20 @@ posting synthetic rows into the Log Viewer. Runs at `deviceScaleFactor: 2`
 (HiDPI) specifically because the original bug report that started the
 help-icon-sizing fix (section 5.11's `webviewHelp.ts` note) was about
 illegible text on a high-DPI display.
+
+**`checkLayout` — the things a screenshot cannot show you (v1.8.1).** A
+`fullPage` capture expands the viewport to the document height, which
+composites a `position: sticky` element at the *first* viewport's bottom edge:
+a sticky action bar looks stranded mid-page in the PNG whether it is correct or
+completely broken. Horizontal overflow is equally invisible — it just reads as
+empty margin. So those are measured per panel per theme instead: no horizontal
+overflow, and any `.actions.sticky` must be pinned to the viewport bottom,
+full-bleed, and opaque (hit-testing its own centre has to land inside it).
+Failures go into the same `failures` array as the crash gate. It earned its
+place on the first run by finding `body { width: 100%; padding: 24px }` on
+default content-box sizing — every panel 48px wider than its own viewport, for
+every release up to then. **If you add a layout property that can only be
+verified by measuring, add it here rather than squinting at a PNG.**
 
 **Usage**: `node scripts/render-webviews.mjs && node
 scripts/screenshot-webviews.mjs`, then inspect the PNGs in

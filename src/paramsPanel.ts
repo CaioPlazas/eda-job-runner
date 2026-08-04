@@ -347,7 +347,7 @@ export function renderHtml(
   <button class="secondary" id="addList" type="button" style="margin-top:10px;">+ Add value list</button>
   <button class="secondary" id="refreshAllLists" type="button" style="margin-top:10px;">↻ Refresh all</button>
 
-  <div class="actions">
+  <div class="actions sticky">
     <button class="primary" id="save">Save</button>
     <button class="secondary" id="cancel">Cancel</button>
     <span id="saveOut"></span>
