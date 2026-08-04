@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.6.1 — The sidebar stops repainting while a job runs
+
+**Fixed:**
+- **The job list no longer redraws itself once a second while a job is
+  running.** It did that only to keep the elapsed time in each row ticking,
+  and the constant repaint was far more distracting than the number was
+  useful. A running row now just says `running` and lets its spinner do the
+  talking; nothing in the sidebar moves until a job actually starts or
+  finishes.
+- Where the live numbers went: the **status bar** already shows the running
+  job's elapsed time and error/warning counts and keeps doing so, and
+  **hovering a running row** now shows how long it's been going and how many
+  errors and warnings have been found so far — built at the moment you hover,
+  so it costs nothing when you don't.
+- A collapsed batch group or folder no longer springs back open when a job
+  starts or finishes, and the list no longer loses your selection or scroll
+  position when it does update.
+
 ## 1.6.0 — Save keeps the window open, and a robustness pass
 
 **Changed:**

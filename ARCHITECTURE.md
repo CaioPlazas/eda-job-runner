@@ -612,17 +612,51 @@ both `JobTreeItem` and (partially) `StatusBarController`. `formatDuration`
 (exported) is the shared `m:ss` / `Ns` formatter used by the tree, the
 status bar, and `extension.ts`'s completion toasts.
 
-**Refreshes are gated on the view actually being visible.** `_onDidChangeTreeData`
-is a bare `EventEmitter<void>`, so every fire rebuilds every row (each one
-constructing a `MarkdownString` tooltip), and `jobRunner`'s 1s ticker fires
-continuously while anything runs — so `refresh()` drops the event when
-`TreeView.visible` is false, records `missedRefresh`, and replays one refresh
-on `onDidChangeVisibility`. `activate()` wires this via
-`treeProvider.bindVisibility(treeView, context.subscriptions)` right after
-`createTreeView`, since a provider can't reach its own view. The status bar
-subscribes to `jobRunner.onDidChangeStatus` separately and is unaffected. (The
-"proper" fix — `fire(element)` for just the running rows — needs a cached
-element map and touches drag-and-drop; deliberately not done.)
+**The tree never repaints on a timer.** `_onDidChangeTreeData` is a bare
+`EventEmitter<void>`, so every fire rebuilds every row — which is fine, as
+long as fires are rare. They are, because of one rule enforced in
+`statusText.ts` and its test:
+
+> **A tree row's text must never contain anything that changes on its own.**
+
+A running row reads exactly `running` (or `running (resumed)`/`(detached)`);
+no elapsed time, no in-progress error counts. The `sync~spin` icon is animated
+by VS Code in CSS and needs no refresh at all, so it carries "this is alive"
+by itself. That leaves the tree with nothing to repaint between real state
+transitions, and `JobTreeProvider` therefore subscribes to
+`jobRunner.onDidChangeStatus` (transitions) and **not** to `onDidTick` (the
+1s timer, which exists purely for `statusBar.ts`). Before v1.6.1 the row
+carried elapsed time, which forced a full-tree invalidation every second for
+the entire length of a run — a visible, constant flicker in the sidebar.
+
+Live numbers still exist, in the two places that cost nothing:
+
+- **`statusBar.ts`** — one `StatusBarItem`, repainted on every `onDidTick`,
+  showing the running job's elapsed time and error/warning counts.
+- **`resolveTreeItem(item, element)`** — builds a running row's tooltip *when
+  the user hovers it*, from a freshly-read status (`describeLiveProgress`).
+  This is why `JobTreeItem` leaves `tooltip` **undefined** for a running row:
+  VS Code only resolves properties that are undefined. Every other state keeps
+  the static tooltip built in the constructor.
+
+Three supporting details, all about making the remaining (transition-driven)
+refreshes invisible:
+
+- `refresh()` debounces `REFRESH_DEBOUNCE_MS` (100ms), so a folder run or a
+  repeat-count batch firing several transitions at once redraws once.
+- It also drops the event entirely while `TreeView.visible` is false and
+  replays a single refresh on the way back in (`missedRefresh`).
+- Every row sets a stable `TreeItem.id` — including **lane** rows, which use
+  their `laneKey` (`job.id::runN`); without one, VS Code treats each refresh's
+  lanes as brand-new rows and loses selection/scroll. `JobGroupTreeItem` and
+  `FolderTreeItem` take an `expanded` flag instead of hardcoding
+  `Expanded`, fed from the provider's `collapsed` set, which is maintained
+  from `onDidExpandElement`/`onDidCollapseElement` — otherwise any refresh
+  re-opens a group the user just closed.
+
+`activate()` wires the visibility and expand/collapse listeners via
+`treeProvider.bindView(treeView, context.subscriptions)` right after
+`createTreeView`, since a provider can't reach its own view.
 
 ### 5.6 `logManager.ts` — log file storage, retention, and reads
 
@@ -897,7 +931,15 @@ Three details that each exist because of a specific bug (v1.6.0):
 - **`statusBar.ts`** — `StatusBarController`, mirrors the tree's own
   "a job with lanes is represented by its lanes" model exactly (to avoid
   double-counting or hiding the bar when only a non-primary lane is running
-  — a real bug fixed once already).
+  — a real bug fixed once already). It is the **only** subscriber to
+  `jobRunner.onDidTick`, and so the only thing in the extension that repaints
+  on a timer: one item, no tree churn. This is where a running job's live
+  elapsed time and error/warning counts live now (see 5.5).
+- **`statusText.ts`** — pure: every status→text formatter shared by the tree,
+  the status bar and the completion toasts (`describeStatus`, `countSuffix`,
+  `describeStatusLong`, `describeLiveProgress`, `formatDuration`). Its test
+  (`run-status-text-tests.mjs`) is where 5.5's "a row's text must never move
+  on its own" rule is actually enforced rather than just documented.
 - **`logFollow.ts`** — `LogFollowController`, auto-scrolls an open log
   editor tab to its last line as new output lands, for whichever job was
   most recently told to be "followed" (`eda-job-runner.followLog` command).
@@ -1475,6 +1517,13 @@ bolted on.
 7b. **Charge a budget *before* doing the work it bounds, not after** — see
    5.4.6. A cap computed from the result of an expensive operation documents
    the cost instead of preventing it.
+7d. **Never put anything self-changing into a rendered surface that has to be
+   rebuilt wholesale to update.** A tree row's text, a status string baked
+   into a webview's HTML — if it contains a clock or a counter, keeping it
+   honest means repainting the whole surface on a timer, which the user sees.
+   Put live values where updating is cheap and local (a single status-bar
+   item, a tooltip resolved on hover via `resolveTreeItem`, a targeted DOM
+   patch) and leave the rebuilt surface static. See 5.5 and `statusText.ts`.
 7c. **Any state that can only be left by closing a panel or reloading the
    window is a bug, not an edge case.** The recurring shapes to check for
    when adding code here: a guard flag set before an `await` with no

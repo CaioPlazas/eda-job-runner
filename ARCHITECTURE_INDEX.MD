@@ -85,7 +85,8 @@ and just want a one-line reminder of what it does before opening it.
 | `shellDetect.ts` | Detect VS Code's own integrated-terminal shell |
 | `shellEnvPanel.ts` | Webview: Shell & Environment settings + log retention + clean-all |
 | `shellInvocation.ts` | Pure: per-shell-family argv assembly, `${command}` token, env/var substitution |
-| `statusBar.ts` | Status-bar "job running" indicator |
+| `statusBar.ts` | Status-bar "job running" indicator — the only thing that repaints on a timer |
+| `statusText.ts` | Pure: status→text for the tree/status bar/toasts; enforces "a row's text must not move on its own" |
 | `tailer.ts` | `FileTailer` — polling `tail -f` (used 3 independent places) |
 | `toolIntrospect.ts` | Spawns a tool's `--help` / list-source command, impure half of tool scanning |
 | `toolOptionParser.ts` | Pure: `--help` text → flags, favorites-merge, choices, subcommand detection |

@@ -219,6 +219,17 @@ const REATTACH_READ_CHUNK = 4 * MB;
 const REATTACH_DIAGNOSTICS_INTERVAL_MS = 2000;
 
 export class JobRunner implements vscode.Disposable {
+  /**
+   * Fires once a second while anything is running, purely so a *time-based*
+   * display can repaint itself. Kept separate from `onDidChangeStatus`
+   * (which means "a job actually changed state") because the sidebar tree
+   * must not repaint on a timer: a full tree invalidation once a second, for
+   * as long as a job runs, is a visible constant flicker. Only the status bar
+   * -- a single item, no tree churn -- listens to this.
+   */
+  private readonly _onDidTick = new vscode.EventEmitter<void>();
+  readonly onDidTick = this._onDidTick.event;
+
   private readonly _onDidChangeStatus = new vscode.EventEmitter<string | undefined>();
   readonly onDidChangeStatus = this._onDidChangeStatus.event;
   /**
@@ -1551,7 +1562,7 @@ export class JobRunner implements vscode.Disposable {
         this.tickTimer = undefined;
         return;
       }
-      this._onDidChangeStatus.fire(undefined);
+      this._onDidTick.fire();
     }, 1000);
   }
 
@@ -1590,6 +1601,7 @@ export class JobRunner implements vscode.Disposable {
         }
       }
     }
+    this._onDidTick.dispose();
     this._onDidChangeStatus.dispose();
     this._onDidCompleteBatch.dispose();
     // Running jobs are intentionally left detached and running — closing the
