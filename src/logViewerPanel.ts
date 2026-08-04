@@ -287,7 +287,20 @@ export function renderHtml(webview: vscode.Webview): string {
   }
   table { width: 100%; border-collapse: collapse; margin-top: 6px; }
   th, td { text-align: left; padding: 5px var(--eda-gap-sm); border-bottom: 1px solid var(--vscode-input-border, rgba(127,127,127,0.15)); white-space: nowrap; }
-  th { font-weight: 600; color: var(--vscode-descriptionForeground); font-size: var(--eda-size-sm); }
+  /* A long run history scrolls the column names off the top, and "0 / 2 / 5"
+     across Exit/Errors/Warnings is meaningless without them. box-shadow rather
+     than border-bottom: a sticky cell's own border scrolls away with the row. */
+  th {
+    font-weight: 600;
+    color: var(--vscode-descriptionForeground);
+    font-size: var(--eda-size-sm);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--vscode-editor-background);
+    border-bottom: none;
+    box-shadow: inset 0 -1px 0 var(--vscode-input-border, rgba(127,127,127,0.15));
+  }
   /* A real seed value can be a long random integer -- a fixed minimum keeps it from being squeezed illegibly narrow by wider neighbors like Job/Folder. */
   .seedCol { min-width: 90px; }
   tbody tr { cursor: pointer; }

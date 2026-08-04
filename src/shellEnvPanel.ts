@@ -417,7 +417,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
     max-height: 320px;
     overflow: auto;
   }
-  #saveOut { margin-top: var(--eda-gap-sm); font-size: var(--eda-size-sm); min-height: 1.2em; }
+  #saveOut { font-size: var(--eda-size-sm); min-height: 1.2em; }
   #saveOut.error { color: var(--vscode-errorForeground); }
   #saveOut.ok { color: var(--vscode-charts-green); }
   .pathCheck { margin-top: var(--eda-gap-xs); font-size: var(--eda-size-sm); color: var(--vscode-descriptionForeground); font-family: var(--eda-mono); min-height: 1.2em; }
@@ -506,7 +506,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
     <span>jobs at once</span>
   </div>
 
-  <details class="section" id="logsRetentionDetails">
+  <details class="section card" id="logsRetentionDetails">
     <summary>Logs &amp; retention</summary>
 
     <label for="logsDirectory">Logs directory ${help(
@@ -546,17 +546,17 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
     </div>
   </details>
 
-  <details class="section" id="alsoCheckDetails">
+  <details class="section card" id="alsoCheckDetails">
     <summary>Also check (one command per line)</summary>
     <textarea id="setupChecks" class="mono" spellcheck="false" placeholder="echo \$LM_LICENSE_FILE">${esc(state.setupChecks)}</textarea>
   </details>
 
-  <div class="actions">
+  <div class="actions sticky">
     <button class="primary" id="test">Test Shell Setup</button>
     <button class="secondary" id="save">Save</button>
     <button class="secondary" id="cancel">Cancel</button>
+    <span id="saveOut"></span>
   </div>
-  <div id="saveOut"></div>
   <div id="testOut"></div>
 
   <script nonce="${nonce}">

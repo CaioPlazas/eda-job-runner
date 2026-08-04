@@ -493,7 +493,7 @@ export function renderHtml(
   .optGroupHeading { margin-top: var(--eda-gap); font-weight: 600; font-size: var(--eda-size-sm); color: var(--vscode-descriptionForeground); }
   .allOptsDetails { margin-top: var(--eda-gap); }
   .allOptsDetails summary { cursor: pointer; font-size: var(--eda-size-sm); color: var(--vscode-descriptionForeground); }
-  #optFilter { margin-top: var(--eda-gap); }
+  #optFilter { margin-top: var(--eda-gap); max-width: 320px; }
   .customArgRow { display: flex; gap: 6px; margin-top: var(--eda-gap-sm); align-items: center; flex-wrap: wrap; }
   .customArgRow input { width: auto; flex: 1 1 200px; margin-top: 0; }
   .error {
@@ -507,19 +507,10 @@ export function renderHtml(
     align-self: center;
     font-size: var(--eda-size-sm);
   }
-  /* Panel-local, deliberately not in BASE_CSS: Tool Setup uses <details> for its
-     tool/variant cards, where a shared top border would be wrong. */
-  details {
-    margin-top: var(--eda-gap-xl);
-    padding-top: var(--eda-gap-xs);
-    border-top: 1px solid var(--eda-border);
-  }
-  details summary {
-    cursor: pointer;
-    font-weight: 600;
-    padding: 6px 0;
-  }
-  details[open] summary { margin-bottom: var(--eda-gap-xs); }
+  /* The three top-level sections are BASE_CSS .card details now. This panel's
+     only other <details> is the client-built .allOptsDetails inside a card,
+     which is a plain disclosure and must not be boxed again. */
+  details summary { cursor: pointer; }
   .actions { margin-top: var(--eda-gap-xl); }
   .templateRow { display: flex; gap: var(--eda-gap-sm); align-items: flex-end; margin-top: var(--eda-gap-lg); flex-wrap: wrap; }
   .templateRow > div { flex: 1 1 240px; }
@@ -562,7 +553,7 @@ export function renderHtml(
   <div class="hint" id="builderHint"></div>
   <div class="willRun" id="willRun"></div>
 
-  <details id="toolBuilder" ${job?.toolId ? 'open' : ''}>
+  <details class="card" id="toolBuilder" ${job?.toolId ? 'open' : ''}>
     <summary>Tool builder</summary>
     <label for="toolSelect">Tool ${help(
       'Registered in the <b>Tool Setup</b> panel (wrench icon in the EDA Jobs view). Checking its flags below writes them into the Command field above while this section is expanded — collapse it to hand-edit the Command field instead.'
@@ -595,7 +586,7 @@ export function renderHtml(
     ${globalParams.map(p => `<option value="\${var:${esc(p.name)}}"></option>`).join('')}
   </datalist>
 
-  <details id="paramsSection" ${job?.paramOverrides && Object.keys(job.paramOverrides).length > 0 ? 'open' : hasVarRef ? 'open' : ''}>
+  <details class="card" id="paramsSection" ${job?.paramOverrides && Object.keys(job.paramOverrides).length > 0 ? 'open' : hasVarRef ? 'open' : ''}>
     <summary>Parameters</summary>
     <div class="hint">
       Override a workspace parameter's value for this job only, or add a
@@ -615,7 +606,7 @@ export function renderHtml(
   )}</label>
   <input id="runCount" type="number" min="1" max="1000" step="1" value="${job?.runCount && job.runCount > 1 ? job.runCount : ''}" placeholder="1" />
 
-  <details id="advanced" ${
+  <details class="card" id="advanced" ${
     job?.postSetupCwd ||
     job?.logsDirectory ||
     job?.failPattern ||
@@ -682,7 +673,7 @@ export function renderHtml(
 
   <div class="error" id="error"></div>
 
-  <div class="actions">
+  <div class="actions sticky">
     <button class="primary" id="save">Save</button>
     <button class="secondary" id="cancel">Cancel</button>
     <span class="savedFlash hidden" id="savedFlash">Saved ✓</span>

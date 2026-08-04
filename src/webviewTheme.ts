@@ -68,6 +68,12 @@ export const BASE_CSS = `
     padding: var(--eda-gap-xl);
     max-width: min(1200px, 100%);
     width: 100%;
+    /* Without this, width:100% is the CONTENT box and the 24px padding is added
+       on top of it -- every panel overflowed its viewport horizontally by 48px.
+       Harmless-looking (the overflow is empty), but it means a sticky full-bleed
+       bar can't line up with the viewport, and a narrow panel gets a horizontal
+       scrollbar it has no use for. */
+    box-sizing: border-box;
   }
   h2 { margin-top: 0; }
   label { display: block; margin-top: var(--eda-gap-lg); font-weight: 600; }
@@ -118,4 +124,34 @@ export const BASE_CSS = `
      depths (Tool Setup nests several inside cards) and each keeps its own
      spacing. Sharing the margin here is what made them drift in the first place. */
   .actions { display: flex; gap: var(--eda-gap-sm); align-items: center; flex-wrap: wrap; }
+  /* A page-level action row, opt-in via class="actions sticky". Configure Job's
+     Save sat below ~160 lines of form -- off screen in normal use, on a panel
+     where Save is the whole point and (since v1.6.0) no longer closes the
+     window. Only the ONE bottom row of a panel gets this: Tool Setup nests
+     several .actions inside its tool cards, and those must scroll normally.
+     The negative side margins pull the bar out over body's own padding so
+     content scrolls under it edge to edge rather than peeking down the sides;
+     the negative bottom margin lets it sit flush against the viewport bottom. */
+  .actions.sticky {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    margin: var(--eda-gap-xl) calc(-1 * var(--eda-gap-xl)) calc(-1 * var(--eda-gap-xl));
+    padding: var(--eda-gap) var(--eda-gap-xl);
+    background: var(--vscode-editor-background);
+    border-top: 1px solid var(--eda-border);
+  }
+  /* Section cards. The panels already spoke half a card language -- Tool Setup's
+     .tool and Parameters' .listItem were bordered/rounded boxes while every
+     <details> section was a bare top border -- so this settles it on cards.
+     Opt-in by class because toolSetupPanel's <details> ARE its cards already
+     and must not be double-boxed. */
+  details.card {
+    margin-top: var(--eda-gap-lg);
+    border: 1px solid var(--eda-border);
+    border-radius: var(--eda-radius);
+    padding: 0 var(--eda-gap-lg);
+  }
+  details.card > summary { cursor: pointer; font-weight: 600; padding: var(--eda-gap) 0; }
+  details.card[open] { padding-bottom: var(--eda-gap-lg); }
 `;
