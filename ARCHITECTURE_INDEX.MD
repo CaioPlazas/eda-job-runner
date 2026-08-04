@@ -28,6 +28,8 @@ headings for your topic.
 | Fix **output→parser wiring / parse cap** | `src/jobRunner.ts` (`feedChunk`/`feedLines`), `src/logParser.ts` | §5.4.6, §5.8 |
 | Fix a **post-run command** bug | `src/jobRunner.ts` (`runPostRunCommand`) | §5.4.7 |
 | Fix the **sidebar tree / drag-and-drop** | `src/treeProvider.ts`, `src/jobOrder.ts`, `src/folderOrder.ts` | §5.5 |
+| Change what a **sidebar row shows** (status text, badge, colour) | `src/statusText.ts`, `src/treeDecorations.ts`, `src/treeProvider.ts` | §5.5 — the tree font is VS Code's, not ours |
+| Change **any panel's fonts, sizes, spacing, or colours** | `src/webviewTheme.ts` (`BASE_CSS`) first — never a per-panel copy | §6.1 — the two type rules are test-enforced |
 | Fix **log storage, retention, or reads** | `src/logManager.ts`, `src/logRetention.ts`, `src/logsRoot.ts` | §5.6 |
 | Fix the **Problems panel** | `src/logDiagnostics.ts` | §5.7 |
 | Add support for a **new EDA tool's output format** | `src/logParser.ts` (the one place with tool-specific pattern knowledge) | §5.8 |
@@ -95,9 +97,11 @@ and just want a one-line reminder of what it does before opening it.
 | `toolOptionParser.ts` | Pure: `--help` text → flags, favorites-merge, choices, subcommand detection |
 | `toolSetupPanel.ts` | Webview: register/edit tools, flags, favorites, lists, seed pattern |
 | `toolStore.ts` | Owns `.vscode/eda-tools.json` (load/watch/normalize/persist) |
+| `treeDecorations.ts` | Sidebar row status badges (`FileDecorationProvider`, `eda-job:` scheme) |
 | `treeProvider.ts` | Sidebar `TreeDataProvider` + drag-and-drop controller |
 | `types.ts` | Every shared interface/type — no logic |
 | `webviewHelp.ts` | Shared "(?)" hover-tooltip icon CSS + helper, used by all 5 panels |
+| `webviewTheme.ts` | Pure: `BASE_CSS` — the shared panel stylesheet, type/spacing tokens, the no-fractional-em and mono-is-opt-in rules |
 
 ## Root-level docs → what's in them
 

@@ -22,6 +22,7 @@ import {
   JobTreeProvider,
   formatDuration
 } from './treeProvider';
+import { EdaJobDecorationProvider } from './treeDecorations';
 import { JobDefinition, JobTemplate } from './types';
 import { ToolStore } from './toolStore';
 import { ToolSetupPanel } from './toolSetupPanel';
@@ -66,6 +67,12 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   context.subscriptions.push(treeView);
   treeProvider.bindView(treeView, context.subscriptions);
+
+  // Coloured status badges on each row -- the one full-opacity slot the tree
+  // API offers, since the extension can't change the sidebar's font. See
+  // treeDecorations.ts.
+  const decorations = new EdaJobDecorationProvider(jobRunner);
+  context.subscriptions.push(decorations, vscode.window.registerFileDecorationProvider(decorations));
 
   const statusBar = new StatusBarController(jobStore, jobRunner);
   context.subscriptions.push(statusBar);

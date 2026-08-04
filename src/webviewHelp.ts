@@ -5,11 +5,14 @@
 // out here so all four panels render the same icon, at the same (legible)
 // size, instead of three of them never having gotten it at all.
 //
-// Sizing is fixed-px rather than the original's `em`-relative values: the
-// icon glyph was `0.72em` and the tooltip body `0.85em`, both relative to
-// VS Code's own already-small (~13px) UI font variable -- compounding to
-// sub-11px effective rendering on a high-DPI display with no floor. Fixed
-// pixel sizes here avoid that regardless of the inherited font context.
+// Sizing comes from `webviewTheme.ts`'s tokens rather than the original's
+// `em`-relative values: the icon glyph was `0.72em` and the tooltip body
+// `0.85em`, both relative to VS Code's own already-small (~13px) UI font
+// variable -- compounding to sub-11px effective rendering on a high-DPI
+// display with no floor. This file hit that first and worked around it with
+// hardcoded px; the tokens generalise the fix (they carry a `max()` floor, so
+// they cannot resolve below it whatever font context they inherit) and are now
+// the rule everywhere -- see BASE_CSS's "no fractional-em font sizes".
 
 export const HELP_CSS = `
   .help {
@@ -21,7 +24,7 @@ export const HELP_CSS = `
     border-radius: 50%;
     background: var(--vscode-badge-background, rgba(127,127,127,0.35));
     color: var(--vscode-badge-foreground, var(--vscode-foreground));
-    font-size: 12px;
+    font-size: var(--eda-size-sm);
     font-weight: 700;
     cursor: help;
     margin-left: 6px;
@@ -40,8 +43,8 @@ export const HELP_CSS = `
     background: var(--vscode-editorHoverWidget-background, var(--vscode-input-background));
     color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
     border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-input-border, rgba(127,127,127,0.4)));
-    border-radius: 4px;
-    font-size: 13px;
+    border-radius: var(--eda-radius);
+    font-size: var(--eda-size);
     font-weight: 400;
     line-height: 1.45;
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);

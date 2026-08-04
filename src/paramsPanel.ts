@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
 import { GlobalParam, ValueList } from './types';
+import { BASE_CSS } from './webviewTheme';
 import { HELP_CSS, help } from './webviewHelp';
 import { discoverList } from './toolIntrospect';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
@@ -283,64 +284,28 @@ export function renderHtml(
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
 <title>Parameters &amp; Value Lists</title>
 <style>
-  body {
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    padding: 24px;
-    max-width: min(1200px, 100%);
-    width: 100%;
-  }
-  h2 { margin-top: 14px; }
-  h2:first-child { margin-top: 0; }
+  ${BASE_CSS}
   ${HELP_CSS}
   ${BROWSE_CSS}
   ${SETUP_ERROR_CSS}
-  .paramRow { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+  h2 { margin-top: var(--eda-gap); }
+  h2:first-child { margin-top: 0; }
+  .paramRow { display: flex; gap: 6px; margin-top: var(--eda-gap-sm); align-items: center; flex-wrap: wrap; }
   .paramRow input { width: auto; flex: 1 1 200px; margin: 0; }
   .paramRow .pName { flex: 1 1 220px; }
   .paramRow .pValue { flex: 2 1 320px; }
-  input, select {
-    box-sizing: border-box;
-    padding: 9px 12px;
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent);
-    border-radius: 2px;
-    font-family: var(--vscode-editor-font-family);
-    font-size: var(--vscode-editor-font-size);
-  }
-  option { background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
-  input:focus, select:focus {
-    outline: 1px solid var(--vscode-focusBorder);
-    outline-offset: -1px;
-  }
-  .actions { margin-top: 26px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .actions { margin-top: var(--eda-gap-xl); }
   /* Same inline save feedback the other panels use -- Save keeps this tab open, so it needs to say so itself. */
-  #saveOut { font-size: 0.85em; min-height: 1.2em; }
+  #saveOut { font-size: var(--eda-size-sm); min-height: 1.2em; }
   #saveOut.error { color: var(--vscode-errorForeground); }
   #saveOut.ok { color: var(--vscode-charts-green); }
-  button {
-    padding: 6px 16px;
-    border: 1px solid transparent;
-    border-radius: 2px;
-    cursor: pointer;
-    font-family: var(--vscode-font-family);
-    font-size: var(--vscode-font-size);
-  }
-  button.small { padding: 3px 10px; font-size: 0.85em; }
-  .primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-  .primary:hover { background: var(--vscode-button-hoverBackground); }
-  .secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-  .secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
-  .err { color: var(--vscode-errorForeground); }
-  .hint { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
-  #paramsWrap { margin-top: 14px; }
-  #listsWrap { margin-top: 14px; }
+  #paramsWrap { margin-top: var(--eda-gap); }
+  #listsWrap { margin-top: var(--eda-gap); }
   .listItem {
     margin-top: 10px;
-    padding: 10px 12px;
+    padding: 10px var(--eda-gap);
     border: 1px solid var(--vscode-input-border, rgba(127,127,127,0.25));
-    border-radius: 4px;
+    border-radius: var(--eda-radius);
   }
   .listRow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   .listRow input, .listRow select { width: auto; flex: 1 1 160px; margin: 0; }
@@ -402,13 +367,13 @@ export function renderHtml(
 
       const nameInput = document.createElement('input');
       nameInput.type = 'text';
-      nameInput.className = 'pName';
+      nameInput.className = 'pName mono';
       nameInput.placeholder = 'name (e.g. TESTBENCH_DIR)';
       nameInput.value = name || '';
 
       const valueInput = document.createElement('input');
       valueInput.type = 'text';
-      valueInput.className = 'pValue';
+      valueInput.className = 'pValue mono';
       valueInput.placeholder = 'value';
       valueInput.value = value || '';
 
@@ -517,7 +482,7 @@ export function renderHtml(
 
       const nameInput = document.createElement('input');
       nameInput.type = 'text';
-      nameInput.className = 'lName';
+      nameInput.className = 'lName mono';
       nameInput.placeholder = 'name (e.g. Test)';
       nameInput.value = list.name || '';
       nameInput.disabled = !isNew;
@@ -536,7 +501,7 @@ export function renderHtml(
 
       const sourceInput = document.createElement('input');
       sourceInput.type = 'text';
-      sourceInput.className = 'lSource';
+      sourceInput.className = 'lSource mono';
       sourceInput.placeholder = 'source (command to run, or file path)';
       sourceInput.value = list.command || list.file || '';
       top.appendChild(sourceInput);
@@ -550,14 +515,14 @@ export function renderHtml(
 
       const patternInput = document.createElement('input');
       patternInput.type = 'text';
-      patternInput.className = 'lPattern';
+      patternInput.className = 'lPattern mono';
       patternInput.placeholder = 'pattern (optional regex)';
       patternInput.value = list.pattern || '';
       top.appendChild(patternInput);
 
       const templateInput = document.createElement('input');
       templateInput.type = 'text';
-      templateInput.className = 'lTemplate';
+      templateInput.className = 'lTemplate mono';
       templateInput.placeholder = 'insert template, for an unattached list (default \${value})';
       templateInput.value = list.insertTemplate || '';
       top.appendChild(templateInput);
@@ -586,7 +551,7 @@ export function renderHtml(
       adv.className = 'listAdvanced hidden';
       const scanDirInput = document.createElement('input');
       scanDirInput.type = 'text';
-      scanDirInput.className = 'lScanDir';
+      scanDirInput.className = 'lScanDir mono';
       scanDirInput.placeholder = "scan directory (leave blank to use the workspace's post-setup working directory)";
       scanDirInput.value = list.scanDir || '';
       adv.appendChild(scanDirInput);

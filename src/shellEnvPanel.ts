@@ -6,6 +6,7 @@ import { ToolStore } from './toolStore';
 import { JobRunner } from './jobRunner';
 import { LogManager } from './logManager';
 import { defaultArgsForShell, substituteVars } from './shellInvocation';
+import { BASE_CSS } from './webviewTheme';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
@@ -396,72 +397,33 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
 <title>Shell &amp; Environment</title>
 <style>
-  body {
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    padding: 24px;
-    max-width: min(1200px, 100%);
-    width: 100%;
-  }
-  h2 { margin-top: 0; }
-  label { display: block; margin-top: 18px; font-weight: 600; }
-  input, textarea {
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 6px;
-    padding: 9px 12px;
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent);
-    border-radius: 2px;
-    font-family: var(--vscode-editor-font-family);
-    font-size: var(--vscode-editor-font-size);
-  }
-  input:focus, textarea:focus {
-    outline: 1px solid var(--vscode-focusBorder);
-    outline-offset: -1px;
-  }
-  textarea { min-height: 56px; resize: vertical; white-space: pre; }
-  label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-  label.check input { width: auto; margin-top: 0; }
+  ${BASE_CSS}
   ${HELP_CSS}
   ${BROWSE_CSS}
   ${PROBE_CSS}
-  .row { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
+  textarea { min-height: 56px; white-space: pre; }
+  .row { display: flex; gap: var(--eda-gap-sm); align-items: center; margin-top: var(--eda-gap-lg); }
   .row label { margin-top: 0; }
-  .actions { margin-top: 26px; display: flex; gap: 8px; flex-wrap: wrap; }
-  button {
-    padding: 6px 16px;
-    border: 1px solid transparent;
-    border-radius: 2px;
-    cursor: pointer;
-    font-family: var(--vscode-font-family);
-    font-size: var(--vscode-font-size);
-  }
-  .primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-  .primary:hover { background: var(--vscode-button-hoverBackground); }
-  .secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-  .secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .actions { margin-top: var(--eda-gap-xl); }
   #testOut {
-    margin-top: 12px;
+    margin-top: var(--eda-gap);
     padding: 10px;
     background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.1));
-    border-radius: 3px;
-    font-family: var(--vscode-editor-font-family);
-    font-size: 0.85em;
+    border-radius: var(--eda-radius-sm);
+    font-family: var(--eda-mono);
+    font-size: var(--eda-size-sm);
     white-space: pre-wrap;
     display: none;
     max-height: 320px;
     overflow: auto;
   }
-  #saveOut { margin-top: 8px; font-size: 0.85em; min-height: 1.2em; }
+  #saveOut { margin-top: var(--eda-gap-sm); font-size: var(--eda-size-sm); min-height: 1.2em; }
   #saveOut.error { color: var(--vscode-errorForeground); }
   #saveOut.ok { color: var(--vscode-charts-green); }
-  .pathCheck { margin-top: 4px; font-size: 0.85em; color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); min-height: 1.2em; }
+  .pathCheck { margin-top: var(--eda-gap-xs); font-size: var(--eda-size-sm); color: var(--vscode-descriptionForeground); font-family: var(--eda-mono); min-height: 1.2em; }
   .pathCheck .yes { color: var(--vscode-charts-green); }
   .pathCheck .no { color: var(--vscode-charts-red, var(--vscode-errorForeground)); }
-  .hidden { display: none; }
-  details.section { margin-top: 22px; }
+  details.section { margin-top: var(--eda-gap-xl); }
   details.section summary { cursor: pointer; font-weight: 600; }
 </style>
 </head>
@@ -475,7 +437,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
   <label for="shellPath">Shell path ${help(
     'Shell binary (name on PATH or absolute path), e.g. <code>bash</code>, <code>zsh</code>, <code>tcsh</code>. Provenance: whatever shell your tool already runs correctly under, in a plain terminal.'
   )}</label>
-  <input id="shellPath" type="text" value="${esc(state.shellPath)}" placeholder="bash" />
+  <input id="shellPath" class="mono" type="text" value="${esc(state.shellPath)}" placeholder="bash" />
 
   <label class="check">
     <input id="shellArgsAuto" type="checkbox" ${state.shellArgsAuto ? 'checked' : ''} />
@@ -492,7 +454,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
         '${command}' +
         '</code> where the assembled command should go. If no line contains it, the command is appended as the final argument.'
     )}</label>
-    <textarea id="shellArgs" spellcheck="false">${esc(state.shellArgs)}</textarea>
+    <textarea id="shellArgs" class="mono" spellcheck="false">${esc(state.shellArgs)}</textarea>
   </div>
 
   <label for="env">Environment variables (one <code>KEY=VALUE</code> per line) ${help(
@@ -502,16 +464,16 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       '${env:NAME}' +
       '</code>. Provenance: licence servers, install roots — variables your tool needs exported before it runs.'
   )}</label>
-  <textarea id="env" spellcheck="false" placeholder="LM_LICENSE_FILE=27000@licsrv">${esc(state.env)}</textarea>
+  <textarea id="env" class="mono" spellcheck="false" placeholder="LM_LICENSE_FILE=27000@licsrv">${esc(state.env)}</textarea>
 
   <label for="setupScript">Setup script (sourced before every job) ${help(
     'Relative to the workspace root, or an absolute path. Optional. Provenance: a file you `source` in your terminal before your tool works.'
   )}</label>
-  <input id="setupScript" type="text" value="${esc(state.setupScript)}" placeholder="scripts/env_setup.sh" />
+  <input id="setupScript" class="mono" type="text" value="${esc(state.setupScript)}" placeholder="scripts/env_setup.sh" />
   <div class="pathCheck" id="setupScriptCheck"></div>
 
   <label for="setupCommands">Setup commands (one per line, run before every job)</label>
-  <textarea id="setupCommands" spellcheck="false" placeholder="the commands you run in a terminal before launching your tool">${esc(state.setupCommands)}</textarea>
+  <textarea id="setupCommands" class="mono" spellcheck="false" placeholder="the commands you run in a terminal before launching your tool">${esc(state.setupCommands)}</textarea>
 
   <label for="postSetupCwd">Post-setup working directory ${help(
     "Where a job's shell starts, after its own startup (sourcing " +
@@ -528,7 +490,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       "root, as before. A job can override this individually in its Advanced " +
       'settings.'
   )}</label>
-  <input id="postSetupCwd" type="text" value="${esc(state.postSetupCwd)}" placeholder="e.g. work or \${workspaceFolder}/work" />
+  <input id="postSetupCwd" class="mono" type="text" value="${esc(state.postSetupCwd)}" placeholder="e.g. work or \${workspaceFolder}/work" />
   <div class="pathCheck" id="postSetupCwdCheck"></div>
 
   <label class="check">
@@ -555,7 +517,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
         '${env:NAME}' +
         '</code>. Leave blank to keep the default. A job can override this individually in its Advanced settings.'
     )}</label>
-    <input id="logsDirectory" type="text" value="${esc(state.logsDirectory)}" placeholder=".eda-runner/logs (default)" />
+    <input id="logsDirectory" class="mono" type="text" value="${esc(state.logsDirectory)}" placeholder=".eda-runner/logs (default)" />
     <div class="pathCheck" id="logsDirectoryCheck"></div>
 
     <label class="check">
@@ -586,7 +548,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
 
   <details class="section" id="alsoCheckDetails">
     <summary>Also check (one command per line)</summary>
-    <textarea id="setupChecks" spellcheck="false" placeholder="echo \$LM_LICENSE_FILE">${esc(state.setupChecks)}</textarea>
+    <textarea id="setupChecks" class="mono" spellcheck="false" placeholder="echo \$LM_LICENSE_FILE">${esc(state.setupChecks)}</textarea>
   </details>
 
   <div class="actions">

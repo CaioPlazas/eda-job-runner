@@ -115,7 +115,7 @@ function escapeRegExp(s: string): string {
 }
 
 export const PROBE_CSS = `
-  .probeResult { margin-top: 6px; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; white-space: pre-wrap; }
+  .probeResult { margin-top: 6px; font-family: var(--vscode-editor-font-family, monospace); font-size: var(--eda-size-sm); white-space: pre-wrap; }
   .probeResult .ok { color: var(--vscode-charts-green); }
   .probeResult .fail { color: var(--vscode-charts-red, var(--vscode-errorForeground)); }
   .probeResult .muted { color: var(--vscode-descriptionForeground); }

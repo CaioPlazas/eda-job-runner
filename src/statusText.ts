@@ -57,6 +57,36 @@ export function describeStatus(status: StatusLike): string {
   }
 }
 
+/**
+ * The tree row's version of `describeStatus`, and the only one the sidebar
+ * uses. Shorter on purpose.
+ *
+ * VS Code renders `TreeItem.description` both smaller than the label *and* at
+ * reduced opacity -- it is the least legible text the extension puts on screen,
+ * and it was carrying the most important information (`★ default · passed
+ * (1:23) · 2✗`), long enough to be ellipsized in a narrow sidebar. Pass/fail is
+ * now carried by a full-opacity coloured badge instead (`treeDecorations.ts`)
+ * and the counts by the hover tooltip (`describeStatusLong`), so this can drop
+ * to one short segment: `running`, `passed 1:23`, `exit 1`, `killed`.
+ *
+ * Subject to the same invariant as `describeStatus`: a pure function of
+ * `status`, no clock, nothing that moves on its own. See this module's header.
+ */
+export function describeStatusShort(status: StatusLike): string {
+  switch (status.state) {
+    case 'running':
+      return status.reattached ? 'running (resumed)' : status.detached ? 'running (detached)' : 'running';
+    case 'passed':
+      return `passed ${formatDuration((status.endTime ?? 0) - (status.startTime ?? 0))}`;
+    case 'failed':
+      return status.exitCode === 0 && (status.errorCount ?? 0) > 0 ? 'log errors' : `exit ${status.exitCode ?? '?'}`;
+    case 'killed':
+      return 'killed';
+    default:
+      return '';
+  }
+}
+
 /** " · 2✗ 1⚠" style suffix, omitting zero counts. Only ever used for a finished run, whose counts are final. */
 export function countSuffix(status: StatusLike): string {
   const errs = status.errorCount ?? 0;

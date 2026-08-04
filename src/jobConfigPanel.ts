@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
 import { ToolStore } from './toolStore';
 import { GlobalParam, JobDefinition, JobTemplate, ToolDefinition, ValueList } from './types';
+import { BASE_CSS } from './webviewTheme';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
@@ -453,118 +454,74 @@ export function renderHtml(
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
 <title>${job ? 'Configure Job' : 'Add Job'}</title>
 <style>
-  body {
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    padding: 24px;
-    max-width: min(1200px, 100%);
-    width: 100%;
-  }
-  h2 { margin-top: 0; }
-  label { display: block; margin-top: 18px; font-weight: 600; }
-  input, textarea, select {
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 6px;
-    padding: 9px 12px;
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent);
-    border-radius: 2px;
-    font-family: var(--vscode-editor-font-family);
-    font-size: var(--vscode-editor-font-size);
-  }
-  input:focus, textarea:focus, select:focus {
-    outline: 1px solid var(--vscode-focusBorder);
-    outline-offset: -1px;
-  }
-  option { background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
-  textarea { min-height: 64px; resize: vertical; }
-  label.check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 600;
-  }
-  label.check input {
-    width: auto;
-    margin-top: 0;
-  }
-  .hidden { display: none; }
+  ${BASE_CSS}
   ${HELP_CSS}
   ${BROWSE_CSS}
-  .willRun { margin-top: 8px; padding: 8px 10px; border-radius: 3px; background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.1)); font-size: 0.85em; }
-  .willRun .row { display: flex; gap: 8px; margin-top: 2px; }
+  textarea { min-height: 64px; }
+  .willRun { margin-top: var(--eda-gap-sm); padding: var(--eda-gap-sm) 10px; border-radius: var(--eda-radius-sm); background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.1)); font-size: var(--eda-size-sm); }
+  /* The preview is emptied (innerHTML = '') whenever there's no command to
+     preview -- an Add Job form before anything is typed, for one. Without this
+     the still-padded, still-backgrounded box renders as a stray dark bar under
+     the Command field. */
+  .willRun:empty { display: none; }
+  .willRun .row { display: flex; gap: var(--eda-gap-sm); margin-top: 2px; }
   .willRun .row .k { flex: 0 0 46px; color: var(--vscode-descriptionForeground); }
-  .willRun .row .v { font-family: var(--vscode-editor-font-family); white-space: pre-wrap; word-break: break-all; }
+  .willRun .row .v { font-family: var(--eda-mono); white-space: pre-wrap; word-break: break-all; }
   .willRun .yes { color: var(--vscode-charts-green); }
   .willRun .no { color: var(--vscode-charts-red, var(--vscode-errorForeground)); }
   .willRun .actions { margin-top: 6px; }
-  .willRun .actions button { padding: 2px 10px; font-size: 0.85em; }
-  .optRow { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  /* --eda-size-sm, not another fractional em: this button sits inside .willRun,
+     which is already --eda-size-sm, so a relative size would compound to ~9px. */
+  .willRun .actions button { padding: 2px 10px; font-size: var(--eda-size-sm); }
+  .optRow { display: flex; align-items: center; gap: 6px; margin-top: var(--eda-gap-sm); flex-wrap: wrap; }
   .optRow label.check { font-weight: 400; flex: 1 1 auto; min-width: 200px; }
   .optRow .optValue { width: auto; flex: 0 1 160px; margin-top: 0; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
-  .optRow .advToggle { flex: 0 0 auto; padding: 4px 8px; font-size: 0.85em; }
+  .optRow .advToggle { flex: 0 0 auto; padding: var(--eda-gap-xs) var(--eda-gap-sm); font-size: var(--eda-size-sm); }
   .optAdvanced { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0 0 26px; }
   .optAdvanced.hidden { display: none; }
-  .optAdvanced .listSourceSelect { width: auto; flex: 0 0 auto; margin-top: 0; padding: 4px 8px; font-size: 0.85em; }
+  .optAdvanced .listSourceSelect { width: auto; flex: 0 0 auto; margin-top: 0; padding: var(--eda-gap-xs) var(--eda-gap-sm); font-size: var(--eda-size-sm); }
   .paramOverrideRow .poName { font-weight: 600; }
   .paramOverrideRow .poNameInput { width: auto; flex: 0 1 180px; margin-top: 0; font-weight: 400; }
   .paramOverrideRow .poValue { width: auto; flex: 0 1 220px; margin-top: 0; }
-  .listRow { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .listRow { display: flex; align-items: center; gap: 6px; margin-top: var(--eda-gap-sm); flex-wrap: wrap; }
   .listRow > label { font-weight: 400; margin-top: 0; flex: 1 1 auto; min-width: 200px; }
   .listRow .listValue { width: auto; flex: 0 1 200px; margin-top: 0; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
-  .listRow .tmplBtn { flex: 0 0 auto; padding: 4px 8px; }
-  .listRow .listTemplate { flex: 1 1 100%; margin-top: 4px; }
-  .listGroupHeading { margin-top: 14px; font-weight: 600; font-size: 0.85em; color: var(--vscode-descriptionForeground); text-transform: uppercase; letter-spacing: 0.04em; }
+  .listRow .tmplBtn { flex: 0 0 auto; padding: var(--eda-gap-xs) var(--eda-gap-sm); }
+  .listRow .listTemplate { flex: 1 1 100%; margin-top: var(--eda-gap-xs); }
+  .listGroupHeading { margin-top: var(--eda-gap); font-weight: 600; font-size: var(--eda-size-sm); color: var(--vscode-descriptionForeground); }
   #builderHint { min-height: 1.2em; }
-  .optGroupHeading { margin-top: 14px; font-weight: 600; font-size: 0.85em; color: var(--vscode-descriptionForeground); text-transform: uppercase; letter-spacing: 0.04em; }
-  .allOptsDetails { margin-top: 14px; }
-  .allOptsDetails summary { cursor: pointer; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
-  #optFilter { margin-top: 14px; }
-  .customArgRow { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+  .optGroupHeading { margin-top: var(--eda-gap); font-weight: 600; font-size: var(--eda-size-sm); color: var(--vscode-descriptionForeground); }
+  .allOptsDetails { margin-top: var(--eda-gap); }
+  .allOptsDetails summary { cursor: pointer; font-size: var(--eda-size-sm); color: var(--vscode-descriptionForeground); }
+  #optFilter { margin-top: var(--eda-gap); }
+  .customArgRow { display: flex; gap: 6px; margin-top: var(--eda-gap-sm); align-items: center; flex-wrap: wrap; }
   .customArgRow input { width: auto; flex: 1 1 200px; margin-top: 0; }
-  .hint {
-    font-size: 0.85em;
-    color: var(--vscode-descriptionForeground);
-    margin-top: 4px;
-  }
   .error {
     color: var(--vscode-errorForeground);
-    margin-top: 14px;
+    margin-top: var(--eda-gap);
     min-height: 1.2em;
-    font-size: 0.9em;
+    font-size: var(--eda-size-sm);
   }
   .savedFlash {
     color: var(--vscode-terminal-ansiGreen, #89d185);
     align-self: center;
-    font-size: 0.9em;
+    font-size: var(--eda-size-sm);
   }
+  /* Panel-local, deliberately not in BASE_CSS: Tool Setup uses <details> for its
+     tool/variant cards, where a shared top border would be wrong. */
   details {
-    margin-top: 22px;
-    padding-top: 4px;
-    border-top: 1px solid var(--vscode-input-border, rgba(127,127,127,0.3));
+    margin-top: var(--eda-gap-xl);
+    padding-top: var(--eda-gap-xs);
+    border-top: 1px solid var(--eda-border);
   }
   details summary {
     cursor: pointer;
     font-weight: 600;
     padding: 6px 0;
   }
-  details[open] summary { margin-bottom: 4px; }
-  .actions { margin-top: 26px; display: flex; gap: 8px; align-items: center; }
-  button {
-    padding: 6px 16px;
-    border: 1px solid transparent;
-    border-radius: 2px;
-    cursor: pointer;
-    font-family: var(--vscode-font-family);
-    font-size: var(--vscode-font-size);
-  }
-  .primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-  .primary:hover { background: var(--vscode-button-hoverBackground); }
-  .secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-  .secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
-  .templateRow { display: flex; gap: 8px; align-items: flex-end; margin-top: 18px; flex-wrap: wrap; }
+  details[open] summary { margin-bottom: var(--eda-gap-xs); }
+  .actions { margin-top: var(--eda-gap-xl); }
+  .templateRow { display: flex; gap: var(--eda-gap-sm); align-items: flex-end; margin-top: var(--eda-gap-lg); flex-wrap: wrap; }
   .templateRow > div { flex: 1 1 240px; }
   .templateRow button { flex: 0 0 auto; }
 </style>
@@ -601,7 +558,7 @@ export function renderHtml(
   <label for="command">Command ${help(
     'Shell command to run. Runs via the configured shell (bash login shell by default; see the Shell &amp; Environment panel), so module load / sourced environment setup is available.<br /><br />Optional placeholders: <code>${param:NAME}</code> (or <code>${param:NAME=default}</code>) prompts for a value on every Run, remembering what you last entered; <code>${randomSeed}</code> fills in a fresh random integer on every run with no prompt. "Re-run Last" on an already-run job replays its exact previous values/seed with no new prompt.'
   )}</label>
-  <textarea id="command" placeholder="e.g. make sim TEST=smoke_test">${esc(job?.command ?? '')}</textarea>
+  <textarea id="command" class="mono" placeholder="e.g. make sim TEST=smoke_test">${esc(job?.command ?? '')}</textarea>
   <div class="hint" id="builderHint"></div>
   <div class="willRun" id="willRun"></div>
 
@@ -651,7 +608,7 @@ export function renderHtml(
   </details>
 
   <label for="cwd">Working Directory ${help('Relative to the workspace root. Use "." for the root itself.')}</label>
-  <input id="cwd" type="text" value="${esc(job?.cwd ?? '.')}" placeholder="." />
+  <input id="cwd" class="mono" type="text" value="${esc(job?.cwd ?? '.')}" placeholder="." />
 
   <label for="runCount">Repeat count (sequential) ${help(
     'Run this job this many times in a row when you click Run — e.g. 10 back-to-back runs of the same test with a random seed. Always sequential (never in parallel), regardless of the experimental multiple-jobs setting. Leave empty (or 1) for a normal single run.'
@@ -675,7 +632,7 @@ export function renderHtml(
     <label for="logFile">Live log file to tail (optional) ${help(
       'For jobs that detach to a farm (LSF <code>bsub -o</code> / SGE <code>qsub -o</code>) or write their own log: point the <b>Live Log</b> viewer at that file so it streams the real output in real time. Absolute, or relative to the working directory; supports <code>${workspaceFolder}</code>. Leave empty to tail the captured output.'
     )}</label>
-    <input id="logFile" type="text" value="${esc(job?.logFile ?? '')}" placeholder="e.g. run.log or \${workspaceFolder}/lsf.%J.out" />
+    <input id="logFile" class="mono" type="text" value="${esc(job?.logFile ?? '')}" placeholder="e.g. run.log or \${workspaceFolder}/lsf.%J.out" />
 
     <label class="check">
       <input id="isDefault" type="checkbox" ${job?.default ? 'checked' : ''} />
@@ -696,22 +653,22 @@ export function renderHtml(
     <label for="postSetupCwd">Post-setup working directory (override) ${help(
       'Overrides <code>eda-job-runner.postSetupCwd</code> (Shell &amp; Environment panel) for this job only — the directory its shell starts in, which <b>Working Directory</b> above then resolves against. Leave empty to inherit the workspace-wide setting.'
     )}</label>
-    <input id="postSetupCwd" type="text" value="${esc(job?.postSetupCwd ?? '')}" placeholder="inherit from Shell & Environment settings" />
+    <input id="postSetupCwd" class="mono" type="text" value="${esc(job?.postSetupCwd ?? '')}" placeholder="inherit from Shell & Environment settings" />
 
     <label for="logsDirectory">Logs directory (override) ${help(
       'Overrides <code>eda-job-runner.logsDirectory</code> (Shell &amp; Environment panel) for this job only. Leave empty to inherit the workspace-wide setting.'
     )}</label>
-    <input id="logsDirectory" type="text" value="${esc(job?.logsDirectory ?? '')}" placeholder="inherit from Shell & Environment settings" />
+    <input id="logsDirectory" class="mono" type="text" value="${esc(job?.logsDirectory ?? '')}" placeholder="inherit from Shell & Environment settings" />
 
     <label for="failPattern">Fail pattern (regex, optional) ${help(
       'Tool-agnostic: case-insensitive regex matched against each output line, for a tool whose own pass/fail summary line the built-in patterns don’t cover. If it matches, the job is marked <b>failed</b> even if it exited 0 — works even with "Scan output" above off. An invalid regex is silently ignored (no error), same as leaving it blank.'
     )}</label>
-    <input id="failPattern" type="text" value="${esc(job?.failPattern ?? '')}" placeholder="e.g. TEST RESULT:\s*FAIL" />
+    <input id="failPattern" class="mono" type="text" value="${esc(job?.failPattern ?? '')}" placeholder="e.g. TEST RESULT:\s*FAIL" />
 
     <label for="passPattern">Pass pattern (regex, optional) ${help(
       'Tool-agnostic, like Fail pattern above. When set, it fully governs the outcome: the job passes only if this matches at least once (ignoring exit code — for tools that always exit non-zero even on success) and is marked <b>failed</b> if it never appears. A matching Fail pattern still wins over this.'
     )}</label>
-    <input id="passPattern" type="text" value="${esc(job?.passPattern ?? '')}" placeholder="e.g. TEST RESULT:\s*PASS" />
+    <input id="passPattern" class="mono" type="text" value="${esc(job?.passPattern ?? '')}" placeholder="e.g. TEST RESULT:\s*PASS" />
 
     <label class="check">
       <input id="postRunEnabled" type="checkbox" ${job?.postRunEnabled ? 'checked' : ''} />
@@ -720,7 +677,7 @@ export function renderHtml(
         'Runs once per completed lane after the job passes or fails — skipped for a Stopped run. Uses the same shell/setup chain and working directory as the job itself. A nonzero exit or launch failure only shows a warning notification; it never changes this job\'s own result.'
       )}
     </label>
-    <input id="postRunCommand" type="text" value="${esc(job?.postRunCommand ?? '')}" placeholder="e.g. notify-send done || true" ${job?.postRunEnabled ? '' : 'disabled'} />
+    <input id="postRunCommand" class="mono" type="text" value="${esc(job?.postRunCommand ?? '')}" placeholder="e.g. notify-send done || true" ${job?.postRunEnabled ? '' : 'disabled'} />
   </details>
 
   <div class="error" id="error"></div>
@@ -878,7 +835,7 @@ export function renderHtml(
       } else {
         nameEl = document.createElement('input');
         nameEl.type = 'text';
-        nameEl.className = 'poName poNameInput';
+        nameEl.className = 'poName poNameInput mono';
         nameEl.placeholder = 'name';
         nameEl.value = name || '';
       }
@@ -887,7 +844,7 @@ export function renderHtml(
 
       const valueInput = document.createElement('input');
       valueInput.type = 'text';
-      valueInput.className = 'poValue';
+      valueInput.className = 'poValue mono';
       valueInput.placeholder = isGlobal ? (globalParamValue(name) || '(no global default)') : 'value';
       valueInput.value = value || '';
       valueInput.disabled = !checkbox.checked;
@@ -1026,7 +983,7 @@ export function renderHtml(
         const buildFree = value => {
           const el = document.createElement('input');
           el.type = 'text';
-          el.className = 'optValue';
+          el.className = 'optValue mono';
           el.placeholder = choices ? '\${var:NAME}' : opt.metavar;
           el.setAttribute('list', 'varOptions');
           if (value) { el.value = value; }
@@ -1230,7 +1187,7 @@ export function renderHtml(
 
       const tmplInput = document.createElement('input');
       tmplInput.type = 'text';
-      tmplInput.className = 'listTemplate hidden';
+      tmplInput.className = 'listTemplate mono hidden';
       tmplInput.value = row.dataset.template;
       tmplInput.placeholder = '\${value}';
       tmplInput.setAttribute('list', 'varOptions');
@@ -1272,13 +1229,13 @@ export function renderHtml(
 
       const argInput = document.createElement('input');
       argInput.type = 'text';
-      argInput.className = 'caArg';
+      argInput.className = 'caArg mono';
       argInput.placeholder = 'argument (e.g. --plusarg or +define)';
       argInput.value = arg || '';
 
       const valInput = document.createElement('input');
       valInput.type = 'text';
-      valInput.className = 'caVal';
+      valInput.className = 'caVal mono';
       valInput.placeholder = 'value (optional)';
       valInput.setAttribute('list', 'varOptions');
       valInput.value = value || '';

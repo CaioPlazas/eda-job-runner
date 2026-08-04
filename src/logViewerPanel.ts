@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { BASE_CSS } from './webviewTheme';
 import { JobStore } from './jobStore';
 import { LogManager, readFully } from './logManager';
 import { ToolStore } from './toolStore';
@@ -246,79 +247,54 @@ export function renderHtml(webview: vscode.Webview): string {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
 <title>Log Viewer</title>
 <style>
-  body {
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    padding: 24px;
-    max-width: min(1600px, 100%);
-    width: 100%;
-  }
-  h2 { margin-top: 0; }
-  .hint {
-    font-size: 0.85em;
-    color: var(--vscode-descriptionForeground);
-    margin-top: 4px;
-  }
+  ${BASE_CSS}
+  body { max-width: min(1600px, 100%); }
+  /* This panel is a toolbar of side-by-side filters, not a stacked form: it
+     needs BASE_CSS's shared field styling but none of its full-width/stacked
+     layout, so both are reset here rather than being omitted from the shared
+     sheet the other four panels do want them from. */
+  input, select { width: auto; margin-top: 0; padding: 6px var(--eda-gap-sm); }
+  label { margin-top: 0; }
   .toolbar {
     display: flex;
-    gap: 14px;
+    gap: var(--eda-gap);
     flex-wrap: wrap;
     align-items: flex-end;
-    margin-top: 14px;
-    padding-bottom: 14px;
-    border-bottom: 1px solid var(--vscode-input-border, rgba(127,127,127,0.3));
+    margin-top: var(--eda-gap);
+    padding-bottom: var(--eda-gap);
+    border-bottom: 1px solid var(--eda-border);
   }
-  .field { display: flex; flex-direction: column; gap: 4px; }
-  .field label { font-size: 0.8em; font-weight: 600; color: var(--vscode-descriptionForeground); }
-  input, select {
-    box-sizing: border-box;
-    padding: 6px 8px;
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent);
-    border-radius: 2px;
-    font-family: var(--vscode-editor-font-family);
-    font-size: var(--vscode-editor-font-size);
-  }
+  .field { display: flex; flex-direction: column; gap: var(--eda-gap-xs); }
+  .field label { font-size: var(--eda-size-sm); font-weight: 600; color: var(--vscode-descriptionForeground); }
   select[multiple] { min-width: 160px; min-height: 60px; }
   .statusChecks { display: flex; gap: 10px; flex-wrap: wrap; }
-  .statusChecks label { display: flex; align-items: center; gap: 4px; font-weight: 400; font-size: 0.9em; }
+  .statusChecks label { display: flex; align-items: center; gap: var(--eda-gap-xs); font-weight: 400; }
   .statusChecks input { width: auto; margin: 0; }
   #seedFilter { width: 140px; }
   .dateField input { width: 150px; }
-  .searchRow { display: flex; gap: 8px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+  .searchRow { display: flex; gap: var(--eda-gap-sm); align-items: center; margin-top: var(--eda-gap); flex-wrap: wrap; }
   #searchQuery { flex: 1 1 320px; min-width: 200px; }
-  #searchStatus { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
-  button {
-    padding: 6px 16px;
-    border: 1px solid transparent;
-    border-radius: 2px;
-    cursor: pointer;
-    font-family: var(--vscode-font-family);
-    font-size: var(--vscode-font-size);
-  }
-  .primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-  .primary:hover { background: var(--vscode-button-hoverBackground); }
-  .secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-  .secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  #searchStatus { font-size: var(--eda-size-sm); color: var(--vscode-descriptionForeground); }
   details {
-    margin-top: 18px;
-    padding-top: 4px;
-    border-top: 1px solid var(--vscode-input-border, rgba(127,127,127,0.3));
+    margin-top: var(--eda-gap-lg);
+    padding-top: var(--eda-gap-xs);
+    border-top: 1px solid var(--eda-border);
   }
   details summary {
     cursor: pointer;
     font-weight: 600;
     padding: 6px 0;
   }
-  table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 0.9em; }
-  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--vscode-input-border, rgba(127,127,127,0.15)); white-space: nowrap; }
-  th { font-weight: 600; color: var(--vscode-descriptionForeground); font-size: 0.85em; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  th, td { text-align: left; padding: 5px var(--eda-gap-sm); border-bottom: 1px solid var(--vscode-input-border, rgba(127,127,127,0.15)); white-space: nowrap; }
+  th { font-weight: 600; color: var(--vscode-descriptionForeground); font-size: var(--eda-size-sm); }
   /* A real seed value can be a long random integer -- a fixed minimum keeps it from being squeezed illegibly narrow by wider neighbors like Job/Folder. */
   .seedCol { min-width: 90px; }
   tbody tr { cursor: pointer; }
   tbody tr:hover { background: var(--vscode-list-hoverBackground); }
-  .badge { padding: 2px 8px; border-radius: 10px; font-size: 0.82em; font-weight: 600; }
+  /* The status column is the most-read cell in this table and used to be its
+     least legible text: a 0.9em table containing a 0.82em badge resolved to ~9.6px. */
+  .badge { padding: 2px var(--eda-gap-sm); border-radius: 10px; font-size: var(--eda-size-xs); font-weight: 600; }
   .badge-passed { background: rgba(137,209,133,0.2); color: var(--vscode-terminal-ansiGreen, #89d185); }
   .badge-failed { background: rgba(224,108,117,0.2); color: var(--vscode-terminal-ansiRed, #e06c75); }
   .badge-killed { background: rgba(224,178,108,0.2); color: var(--vscode-terminal-ansiYellow, #e0b26c); }
@@ -356,7 +332,7 @@ export function renderHtml(webview: vscode.Webview): string {
     </div>
     <div class="field">
       <label for="seedFilter">Seed contains</label>
-      <input id="seedFilter" type="text" placeholder="e.g. 12345" />
+      <input id="seedFilter" class="mono" type="text" placeholder="e.g. 12345" />
     </div>
     <div class="field dateField">
       <label for="dateFrom">From</label>
@@ -377,7 +353,7 @@ export function renderHtml(webview: vscode.Webview): string {
   </div>
 
   <div class="searchRow">
-    <input id="searchQuery" type="text" placeholder="Search log contents (e.g. UVM_ERROR) — searches the currently filtered logs" />
+    <input id="searchQuery" class="mono" type="text" placeholder="Search log contents (e.g. UVM_ERROR) — searches the currently filtered logs" />
     <button class="primary" id="searchBtn" type="button">Search</button>
     <button class="secondary" id="clearSearch" type="button">Clear search</button>
     <span id="searchStatus"></span>

@@ -2,7 +2,7 @@
   "name": "eda-job-runner",
   "displayName": "EDA Job Runner",
   "description": "Tool-agnostic sidebar for running and tracking EDA compile/simulation jobs (Xcelium, Questa, or any custom script) without leaving VS Code.",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "publisher": "CaioPlazas",
   "license": "GPL-3.0",
   "icon": "media/icon.png",
@@ -14,26 +14,6 @@
     "url": "https://github.com/CaioPlazas/eda-job-runner/issues"
   },
   "homepage": "https://github.com/CaioPlazas/eda-job-runner#readme",
-  "galleryBanner": {
-    "color": "#0d3b66",
-    "theme": "dark"
-  },
-  "keywords": [
-    "eda",
-    "verilog",
-    "systemverilog",
-    "vhdl",
-    "rtl",
-    "asic",
-    "fpga",
-    "simulation",
-    "uvm",
-    "questa",
-    "dsim",
-    "icarus",
-    "verilator",
-    "xcelium"
-  ],
   "engines": {
     "vscode": "^1.74.0"
   },
@@ -649,6 +629,11 @@
           },
           "default": [],
           "markdownDescription": "Extra commands to run (through the same shell setup as every job) each time you click **Test Shell Setup** in the Shell & Environment panel — e.g. a license-server check or a `which` for a tool not yet registered. Managed from that panel's *Also check* field; rarely worth hand-editing here."
+        },
+        "eda-job-runner.sidebarBadges": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a coloured status badge (✓ ✗ ■ ▶) on each row in the **EDA Jobs** sidebar. The badge renders at full opacity, unlike the dimmer status text next to it, so a run's outcome stays readable at a glance. Turn this off to go back to plain rows with no badge."
         }
       }
     }
@@ -670,5 +655,25 @@
     "jsdom": "^29.1.1",
     "playwright-core": "^1.61.1",
     "typescript": "^5.5.0"
-  }
+  },
+  "galleryBanner": {
+    "color": "#0d3b66",
+    "theme": "dark"
+  },
+  "keywords": [
+    "eda",
+    "verilog",
+    "systemverilog",
+    "vhdl",
+    "rtl",
+    "asic",
+    "fpga",
+    "simulation",
+    "uvm",
+    "questa",
+    "dsim",
+    "icarus",
+    "verilator",
+    "xcelium"
+  ]
 }

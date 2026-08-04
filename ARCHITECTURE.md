@@ -639,10 +639,39 @@ folder reordering via one shared MIME type
 dispatch on `kind` and delegate the actual array math to `JobStore`'s
 `reorderJob`/`reorderFolder` (which in turn delegate to the pure
 `jobOrder.ts`/`folderOrder.ts`). `iconForState`/`describeStatus`/
-`countSuffix`/`describeStatusLong` are the status→icon/text mapping used by
-both `JobTreeItem` and (partially) `StatusBarController`. `formatDuration`
-(exported) is the shared `m:ss` / `Ns` formatter used by the tree, the
-status bar, and `extension.ts`'s completion toasts.
+`describeStatusShort`/`countSuffix`/`describeStatusLong` are the status→icon/
+text mapping used by both `JobTreeItem` and (partially) `StatusBarController`.
+`formatDuration` (exported) is the shared `m:ss` / `Ns` formatter used by the
+tree, the status bar, and `extension.ts`'s completion toasts.
+
+**The sidebar's font is not ours; the slot the status lives in is.** VS Code
+owns the tree font and exposes no API or theme variable for it, so nothing here
+can make a row's text bigger. What it *can* do is stop putting the most
+important information in the worst slot: `TreeItem.description` renders both
+smaller than the label and at reduced opacity, and it was carrying
+`★ default · passed (1:23) · 2✗` — long enough to be ellipsized in a narrow
+sidebar, at the lowest contrast on screen. Two changes, both v1.8.0:
+
+- `describeStatusShort` (`statusText.ts`) is what the tree uses now — one short
+  segment (`running`, `passed 1:23`, `exit 1`, `killed`), no count suffix.
+  `describeStatus` keeps its longer form for the status bar and toasts.
+- `treeDecorations.ts`'s `EdaJobDecorationProvider` puts a one-character badge
+  (`✓ ✗ ■ ▶`) in a `ThemeColor` on each row via `FileDecorationProvider` — the
+  one full-opacity slot the tree API offers. Rows opt in by setting
+  `resourceUri` to `eda-job:<laneKey>`, a synthetic scheme this extension owns
+  and matches on, so no other provider's files are ever decorated. `iconPath`
+  stays set on every row, which is what stops the file-icon theme claiming the
+  icon once a `resourceUri` is present. The badge colours mirror `iconForState`
+  and **must stay in step with it** or a row's icon and badge will disagree.
+  Gated by `eda-job-runner.sidebarBadges` (default on): when off, rows omit
+  `resourceUri` entirely rather than merely returning no decoration, so the row
+  returns to exactly its pre-badge rendering. Both the provider and the tree
+  listen for that setting changing — the provider re-fires, and the tree
+  refreshes, because whether a row carries a `resourceUri` at all is decided in
+  its constructor.
+
+Like the tree, the decoration provider subscribes to `onDidChangeStatus` and
+**not** `onDidTick`: a badge is a function of state alone (see below).
 
 **The tree never repaints on a timer.** `_onDidChangeTreeData` is a bare
 `EventEmitter<void>`, so every fire rebuilds every row — which is fine, as
@@ -1020,6 +1049,31 @@ signature was made `export`able specifically to support that.
   properties for full theme compliance (never hardcoded colors except as
   a documented fallback, e.g. `var(--vscode-badge-background,
   rgba(127,127,127,0.35))`). `HELP_CSS` (5.11) is always concatenated in.
+- **`BASE_CSS` (`src/webviewTheme.ts`) is interpolated FIRST**, ahead of the
+  panel's own rules and the other shared constants. It owns the body/input/
+  button/hint/actions rules that used to be copy-pasted into all five panels
+  and had drifted (input padding `9px 12px` vs `6px 8px`, label rhythm 18px vs
+  14px, three border radii, two different `button.small` sizes). Everything in
+  it is written to be overridden by a later same-specificity rule — putting it
+  last silently clobbers panel layout. It deliberately does **not** style bare
+  `<details>`: `toolSetupPanel` uses `<details>` for its tool/variant cards,
+  where a shared top border would be wrong, so each panel keeps its own.
+- **Two type rules, enforced by `test-fixtures/run-webview-theme-tests.mjs`**
+  (which scans each panel's real rendered `<style>`, so a violation reintro-
+  duced via any shared constant is caught too):
+  1. **No fractional-`em` font sizes.** Use `--eda-size` / `--eda-size-sm` /
+     `--eda-size-xs`. Nested `em` values *multiply*: `.willRun {0.85em}` around
+     a `button {0.85em}` was ~9.4px, and the Log Viewer's status badge
+     (`table {0.9em}` × `.badge {0.82em}`) ~9.6px, against a 13px base. Each
+     token carries a `max()` floor, so it cannot resolve below it whatever it
+     inherits. `webviewHelp.ts` hit this first and worked around it locally
+     with hardcoded px for several releases before it was generalised.
+  2. **Monospace is opt-in, never inherited.** Fields default to the UI font;
+     add `class="mono"` only where a stray space or quote must be visible
+     (commands, regexes, paths, env text, `${var:NAME}` identifiers, search
+     boxes) — not names, folders, dropdowns, counts or dates. Every panel used
+     to set `font-size: var(--vscode-editor-font-size)` on its inputs, which
+     coupled this extension's legibility to `editor.fontSize`.
 - **All JSON embedded into the client script is escaped**:
   `JSON.stringify(...).replace(/</g, '\\u003c')` — prevents a value
   containing `</script>` from breaking out of the inline `<script>` block.
@@ -1356,7 +1410,20 @@ headless Chromium via `playwright-core` (chosen specifically because it
 never auto-downloads a browser — `executablePath` points at whatever
 Chromium is already cached on the machine running this), injects the
 `--vscode-*` CSS theme variables for both a dark and a light theme via
-`page.addStyleTag`, stubs `window.acquireVsCodeApi` via
+`page.addStyleTag`,
+
+**Fidelity gap fixed in v1.8.0 — read this before trusting a screenshot.** A
+real webview host injects its own `<style>` *before* the panel's, and that
+block, not the panel, sets the base font (`body { font-size:
+var(--vscode-font-size) }`; no panel sets it). `themeStyleTag` injected only
+the `:root` variables, so every screenshot fell back to Chromium's default
+16px against a real window's 13px — roughly 23% too large, which is exactly why
+sub-11px text passed this gate twice and was reported by a user instead. It now
+also injects `HOST_INJECTED_BODY_CSS`, wrapped in `:where()` so it has zero
+specificity: `addStyleTag` appends to the *end* of `<head>`, the reverse of a
+real host, and without `:where()` the injected block would override each
+panel's own body rules instead of being overridden by them. If you add anything
+here that models host-injected CSS, wrap it the same way. stubs `window.acquireVsCodeApi` via
 `context.addInitScript` (runs before any page script, matching how a real
 VS Code webview host behaves), and screenshots each page — plus a handful
 of **scripted interactions** exercising exactly the paths recent bugs were
@@ -1581,6 +1648,15 @@ bolted on.
    `finally` (see 5.4.5); a client-side overlay whose only teardown is the
    next successful render (6.1); and a `void`ed async call with no `.catch`,
    which makes all of the above invisible when they happen.
+7d. **Never size text as a fraction of an inherited size, and never let an
+   unrelated setting decide this UI's legibility.** Both rules and the test
+   that enforces them are in 6.1; the short version is that fractional `em`
+   values compound where they nest, and `--vscode-editor-font-size` is the
+   *editor's* setting, not this extension's. This is also why the visual
+   harness now injects VS Code's own `body { font-size }` rule (8.3): without
+   it every screenshot rendered ~23% larger than a real window, so the gate
+   could not see the very defect it exists to catch — which is how illegible
+   text reached the user twice.
 8. **When embedding data into an inline `<script>` block, always
    `.replace(/</g, '\\u003c')` the JSON-stringified payload.**
 9. **Never special-case a specific EDA tool's name or CLI syntax** anywhere
