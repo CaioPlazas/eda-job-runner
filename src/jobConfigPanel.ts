@@ -7,9 +7,12 @@ import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './web
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 import { buildPreview } from './commandPreview';
 import { flattenGlobalParams } from './paramVars';
+import { confirmOverwriteIfStale, staleWriteHint } from './staleWrite';
 
 interface SaveMessage {
   type: 'save';
+  /** True when this came from the auto-save timer rather than the Save button — see the stale-write check in save(). */
+  auto?: boolean;
   name: string;
   command: string;
   cwd: string;
@@ -93,6 +96,13 @@ export class JobConfigPanel {
   private currentJobId: string | undefined;
   /** Guards against two rapid Save clicks on a brand-new job both racing past the `currentJobId === undefined` check and creating two duplicate jobs. */
   private saving = false;
+  /**
+   * The store revision this panel's contents came from. Compared against the
+   * store's current one before saving, so a hand edit / branch switch that
+   * landed while this panel sat open can't be silently overwritten. See
+   * storeSync.ts and staleWrite.ts.
+   */
+  private renderedRevision: number;
 
   static createOrShow(
     jobStore: JobStore,
@@ -135,6 +145,7 @@ export class JobConfigPanel {
   ) {
     this.panel = panel;
     this.currentJobId = existingJob?.id;
+    this.renderedRevision = jobStore.getRevision();
     const autoSave = vscode.workspace
       .getConfiguration('eda-job-runner')
       .get<boolean>('experimentalAutoSaveJobConfig', false);
@@ -260,6 +271,19 @@ export class JobConfigPanel {
       customArgs,
       paramOverrides
     };
+    // Only for an edit of an existing job: adding a new one can't overwrite
+    // anything, so an external change is no reason to interrupt it.
+    if (this.currentJobId && this.jobStore.hasChangedSince(this.renderedRevision)) {
+      if (msg.auto === true) {
+        // An automatic save must never put a modal in the user's way. Say so
+        // inline and leave the decision to an explicit Save.
+        void this.panel.webview.postMessage({ type: 'error', message: staleWriteHint('.vscode/eda-jobs.json') });
+        return;
+      }
+      if (!(await confirmOverwriteIfStale('.vscode/eda-jobs.json', true))) {
+        return;
+      }
+    }
     if (this.currentJobId) {
       await this.jobStore.updateJob(this.currentJobId, fields);
     } else {
@@ -273,6 +297,8 @@ export class JobConfigPanel {
       JobConfigPanel.panels.set(this.mapKey, this);
       this.panel.title = `Configure: ${created.name}`;
     }
+    // This panel is now in step with the file again, including its own write.
+    this.renderedRevision = this.jobStore.getRevision();
     // Save no longer closes the tab -- just acknowledge, so the user can keep
     // editing (and so an auto-save doesn't yank the tab out from under them).
     void this.panel.webview.postMessage({ type: 'saved' });
@@ -1580,7 +1606,9 @@ export function renderHtml(
         debounceTimer = setTimeout(() => {
           if (!nameEl.value.trim() || !commandEl.value.trim()) { return; } // don't nag mid-typing
           errorEl.textContent = '';
-          vscode.postMessage(collectSaveMessage());
+          // Flagged so the host answers a "file changed on disk" conflict with
+          // an inline note rather than a modal dialog nobody asked for.
+          vscode.postMessage(Object.assign(collectSaveMessage(), { auto: true }));
         }, 300);
       };
       // Delegated for the same reason as the preview's listeners above: fields

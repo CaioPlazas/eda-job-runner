@@ -6,6 +6,7 @@ import { discoverList } from './toolIntrospect';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 import { SETUP_ERROR_CSS, OPEN_STEP_JS, setupErrorHtml, StepId } from './webviewSteps';
+import { confirmOverwriteIfStale } from './staleWrite';
 
 interface SaveMessage {
   type: 'save';
@@ -13,19 +14,6 @@ interface SaveMessage {
 }
 interface CancelMessage {
   type: 'cancel';
-}
-/**
- * A value-list row the user has started filling in but hasn't added yet. Sent
- * with every message that triggers a re-render so those keystrokes survive it,
- * exactly as `draftParams` already does for parameter rows.
- */
-interface DraftList {
-  name: string;
-  sourceType: 'file' | 'command';
-  source: string;
-  pattern: string;
-  insertTemplate: string;
-  scanDir: string;
 }
 interface OpenStepMessage {
   type: 'openStep';
@@ -39,8 +27,6 @@ interface AddListMessage {
   pattern: string;
   insertTemplate: string;
   scanDir: string;
-  params: { name: string; value: string }[];
-  draftLists: DraftList[];
 }
 interface RefreshListMessage {
   type: 'refreshList';
@@ -50,19 +36,13 @@ interface RefreshListMessage {
   pattern: string;
   insertTemplate: string;
   scanDir: string;
-  params: { name: string; value: string }[];
-  draftLists: DraftList[];
 }
 interface RemoveListMessage {
   type: 'removeList';
   name: string;
-  params: { name: string; value: string }[];
-  draftLists: DraftList[];
 }
 interface RefreshAllListsMessage {
   type: 'refreshAllLists';
-  params: { name: string; value: string }[];
-  draftLists: DraftList[];
 }
 
 type WebviewMessage =
@@ -81,21 +61,10 @@ export class ParamsPanel {
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
-  /**
-   * Unsaved parameter rows carried across a list add/refresh/remove, which
-   * otherwise reload the whole webview (`render()`) and silently discard
-   * anything typed-but-not-yet-Saved -- params only persist via the
-   * explicit Save button. Cleared once an actual Save happens.
-   */
-  private draftParams: GlobalParam[] | undefined;
-  /**
-   * Half-filled "add a new value list" rows, carried across the same re-renders
-   * `draftParams` covers. Without this, starting to describe a new list and
-   * then refreshing any *other* list silently threw those fields away.
-   */
-  private draftLists: DraftList[] = [];
   /** Guards against a second Save landing while the first one's write is still in flight. */
   private saving = false;
+  /** Store revision this panel's contents came from -- see staleWrite.ts. */
+  private renderedRevision = 0;
   /** The probe command behind a list's current scanError, by list name -- transient, never persisted, shown via setupErrorHtml. */
   private readonly lastProbeCommands = new Map<string, string | undefined>();
 
@@ -135,14 +104,32 @@ export class ParamsPanel {
     );
   }
 
+  /**
+   * Full-document render. Only ever called once, from the constructor: every
+   * later change to this panel is a targeted DOM patch (`postLists`) instead.
+   * Reassigning `webview.html` is a page reload -- it destroys every typed
+   * parameter row and every half-filled new-list row on the screen, which is
+   * why this used to need `draftParams`/`draftLists` shuttling state back and
+   * forth just to survive its own re-renders.
+   */
   private render(): void {
+    this.renderedRevision = this.jobStore.getRevision();
     this.panel.webview.html = renderHtml(
       this.panel.webview,
-      this.draftParams ?? this.jobStore.getParams(),
+      this.jobStore.getParams(),
       this.jobStore.getLists(),
-      this.lastProbeCommands,
-      this.draftLists
+      this.lastProbeCommands
     );
+  }
+
+  /**
+   * The replacement for re-rendering after a list action: the client patches
+   * just the rows that changed and leaves everything else -- parameter rows,
+   * other lists, in-progress typing, scroll position, focus -- untouched.
+   */
+  private postLists(): void {
+    this.renderedRevision = this.jobStore.getRevision();
+    void this.panel.webview.postMessage({ type: 'lists', lists: listsPayload(this.jobStore.getLists(), this.lastProbeCommands) });
   }
 
   private async onMessage(msg: WebviewMessage): Promise<void> {
@@ -165,13 +152,20 @@ export class ParamsPanel {
         if (this.saving) {
           return;
         }
+        // setParams replaces the whole parameter list, so a hand edit that
+        // landed while this panel sat open would go with it -- see staleWrite.ts.
+        if (
+          this.jobStore.hasChangedSince(this.renderedRevision) &&
+          !(await confirmOverwriteIfStale('.vscode/eda-jobs.json', true))
+        ) {
+          return;
+        }
         this.saving = true;
         try {
           const params: GlobalParam[] = msg.params
             .map(p => ({ name: p.name.trim(), value: p.value }))
             .filter(p => p.name.length > 0);
           await this.jobStore.setParams(params);
-          this.draftParams = undefined;
         } catch (err) {
           void this.panel.webview.postMessage({
             type: 'saveError',
@@ -181,6 +175,7 @@ export class ParamsPanel {
         } finally {
           this.saving = false;
         }
+        this.renderedRevision = this.jobStore.getRevision();
         // The panel stays open on Save, like every other panel here: closing it
         // discarded any value-list row being edited alongside the parameters,
         // and there's nothing about saving that means "I'm done with this
@@ -194,14 +189,8 @@ export class ParamsPanel {
         const name = msg.name.trim();
         const source = msg.source.trim();
         if (!name || !source) {
-          // True no-op (e.g. the blank "add new" row): no render, so this
-          // incomplete list row itself isn't discarded either.
-          return;
+          return; // true no-op, e.g. the blank "add new" row
         }
-        this.draftParams = msg.params;
-        // This row is about to become a real list, so it stops being a draft;
-        // every other in-progress row is carried across the render below.
-        this.draftLists = msg.draftLists.filter(d => d.name.trim() !== name);
         const scanDir = msg.scanDir.trim() || undefined;
         // Seed with the currently-stored values (refreshList only -- addList
         // has none yet) so discoverList can fall back to them instead of
@@ -233,22 +222,19 @@ export class ParamsPanel {
           next[idx] = discovered;
         }
         await this.jobStore.setLists(next);
-        this.render();
+        this.postLists();
         return;
       }
       case 'removeList': {
-        this.draftParams = msg.params;
-        this.draftLists = msg.draftLists;
         const lists = this.jobStore.getLists().filter(l => l.name !== msg.name);
         await this.jobStore.setLists(lists);
-        this.render();
+        this.lastProbeCommands.delete(msg.name);
+        this.postLists();
         return;
       }
       case 'refreshAllLists': {
-        this.draftParams = msg.params;
-        this.draftLists = msg.draftLists;
         await vscode.commands.executeCommand('eda-job-runner.refreshValueLists');
-        this.render();
+        this.postLists();
         return;
       }
       case 'browse':
@@ -266,24 +252,29 @@ export class ParamsPanel {
   }
 }
 
+/**
+ * What the client needs to render a value-list row, for both the initial HTML
+ * and every later `lists` patch -- one builder so the two can't drift. The
+ * scan error is pre-rendered here because `setupErrorHtml` is host-side.
+ */
+function listsPayload(lists: ValueList[], probeCommands?: Map<string, string | undefined>) {
+  return lists.map(l => ({
+    ...l,
+    errorHtml: l.scanError ? setupErrorHtml(l.scanError, probeCommands?.get(l.name)) : undefined
+  }));
+}
+
 export function renderHtml(
   webview: vscode.Webview,
   params: GlobalParam[],
   lists: ValueList[],
-  probeCommands?: Map<string, string | undefined>,
-  draftLists: DraftList[] = []
+  probeCommands?: Map<string, string | undefined>
 ): string {
   const nonce = getNonce();
   // Guards against a param/list value containing "</script>" breaking out of
   // the embedded script block, same convention as jobConfigPanel.ts's customArgsJson.
   const paramsJson = JSON.stringify(params).replace(/</g, '\\u003c');
-  const listsJson = JSON.stringify(
-    lists.map(l => ({
-      ...l,
-      errorHtml: l.scanError ? setupErrorHtml(l.scanError, probeCommands?.get(l.name)) : undefined
-    }))
-  ).replace(/</g, '\\u003c');
-  const draftListsJson = JSON.stringify(draftLists).replace(/</g, '\\u003c');
+  const listsJson = JSON.stringify(listsPayload(lists, probeCommands)).replace(/</g, '\\u003c');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -443,25 +434,6 @@ export function renderHtml(
       }));
     }
 
-    // Every list row the user has started but not added yet (an existing list's
-    // name field is disabled, which is what tells the two apart). Sent with any
-    // message that re-renders the panel, so those keystrokes survive it. Rows
-    // with nothing typed in them are dropped, so an untouched blank row doesn't
-    // accumulate a copy of itself on every refresh.
-    function collectDraftLists() {
-      return Array.from(listsWrap.querySelectorAll('.listItem'))
-        .filter(row => !row.querySelector('.lName').disabled)
-        .map(row => ({
-          name: row.querySelector('.lName').value,
-          sourceType: row.querySelector('.lSourceType').value,
-          source: row.querySelector('.lSource').value,
-          pattern: row.querySelector('.lPattern').value,
-          insertTemplate: row.querySelector('.lTemplate').value,
-          scanDir: row.querySelector('.lScanDir').value
-        }))
-        .filter(l => l.name || l.source || l.pattern || l.insertTemplate || l.scanDir);
-    }
-
     const saveOut = document.getElementById('saveOut');
 
     document.getElementById('save').addEventListener('click', () => {
@@ -483,19 +455,62 @@ export function renderHtml(
         setTimeout(() => {
           if (saveOut.textContent === 'Saved ✓') { saveOut.textContent = ''; saveOut.className = ''; }
         }, 4000);
+      } else if (m.type === 'lists') {
+        applyLists(m.lists);
       }
     });
 
+    /**
+     * Patch the value-list section to match \`lists\`, touching nothing else on
+     * the page. Saved rows are keyed by data-list-name: one that changed is
+     * replaced, one that's gone is removed, one that's new is inserted ahead of
+     * any in-progress rows. A row the user is still filling in has no
+     * data-list-name and is never touched -- except the one whose Add just
+     * succeeded, which the freshly saved row replaces.
+     *
+     * This exists instead of re-rendering the whole document, which is what a
+     * list action used to do: that wiped every typed parameter row and every
+     * half-finished new list, and needed the host to shuttle both back and
+     * forth on every message just to put them back.
+     */
+    function applyLists(lists) {
+      const incoming = new Map(lists.map(l => [l.name, l]));
+      Array.from(listsWrap.querySelectorAll('.listItem[data-list-name]')).forEach(row => {
+        const name = row.getAttribute('data-list-name');
+        const next = incoming.get(name);
+        if (!next) {
+          row.remove();
+          return;
+        }
+        row.replaceWith(buildListRow(next, false));
+        incoming.delete(name);
+      });
+      const drafts = Array.from(listsWrap.querySelectorAll('.listItem:not([data-list-name])'));
+      incoming.forEach(list => {
+        // The draft row this list was just created from, if it's still there.
+        const draft = drafts.find(row => row.querySelector('.lName').value.trim() === list.name);
+        const saved = buildListRow(list, false);
+        if (draft) {
+          draft.replaceWith(saved);
+          drafts.splice(drafts.indexOf(draft), 1);
+        } else {
+          listsWrap.insertBefore(saved, drafts[0] || null);
+        }
+      });
+    }
+
     // Existing lists render read-only-ish (name locked once saved, matching
     // the old Tool Setup behavior) with immediate Refresh/Remove; the blank
-    // row at the bottom is the "add a new one" form.
-    // forceNew renders a not-yet-added row that already has values in it -- a
-    // draft carried across a re-render (see collectDraftLists).
-    function addListRow(list, forceNew) {
-      const isNew = forceNew === true || !list;
+    // row at the bottom is the "add a new one" form. Returns the element
+    // rather than appending it, so applyLists can swap a single row in place.
+    function buildListRow(list, isNew) {
       list = list || { name: '', command: '', file: '', pattern: '', insertTemplate: '', scanDir: '', values: [], scanError: undefined };
       const row = document.createElement('div');
       row.className = 'listItem';
+      if (!isNew) {
+        // The key applyLists patches by. Absent on a row still being filled in.
+        row.setAttribute('data-list-name', list.name);
+      }
 
       const top = document.createElement('div');
       top.className = 'listRow';
@@ -606,9 +621,7 @@ export function renderHtml(
           source: sourceInput.value,
           pattern: patternInput.value,
           insertTemplate: templateInput.value,
-          scanDir: scanDirInput.value,
-          params: collectParams(),
-          draftLists: collectDraftLists()
+          scanDir: scanDirInput.value
         });
       });
       removeBtn.addEventListener('click', () => {
@@ -620,18 +633,20 @@ export function renderHtml(
           scanDirInput.value = '';
           return;
         }
-        vscode.postMessage({ type: 'removeList', name: list.name, params: collectParams(), draftLists: collectDraftLists() });
+        vscode.postMessage({ type: 'removeList', name: list.name });
       });
 
-      listsWrap.appendChild(row);
+      return row;
     }
 
-    (${listsJson}).forEach(l => addListRow(l));
-    // Rows the user had started filling in before the last re-render.
-    (${draftListsJson}).forEach(l => addListRow({ ...l, command: l.sourceType === 'command' ? l.source : '', file: l.sourceType === 'file' ? l.source : '' }, true));
-    document.getElementById('addList').addEventListener('click', () => addListRow(null));
+    function addListRow(list, isNew) {
+      listsWrap.appendChild(buildListRow(list, isNew));
+    }
+
+    (${listsJson}).forEach(l => addListRow(l, false));
+    document.getElementById('addList').addEventListener('click', () => addListRow(null, true));
     document.getElementById('refreshAllLists').addEventListener('click', () => {
-      vscode.postMessage({ type: 'refreshAllLists', params: collectParams(), draftLists: collectDraftLists() });
+      vscode.postMessage({ type: 'refreshAllLists' });
     });
   </script>
 </body>

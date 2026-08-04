@@ -164,6 +164,39 @@ function renderErrors(html) {
   return errors;
 }
 
+/**
+ * Same as renderErrors, but hands back the live window so a test can drive the
+ * panel's own client script (dispatch a host message, click a button) and
+ * assert on the resulting DOM -- not just that nothing threw on first render.
+ */
+function renderWindow(html) {
+  const stripped = html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '');
+  const errors = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', err => {
+    if (!/not implemented/i.test(err.message)) {
+      errors.push(err.message);
+    }
+  });
+  const dom = new JSDOM(stripped, {
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+    virtualConsole,
+    beforeParse(window) {
+      window.__posted = [];
+      window.acquireVsCodeApi = () => ({
+        postMessage: m => window.__posted.push(m),
+        getState: () => undefined,
+        setState: () => undefined
+      });
+      window.addEventListener('error', e => {
+        errors.push(e.message || String(e.error || 'unknown error'));
+      });
+    }
+  });
+  return { window: dom.window, errors };
+}
+
 function checkState(name, html) {
   const errors = renderErrors(html);
   check(errors.length === 0, `${name}: no script errors (${errors.join('; ')})`);
@@ -217,6 +250,80 @@ function checkState(name, html) {
   const { renderHtml } = await import(bundle('./src/paramsPanel.ts', 'params'));
   checkState('params', renderHtml(fakeWebview, globalParams, lists));
   checkState('params-empty', renderHtml(fakeWebview, [], []));
+
+  // ---- The Parameters panel patches its value lists in place ----
+  // A list action (Add / Refresh / Remove / Refresh all) used to re-render the
+  // entire document, which wiped every typed parameter row and every
+  // half-finished new list along with it. The host now posts a `lists` patch
+  // instead. These assertions are the actual guarantee: everything the user
+  // typed is still there afterwards.
+  {
+    const { window, errors } = renderWindow(renderHtml(fakeWebview, globalParams, lists));
+    check(errors.length === 0, `params-patch: panel loaded without errors (${errors.join('; ')})`);
+    const doc = window.document;
+
+    // The user types a parameter value (not saved yet) and starts a new list.
+    doc.querySelector('.paramRow .pValue').value = 'typed-but-not-saved';
+    doc.getElementById('addList').click();
+    const draft = Array.from(doc.querySelectorAll('.listItem')).find(r => !r.hasAttribute('data-list-name'));
+    check(!!draft, 'params-patch: "+ Add value list" adds a row with no data-list-name');
+    draft.querySelector('.lName').value = 'InProgress';
+    draft.querySelector('.lSource').value = 'ls in-progress/*';
+
+    // Meanwhile the host refreshes a different list and drops another.
+    window.dispatchEvent(
+      new window.MessageEvent('message', {
+        data: {
+          type: 'lists',
+          lists: [{ name: 'Tests', command: 'ls tests/*.sv', values: ['smoke_test', 'regress_full', 'new_test'] }]
+        }
+      })
+    );
+
+    check(
+      doc.querySelector('.paramRow .pValue').value === 'typed-but-not-saved',
+      'params-patch: a typed parameter row survives a list patch'
+    );
+    const draftAfter = Array.from(doc.querySelectorAll('.listItem')).find(r => !r.hasAttribute('data-list-name'));
+    check(
+      draftAfter && draftAfter.querySelector('.lName').value === 'InProgress',
+      'params-patch: a half-filled new list row survives a list patch'
+    );
+    check(
+      doc.querySelector('[data-list-name="Tests"]').textContent.includes('new_test'),
+      "params-patch: a refreshed list's row shows its new values"
+    );
+    check(
+      !doc.querySelector('[data-list-name="a</script>b"]'),
+      'params-patch: a list that is gone from the payload has its row removed'
+    );
+
+    // Now the in-progress list is actually added: its draft row becomes the
+    // saved row rather than leaving a duplicate behind.
+    window.dispatchEvent(
+      new window.MessageEvent('message', {
+        data: {
+          type: 'lists',
+          lists: [
+            { name: 'Tests', command: 'ls tests/*.sv', values: ['smoke_test'] },
+            { name: 'InProgress', command: 'ls in-progress/*', values: ['one'] }
+          ]
+        }
+      })
+    );
+    check(
+      doc.querySelectorAll('.listItem').length === 2,
+      `params-patch: the draft row is replaced by its saved row, not duplicated (got ${doc.querySelectorAll('.listItem').length} rows)`
+    );
+    check(
+      !!doc.querySelector('[data-list-name="InProgress"]'),
+      'params-patch: the newly added list is present as a saved row'
+    );
+    check(
+      doc.querySelector('.paramRow .pValue').value === 'typed-but-not-saved',
+      'params-patch: the typed parameter row is still there after the second patch'
+    );
+  }
 }
 
 {

@@ -11,6 +11,7 @@ import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './web
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
 import { runProbeChecks, PROBE_CSS } from './webviewProbe';
 import { shellQuote } from './shellQuote';
+import { confirmOverwriteIfStale } from './staleWrite';
 
 interface SaveMessage {
   type: 'save';
@@ -69,6 +70,8 @@ export class ShellEnvPanel {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private probing = false;
+  /** Store revision this panel's contents came from -- see staleWrite.ts. */
+  private renderedRevision = 0;
 
   static createOrShow(
     jobStore: JobStore,
@@ -115,6 +118,10 @@ export class ShellEnvPanel {
   }
 
   private render(): void {
+    // Captured on every render, checked in onSave -- see staleWrite.ts. Only
+    // the setup script/commands half of this panel lives in eda-jobs.json;
+    // the rest is VS Code settings, which VS Code itself keeps in sync.
+    this.renderedRevision = this.jobStore.getRevision();
     this.panel.webview.html = renderHtml(this.panel.webview, this.readState());
   }
 
@@ -212,6 +219,11 @@ export class ShellEnvPanel {
   }
 
   private async onSave(msg: SaveMessage): Promise<void> {
+    // `setSetup` below replaces the whole setup block of eda-jobs.json, so a
+    // hand edit that landed while this panel sat open would go with it.
+    if (this.jobStore.hasChangedSince(this.renderedRevision) && !(await confirmOverwriteIfStale('.vscode/eda-jobs.json', true))) {
+      return;
+    }
     const config = vscode.workspace.getConfiguration('eda-job-runner', this.folder.uri);
     // Workspace target (not WorkspaceFolder): these settings are window-scoped
     // by default, and VS Code rejects config.update() at the WorkspaceFolder
@@ -268,6 +280,7 @@ export class ShellEnvPanel {
     // banner state is recomputed on the next full render (e.g. Test, or a
     // fresh open) rather than here, since Save alone doesn't change step ①'s
     // tested-or-not status.
+    this.renderedRevision = this.jobStore.getRevision();
     void this.panel.webview.postMessage({ type: 'saved' });
   }
 

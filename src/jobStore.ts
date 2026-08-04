@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { GlobalParam, JobDefinition, JobsFile, JobsFileSetup, JobTemplate, ValueList, emptyJobsFile } from './types';
 import { computeReorderedJobs } from './jobOrder';
 import { computeReorderedFolders } from './folderOrder';
+import { LoadGuard } from './storeSync';
 
 export class JobStore implements vscode.Disposable {
   private readonly _onDidChangeJobs = new vscode.EventEmitter<void>();
@@ -13,6 +14,8 @@ export class JobStore implements vscode.Disposable {
   private readonly jobsFileUri: vscode.Uri;
   /** Chains persist() calls so overlapping writes land on disk in the order they were issued -- see persist(). */
   private writeQueue: Promise<void> = Promise.resolve();
+  /** Load/write sequencing + self-write recognition + the revision panels check before saving. See storeSync.ts. */
+  private readonly guard = new LoadGuard();
 
   constructor(private readonly workspaceFolder: vscode.WorkspaceFolder) {
     this.jobsFileUri = vscode.Uri.joinPath(workspaceFolder.uri, '.vscode', 'eda-jobs.json');
@@ -31,15 +34,27 @@ export class JobStore implements vscode.Disposable {
     );
   }
 
+  /**
+   * Reads `.vscode/eda-jobs.json` into memory. Guarded by `LoadGuard`
+   * (storeSync.ts) on both ends: a read whose result is already stale by the
+   * time it returns -- because a newer load started, or because we wrote the
+   * file while it was in flight -- is discarded rather than assigned, and a
+   * watcher event for our own write is recognised and skipped outright.
+   */
   async load(): Promise<void> {
+    const attempt = this.guard.beginLoad();
+    let next: JobsFile;
     try {
       const bytes = await vscode.workspace.fs.readFile(this.jobsFileUri);
       const text = Buffer.from(bytes).toString('utf8');
+      if (this.guard.isSelfWrite(text)) {
+        return; // our own persist() coming back around; memory already has it
+      }
       const parsed = text.trim().length === 0 ? emptyJobsFile() : (JSON.parse(text) as Partial<JobsFile>);
-      this.data = normalize(parsed);
+      next = normalize(parsed);
     } catch (err) {
       if (isFileNotFound(err)) {
-        this.data = emptyJobsFile();
+        next = emptyJobsFile();
       } else {
         vscode.window.showErrorMessage(
           `EDA Job Runner: failed to read .vscode/eda-jobs.json (${describeError(err)}). ` +
@@ -48,7 +63,29 @@ export class JobStore implements vscode.Disposable {
         return;
       }
     }
+    if (!this.guard.shouldApply(attempt)) {
+      // Superseded while we were reading. Whatever superseded it either has
+      // already applied its own result or will fire its own watcher event --
+      // assigning this older snapshot here is exactly how memory and disk used
+      // to drift apart, with the next edit silently reverting the newer one.
+      return;
+    }
+    this.data = next;
     this._onDidChangeJobs.fire();
+  }
+
+  /**
+   * Increases whenever the in-memory copy changes (a save, or an applied
+   * external reload). A panel records this when it renders and passes it back
+   * when it saves -- see `hasChangedSince`.
+   */
+  getRevision(): number {
+    return this.guard.revision;
+  }
+
+  /** True when the file changed (from any source) since `revision` was taken -- i.e. a save built on that render would overwrite something it never saw. */
+  hasChangedSince(revision: number): boolean {
+    return this.guard.revision !== revision;
   }
 
   getJobs(): JobDefinition[] {
@@ -327,6 +364,10 @@ export class JobStore implements vscode.Disposable {
    */
   private async persist(): Promise<void> {
     const text = JSON.stringify(this.data, null, 2) + '\n';
+    // Registered before the write actually happens, so a load already in
+    // flight knows its read is about to be out of date, and so the watcher
+    // event this write produces is recognised as ours.
+    this.guard.beginWrite(text);
     const write = this.writeQueue.then(() => this.writeAtomic(text));
     this.writeQueue = write.catch(() => undefined);
     await write;
