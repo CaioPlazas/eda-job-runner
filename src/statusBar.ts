@@ -11,7 +11,16 @@ export class StatusBarController implements vscode.Disposable {
   constructor(private readonly jobStore: JobStore, private readonly jobRunner: JobRunner) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     this.item.command = 'workbench.view.extension.eda-job-runner';
-    this.disposables.push(this.item, jobStore.onDidChangeJobs(() => this.refresh()), jobRunner.onDidChangeStatus(() => this.refresh()));
+    this.disposables.push(
+      this.item,
+      jobStore.onDidChangeJobs(() => this.refresh()),
+      jobRunner.onDidChangeStatus(() => this.refresh()),
+      // The per-second tick lives here and nowhere else: this is one status-bar
+      // item, so repainting it costs nothing, unlike the tree (see
+      // JobTreeProvider's constructor). It's what keeps the elapsed time and
+      // error/warning counts below actually live while a job runs.
+      jobRunner.onDidTick(() => this.refresh())
+    );
     this.refresh();
   }
 

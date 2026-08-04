@@ -2,6 +2,12 @@ import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
 import { JobRunner, JobRunStatus } from './jobRunner';
 import { JobDefinition } from './types';
+import { describeStatus, describeStatusLong, describeLiveProgress, formatDuration } from './statusText';
+
+// formatDuration used to live here; re-exported so existing importers
+// (statusBar.ts, extension.ts) keep working while its definition sits in the
+// pure module that can actually be unit-tested.
+export { formatDuration };
 
 /**
  * One tree row for a single run. For a job that has never had more than one
@@ -20,17 +26,26 @@ export class JobTreeItem extends vscode.TreeItem {
     const isLane = laneKey !== job.id;
     super(isLane ? status.laneLabel ?? laneKey : job.name, vscode.TreeItemCollapsibleState.None);
     this.isLane = isLane;
-    if (!isLane) {
-      this.id = job.id;
-    }
+    // A lane's key is already `job.id::runN`, so it's unique tree-wide. Without
+    // an id VS Code can't tell one refresh's lane rows from the next's and
+    // treats them all as new, dropping selection and scroll position.
+    this.id = isLane ? laneKey : job.id;
     const statusText = describeStatus(status);
     this.description = !isLane && job.default ? `★ default${statusText ? ` · ${statusText}` : ''}` : statusText;
     const defaultNote = !isLane && job.default ? '\n\n★ **Default job** — runs on F5 / "EDA: Run Default Job".' : '';
-    this.tooltip = new vscode.MarkdownString(
-      isLane
-        ? `**${job.name} — run ${status.laneLabel ?? laneKey}**\n\n${describeStatusLong(status)}`
-        : `**${job.name}**\n\n\`${job.command}\`\n\ncwd: \`${job.cwd}\`${defaultNote}\n\n${describeStatusLong(status)}`
-    );
+    // A running row's tooltip is deliberately left undefined and filled in by
+    // JobTreeProvider.resolveTreeItem on hover: it's the one place elapsed
+    // time and live counts still appear, and resolving it on demand is what
+    // lets the row itself stay completely static (see statusText.ts). VS Code
+    // only resolves properties that are undefined, so this must not be set here.
+    this.tooltip =
+      status.state === 'running'
+        ? undefined
+        : new vscode.MarkdownString(
+            isLane
+              ? `**${job.name} — run ${status.laneLabel ?? laneKey}**\n\n${describeStatusLong(status)}`
+              : `**${job.name}**\n\n\`${job.command}\`\n\ncwd: \`${job.cwd}\`${defaultNote}\n\n${describeStatusLong(status)}`
+          );
     this.contextValue = isLane ? `edaJobRun-${status.state}` : `edaJob-${status.state}`;
     this.iconPath = iconForState(status);
     this.command = isLane
@@ -47,8 +62,14 @@ export class JobTreeItem extends vscode.TreeItem {
  * one instance at a time never produce one of these.
  */
 export class JobGroupTreeItem extends vscode.TreeItem {
-  constructor(public readonly job: JobDefinition, lanes: { laneKey: string; status: JobRunStatus }[]) {
-    super(job.name, vscode.TreeItemCollapsibleState.Expanded);
+  constructor(
+    public readonly job: JobDefinition,
+    lanes: { laneKey: string; status: JobRunStatus }[],
+    // Expanded unless the user collapsed this group -- hardcoding Expanded
+    // meant every refresh popped a group the user had just closed back open.
+    expanded = true
+  ) {
+    super(job.name, expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     this.id = job.id;
     const running = lanes.filter(l => l.status.state === 'running').length;
     const passed = lanes.filter(l => l.status.state === 'passed').length;
@@ -88,8 +109,9 @@ export class JobGroupTreeItem extends vscode.TreeItem {
  * of time) since folder names are tracked independently in `JobsFile.folders`.
  */
 export class FolderTreeItem extends vscode.TreeItem {
-  constructor(public readonly folderName: string, jobCount: number) {
-    super(folderName, vscode.TreeItemCollapsibleState.Expanded);
+  /** `expanded` — see JobGroupTreeItem's own note; a collapsed folder must stay collapsed across a refresh. */
+  constructor(public readonly folderName: string, jobCount: number, expanded = true) {
+    super(folderName, expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `folder:${folderName}`;
     this.description = `${jobCount} job${jobCount === 1 ? '' : 's'}`;
     this.contextValue = 'edaFolder';
@@ -100,30 +122,48 @@ export class FolderTreeItem extends vscode.TreeItem {
 export type EdaTreeElement = JobTreeItem | JobGroupTreeItem;
 export type EdaTreeNode = EdaTreeElement | FolderTreeItem;
 
+/**
+ * How long a refresh waits for others to join it. Long enough to collapse a
+ * burst (a folder run's jobs starting and finishing, a repeat-count batch's
+ * iterations) into one redraw, short enough to be imperceptible.
+ */
+const REFRESH_DEBOUNCE_MS = 100;
+
 export class JobTreeProvider implements vscode.TreeDataProvider<EdaTreeNode> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   /**
-   * Whether the sidebar is actually on screen (see `bindVisibility`). A running
-   * job ticks once a second so its elapsed time stays live, and every tick
-   * rebuilds every row -- worth it when someone is looking at the tree,
-   * pure waste when the view is collapsed or another container is showing.
+   * Whether the sidebar is actually on screen (see `bindView`). Refreshes that
+   * land while it's hidden are collapsed into a single one on the way back in.
    * Undefined until bound, which reads as "assume visible".
    */
   private viewVisible: boolean | undefined;
   /** A refresh that was skipped while hidden, to be replayed on the way back in. */
   private missedRefresh = false;
+  private refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * Groups/folders the user has collapsed, by tree item id. Tracked from the
+   * view's own expand/collapse events because `collapsibleState` is baked into
+   * each rebuilt item -- without this, any refresh re-expands them.
+   */
+  private readonly collapsed = new Set<string>();
 
   constructor(private readonly jobStore: JobStore, private readonly jobRunner: JobRunner) {
     jobStore.onDidChangeJobs(() => this.refresh());
+    // Deliberately NOT subscribed to jobRunner.onDidTick: that fires once a
+    // second for as long as anything is running, and a tree row's text no
+    // longer contains anything that changes on its own (see statusText.ts), so
+    // there is nothing for a tick to repaint. The status bar owns the live
+    // elapsed/counts display; hovering a row resolves its own live tooltip.
     jobRunner.onDidChangeStatus(() => this.refresh());
   }
 
   /**
-   * Wires this provider to its TreeView's visibility. Called from activate()
-   * right after createTreeView, since a provider can't reach its own view.
+   * Wires this provider to its TreeView (visibility + expand/collapse state).
+   * Called from activate() right after createTreeView, since a provider can't
+   * reach its own view.
    */
-  bindVisibility(view: vscode.TreeView<EdaTreeNode>, disposables: vscode.Disposable[]): void {
+  bindView(view: vscode.TreeView<EdaTreeNode>, disposables: vscode.Disposable[]): void {
     this.viewVisible = view.visible;
     disposables.push(
       view.onDidChangeVisibility(e => {
@@ -131,6 +171,16 @@ export class JobTreeProvider implements vscode.TreeDataProvider<EdaTreeNode> {
         if (e.visible && this.missedRefresh) {
           this.missedRefresh = false;
           this._onDidChangeTreeData.fire();
+        }
+      }),
+      view.onDidCollapseElement(e => {
+        if (e.element.id) {
+          this.collapsed.add(e.element.id);
+        }
+      }),
+      view.onDidExpandElement(e => {
+        if (e.element.id) {
+          this.collapsed.delete(e.element.id);
         }
       })
     );
@@ -141,11 +191,43 @@ export class JobTreeProvider implements vscode.TreeDataProvider<EdaTreeNode> {
       this.missedRefresh = true;
       return;
     }
-    this._onDidChangeTreeData.fire();
+    if (this.refreshTimer) {
+      return; // one is already pending; it will pick this change up too
+    }
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined;
+      this._onDidChangeTreeData.fire();
+    }, REFRESH_DEBOUNCE_MS);
   }
 
   getTreeItem(element: EdaTreeNode): vscode.TreeItem {
     return element;
+  }
+
+  /**
+   * Fills in a running row's tooltip at the moment it's hovered. This is the
+   * one place elapsed time and in-progress error counts still appear in the
+   * tree, and building it on demand is exactly what lets the row itself stay
+   * static all run long. Status is re-read here rather than taken from the
+   * (possibly minutes-old) item, so the numbers are current.
+   */
+  resolveTreeItem(item: vscode.TreeItem, element: EdaTreeNode): vscode.TreeItem {
+    if (!(element instanceof JobTreeItem) || element.status.state !== 'running') {
+      return item;
+    }
+    const status = element.isLane
+      ? this.jobRunner.getLanes(element.job.id).find(l => l.laneKey === element.laneKey)?.status
+      : this.jobRunner.getStatus(element.job.id);
+    if (!status || status.state !== 'running') {
+      return item;
+    }
+    const { job } = element;
+    const header = element.isLane ? `**${job.name} — run ${status.laneLabel ?? element.laneKey}**` : `**${job.name}**`;
+    const body = element.isLane ? '' : `\n\n\`${job.command}\`\n\ncwd: \`${job.cwd}\``;
+    item.tooltip = new vscode.MarkdownString(
+      `${header}${body}\n\n${describeLiveProgress(status, Date.now())}\n\n${describeStatusLong(status)}`
+    );
+    return item;
   }
 
   getChildren(element?: EdaTreeNode): EdaTreeNode[] {
@@ -163,7 +245,9 @@ export class JobTreeProvider implements vscode.TreeDataProvider<EdaTreeNode> {
 
     const folders = this.jobStore.getFolders();
     const jobs = this.jobStore.getJobs();
-    const folderItems = folders.map(name => new FolderTreeItem(name, this.jobStore.getJobsInFolder(name).length));
+    const folderItems = folders.map(
+      name => new FolderTreeItem(name, this.jobStore.getJobsInFolder(name).length, !this.collapsed.has(`folder:${name}`))
+    );
     const knownFolders = new Set(folders);
     const ungrouped = jobs.filter(j => !j.folder || !knownFolders.has(j.folder));
     return [...folderItems, ...this.toTreeItems(ungrouped)];
@@ -173,7 +257,7 @@ export class JobTreeProvider implements vscode.TreeDataProvider<EdaTreeNode> {
     return jobs.map(job => {
       const lanes = this.jobRunner.getLanes(job.id);
       return lanes.length > 0
-        ? new JobGroupTreeItem(job, lanes)
+        ? new JobGroupTreeItem(job, lanes, !this.collapsed.has(job.id))
         : new JobTreeItem(job, this.jobRunner.getStatus(job.id), job.id);
     });
   }
@@ -289,74 +373,4 @@ function iconForState(status: JobRunStatus): vscode.ThemeIcon {
     default:
       return new vscode.ThemeIcon('circle-outline');
   }
-}
-
-function describeStatus(status: JobRunStatus): string {
-  switch (status.state) {
-    case 'running': {
-      const elapsed = formatDuration(Date.now() - (status.startTime ?? Date.now()));
-      const base = status.reattached
-        ? `running (resumed) ${elapsed}`
-        : status.detached
-          ? `running (detached) ${elapsed}`
-          : `running ${elapsed}`;
-      return base + countSuffix(status);
-    }
-    case 'passed':
-      return `passed (${formatDuration((status.endTime ?? 0) - (status.startTime ?? 0))})` + countSuffix(status);
-    case 'failed': {
-      const reason = status.exitCode === 0 && (status.errorCount ?? 0) > 0 ? 'log errors' : `exit ${status.exitCode ?? '?'}`;
-      return reason + countSuffix(status);
-    }
-    case 'killed':
-      return 'killed';
-    default:
-      return '';
-  }
-}
-
-/** " · 2✗ 1⚠" style suffix, omitting zero counts. */
-function countSuffix(status: JobRunStatus): string {
-  const errs = status.errorCount ?? 0;
-  const warns = status.warningCount ?? 0;
-  if (!errs && !warns) {
-    return '';
-  }
-  const parts: string[] = [];
-  if (errs) {
-    parts.push(`${errs}✗`);
-  }
-  if (warns) {
-    parts.push(`${warns}⚠`);
-  }
-  return ` · ${parts.join(' ')}`;
-}
-
-function describeStatusLong(status: JobRunStatus): string {
-  if (status.state === 'idle') {
-    return '_Never run in this session._';
-  }
-  const parts = [`status: **${status.state}**`];
-  if (status.reattached) {
-    parts.push('_Resumed live tailing after a window reload — log, counts, and Problems keep updating as normal._');
-  } else if (status.detached) {
-    parts.push(
-      '_Lost track of this job across a window reload — still running detached. ' +
-        'Stop still works; check its log directly for progress._'
-    );
-  }
-  if (status.exitCode !== undefined && status.exitCode !== null) {
-    parts.push(`exit code: ${status.exitCode}`);
-  }
-  if (status.signal) {
-    parts.push(`signal: ${status.signal}`);
-  }
-  return parts.join('\n\n');
-}
-
-export function formatDuration(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return minutes > 0 ? `${minutes}:${String(seconds).padStart(2, '0')}` : `${seconds}s`;
 }
