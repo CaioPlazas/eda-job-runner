@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { JobStore } from './jobStore';
 import { ToolStore } from './toolStore';
 import { GlobalParam, JobDefinition, JobTemplate, ToolDefinition, ValueList } from './types';
-import { BASE_CSS } from './webviewTheme';
+import { BASE_CSS, FLASH_JS } from './webviewTheme';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
@@ -683,6 +683,7 @@ export function renderHtml(
     const vscode = acquireVsCodeApi();
     ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
+    ${FLASH_JS}
     const AUTO_SAVE = ${autoSave ? 'true' : 'false'};
     const nameEl = document.getElementById('name');
     const folderEl = document.getElementById('folder');
@@ -1580,6 +1581,7 @@ export function renderHtml(
       } else if (m.type === 'saved') {
         errorEl.textContent = '';
         savedFlashEl.classList.remove('hidden');
+        edaFlash(savedFlashEl);
         clearTimeout(savedFlashTimer);
         savedFlashTimer = setTimeout(() => savedFlashEl.classList.add('hidden'), 1600);
       } else if (m.type === 'templates') {

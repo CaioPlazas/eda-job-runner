@@ -44,6 +44,24 @@
  * alignment genuinely matters and a stray space or quote must be visible:
  * commands, regex patterns, paths, env text, `${var:NAME}` identifiers, search
  * queries. Not names, folders, dropdowns, counts, or dates.
+ *
+ * ## Motion: four rules, also test-enforced
+ *
+ * These panels are opened dozens of times a day, so motion here earns its place
+ * by making a change legible -- never by decorating one.
+ *
+ * 1. **Nothing animates on initial render.** A panel that fades itself in every
+ *    time it opens reads as slow, however brief the fade.
+ * 2. **Nothing exceeds 200ms.** `run-webview-theme-tests.mjs` fails the build
+ *    otherwise. The tokens are 120ms and 160ms.
+ * 3. **Only `opacity`, `transform`, `background-color`, `outline-color` and
+ *    `border-color`** -- never `height`/`width`/`top`/`left`, which force a
+ *    layout pass on every frame.
+ * 4. **No interaction ever waits on an animation.** Every animation here is
+ *    decorative in the strict sense: delete it and the panel behaves the same.
+ *
+ * `prefers-reduced-motion` is honoured once, globally, at the end of BASE_CSS
+ * rather than per-rule -- so it cannot be forgotten when a new animation lands.
  */
 export const BASE_CSS = `
   :root {
@@ -60,6 +78,8 @@ export const BASE_CSS = `
     --eda-gap-lg: 16px;
     --eda-gap-xl: 24px;
     --eda-border: var(--vscode-input-border, rgba(127,127,127,0.3));
+   --eda-motion: 120ms;
+    --eda-motion-slow: 160ms;
   }
   body {
     font-family: var(--eda-font);
@@ -154,4 +174,65 @@ export const BASE_CSS = `
   }
   details.card > summary { cursor: pointer; font-weight: 600; padding: var(--eda-gap) 0; }
   details.card[open] { padding-bottom: var(--eda-gap-lg); }
+
+  /* ---- Motion. Four rules, see the module header. ------------------------ */
+
+  button { transition: background-color var(--eda-motion) ease, outline-color var(--eda-motion) ease; }
+  input, textarea, select { transition: border-color var(--eda-motion) ease, outline-color var(--eda-motion) ease; }
+  tbody tr, .optRow, .listItem, .tool { transition: background-color var(--eda-motion) ease; }
+
+  /* The save confirmation. v1.6.0 made Save keep the panel open, so this flash
+     is the entire acknowledgement that anything happened -- it has to be
+     noticeable without being waited on. Applied by adding .flash; replaying it
+     needs the class removed and re-added across a frame (see FLASH_JS),
+     because resetting textContent alone will not restart a running animation. */
+  .flash { animation: edaFlash var(--eda-motion-slow) ease-out; }
+  @keyframes edaFlash {
+    from { opacity: 0; transform: translateY(-2px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  /* Rows arriving from a client-side patch (paramsPanel's applyLists,
+     toolSetupPanel's favourite toggle). Since v1.7.0 those panels swap
+     individual rows instead of reloading the page, and without this the new row
+     simply teleports in with nothing marking it as the thing that just changed. */
+  .rowIn { animation: edaRowIn var(--eda-motion-slow) ease-out; }
+  @keyframes edaRowIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .busyOverlay { animation: edaFade 100ms ease-out; }
+  @keyframes edaFade { from { opacity: 0; } to { opacity: 1; } }
+
+  /* Non-negotiable, and deliberately global. Zeroing animation-duration is not
+     enough on its own -- a looping animation also needs its iteration count
+     pinned, or it keeps running at 0.01ms forever. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+`;
+
+/**
+ * Client-side helper: replay a CSS animation already attached to an element.
+ * Embed via a template interpolation inside a panel's own `<script>` block, the
+ * same way `BROWSE_JS` and `PROBE_JS` are.
+ *
+ * Re-setting an element's text does not restart its animation, and re-adding a
+ * class it already has does nothing at all -- the class was never absent, so
+ * nothing re-triggers. Removing it, forcing a reflow, then adding it back is
+ * what actually replays it. Saving twice in a row has to flash twice, or the
+ * second save looks like it did nothing.
+ */
+export const FLASH_JS = `
+  function edaFlash(el) {
+    if (!el) { return; }
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+  }
 `;

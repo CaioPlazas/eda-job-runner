@@ -1065,6 +1065,15 @@ signature was made `export`able specifically to support that.
   anything. Any inline save confirmation belongs *inside* that bar, or it
   scrolls underneath it. Section boxes use `details.card`, also opt-in, because
   `toolSetupPanel`'s `<details>` already *are* its cards.
+- **Four motion rules** (v1.8.2), stated in `webviewTheme.ts`'s header and
+  enforced by the same test: nothing animates on initial render; nothing exceeds
+  200ms; only `opacity`/`transform`/`background-color`/`outline-color`/
+  `border-color`; and no interaction ever waits on an animation. Durations live
+  in `--eda-motion`/`--eda-motion-slow`, and `prefers-reduced-motion` is honoured
+  **once, globally**, at the end of `BASE_CSS` — never per-rule, so a new
+  animation cannot forget it. Replaying an animation needs `FLASH_JS`'s
+  remove/reflow/re-add: re-setting an element's text does not restart one, which
+  is why a second consecutive save used to flash nothing.
 - **Two type rules, enforced by `test-fixtures/run-webview-theme-tests.mjs`**
   (which scans each panel's real rendered `<style>`, so a violation reintro-
   duced via any shared constant is caught too):

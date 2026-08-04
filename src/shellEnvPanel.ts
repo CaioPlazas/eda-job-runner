@@ -6,7 +6,7 @@ import { ToolStore } from './toolStore';
 import { JobRunner } from './jobRunner';
 import { LogManager } from './logManager';
 import { defaultArgsForShell, substituteVars } from './shellInvocation';
-import { BASE_CSS } from './webviewTheme';
+import { BASE_CSS, FLASH_JS } from './webviewTheme';
 import { HELP_CSS, help } from './webviewHelp';
 import { BROWSE_CSS, BROWSE_JS, BrowseMessage, handleBrowseMessage } from './webviewBrowse';
 import { CLIENT_ERROR_JS, ClientErrorMessage, handleClientErrorMessage } from './webviewError';
@@ -563,6 +563,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
     const vscode = acquireVsCodeApi();
     ${CLIENT_ERROR_JS}
     ${BROWSE_JS}
+    ${FLASH_JS}
     const $ = id => document.getElementById(id);
     const $req = id => { const el = $(id); if (!el) { throw new Error('missing element #' + id); } return el; };
     const autoEl = $req('shellArgsAuto');
@@ -693,6 +694,7 @@ export function renderHtml(webview: vscode.Webview, state: PanelState): string {
       } else if (m.type === 'saved') {
         saveOut.className = 'ok';
         saveOut.textContent = 'Saved ✓';
+        edaFlash(saveOut);
         setTimeout(() => { if (saveOut.textContent === 'Saved ✓') { saveOut.textContent = ''; saveOut.className = ''; } }, 4000);
       } else if (m.type === 'resolvedPath') {
         const out = __resolvePending.get(m.requestId);

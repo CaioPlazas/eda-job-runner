@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.8.2 — Motion
+
+Last of the three visual passes. Small, fast transitions where something
+changed — and nothing anywhere else.
+
+- Buttons, inputs and table rows ease into their hover and focus states
+  instead of snapping.
+- **The `Saved ✓` confirmation now fades in**, and re-plays every time you
+  save. Since 1.6.0 saving keeps the window open, so that little flash is the
+  only sign anything happened — and saving twice in a row used to show it once.
+- **A value list that changes now says so.** Adding a list, or refreshing one
+  whose values actually changed, briefly highlights that row; the lists that
+  didn't change stay still.
+- The "Scanning…" overlay fades in rather than appearing instantly.
+
+Deliberately absent: nothing animates when a window opens. These windows are
+opened dozens of times a day and an entrance animation, however short, just
+makes them feel slower. Nothing takes longer than 200ms, and nothing waits on
+an animation before responding to you.
+
+If your system is set to reduce motion, all of it is switched off.
+
 ## 1.8.1 — Structure
 
 Second of three visual passes. Still no flow changes.
