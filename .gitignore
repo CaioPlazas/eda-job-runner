@@ -33,3 +33,10 @@ examples/projects/veer-eh1/veer.core
 
 # Visual-test harness output (scripts/render-webviews.mjs + screenshot-webviews.mjs) -- regenerated, not committed.
 .webview-preview/
+
+# Local scratch config written by the extension while testing it in this repo.
+# The leading slash keeps this to the repo root -- the tracked sample configs
+# under examples/.vscode/ and sample-projects/*/.vscode/ are unaffected.
+# Also: these carry absolute local paths, which must never reach the public repo.
+/.vscode/eda-jobs.json
+/.vscode/eda-tools.json
