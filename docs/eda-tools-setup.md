@@ -30,7 +30,7 @@ wired up here as a lint/compile-style job, not a UVM sim job.
 
 ## 3. DSim Desktop (Altair) — free, full UVM support — done
 
-**Fully working.** Installed at `/home/eng/AltairDSim/2026`
+**Fully working.** Installed at `~/AltairDSim/2026`
 (from `AltairDSim2026_linux64.bin`, run via its InstallAnywhere console
 installer), licensed with a Free Individual License
 (`~/metrics-ca/dsim-license.json`, from the Altair DSim Cloud Portal),
@@ -117,17 +117,15 @@ license, not something that can be done here. What I confirmed:
   ```bash
   ~/altera/25.1std/questa_fse/linux_x86_64/lmhostid
   # -> The FlexNet host ID of this machine is
-  #    "00155d90a4a9 f889d2da54e1 00155d5d3bc0 d85ed381d398"
+  #    "<hostid-1> <hostid-2> <hostid-3> <hostid-4>"
   #    Only use ONE from the list of hostids.
   ```
   This lists every adapter FlexNet can see (no colons — that's
-  FlexNet's native format). **Use `d85ed381d398`** — it's the same
-  physical Ethernet MAC identified independently via `ipconfig.exe
-  /all` (`d8:5e:d3:81:d3:98`), now confirmed authoritatively by the
-  vendor's own licensing tool. The other three in that list are all
-  synthetic/inactive: `00155d90a4a9` is a dead leftover Hyper-V NAT
-  adapter, `f889d2da54e1` is the Wi-Fi adapter (disconnected on this
-  machine), and `00155d5d3bc0` is a Hyper-V loopback artifact — none of
+  FlexNet's native format). **Use the physical Ethernet adapter's ID.** Identify it
+  independently via `ipconfig.exe /all` and confirm it matches, rather
+  than guessing from the list order. The other three in that list are all
+  synthetic/inactive: the Hyper-V NAT adapter, the Wi-Fi adapter (if
+  disconnected), and any Hyper-V loopback artifact are all unsuitable — none of
   those are safe to node-lock a license to, since they can regenerate
   or simply aren't the adapter actually in use.
 
@@ -148,8 +146,8 @@ license, not something that can be done here. What I confirmed:
   Success prints `Hello` from inside the `vsim` run, not just from `vlog`.
 
 **Done as of this session** — licensed with a Fixed Node License
-(`LR-177672_License.dat`, node-locked to `d85ed381d398`, expires
-19-Jul-2027), stored at `~/altera/licenses/LR-177672_License.dat`
+(`<your>_License.dat`, node-locked to your Ethernet host ID, expires
+19-Jul-2027), stored at `~/altera/licenses/<license-request-id>_License.dat`
 (`chmod 600`). `examples/scripts/env_setup.sh` exports
 `SALT_LICENSE_SERVER` to that path automatically when the file exists,
 so `Questa Compile` and `Questa Test` in
