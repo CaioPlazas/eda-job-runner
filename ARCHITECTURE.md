@@ -7,10 +7,9 @@ this project cold — without the history of how it was built — can orient
 itself immediately and make changes that fit the existing design instead of
 fighting it or duplicating something that already exists.
 
-**Read this file fully before making changes.** Then check `PLAN.md` (phased
-backlog / design decisions) and `STATUS.md` (what shipped most recently, what
-was in flight) for anything that changed since this document was last
-updated. If something here contradicts the actual code, trust the code —
+**Read this file fully before making changes.** Then check the repo's open GitHub
+issues for what is still outstanding, and run `fleet.sh` for what state the repo
+is actually in right now. If something here contradicts the actual code, trust the code —
 this is a snapshot, not a live index — but treat the discrepancy as worth
 fixing in this file too, since keeping it accurate is the whole point of it
 existing.
@@ -25,7 +24,7 @@ of any specific EDA tool's syntax — a "job" is just `{name, command, cwd}`
 run through a configurable shell, with everything else (tool flags, seeds,
 pass/fail detection, value lists) built as generic, tool-agnostic primitives
 on top. This "tool-agnostic core" principle is a locked design decision (see
-`PLAN.md`'s "Locked decisions" section) — never special-case a specific
+`AGENTS.md`'s design constraints) — never special-case a specific
 tool's name or CLI syntax anywhere in `src/`; all tool-specific behavior
 (if any is ever needed) belongs in user-supplied regex patterns / a
 `ToolDefinition`, not in this extension's own code.
@@ -74,7 +73,7 @@ bottom.
 ## 3. Repository layout
 
 ```
-the development repo/          <- PRIVATE dev repo (this one)
+the development repo/  <- PRIVATE dev repo (this one)
 ├── src/                         <- All TypeScript source (see section 5)
 ├── test-fixtures/                <- Standalone Node test harnesses + captured real tool output (section 8)
 ├── scripts/                      <- Dev tooling, NOT shipped in the VSIX (section 8.3, 10)
@@ -91,17 +90,19 @@ the development repo/          <- PRIVATE dev repo (this one)
 ├── .gitignore
 ├── package.json                  <- Extension manifest: commands/menus/views/settings (section 7) + npm scripts/devDeps
 ├── tsconfig.json                 <- strict TS, ES2020 target, rootDir src/, outDir out/ (esbuild bundles to dist/ instead, see below)
-├── PLAN.md                       <- Authoritative phased plan/backlog + "Locked decisions" — READ for design rationale
-├── STATUS.md                     <- Last-session handoff notes: exact tag, what shipped, what's unresolved
+├── AGENTS.md                     <- Orientation for any coding agent: verification bar, lookup tables, design constraints
+├── PROJECT.yaml                  <- Machine-readable identity: paired public repo, publish strip list
+├── docs/notes/                   <- Archived design notes (historical; not a backlog)
 ├── CHANGELOG.md                  <- User-facing per-version changelog
 └── ARCHITECTURE.md               <- (this file)
 ```
 
 A **second, public repo**, `github.com/CaioPlazas/eda-job-runner` (local
-clone at `the public repo`, sibling directory to this one, NOT inside
-this repo), is a manually-synced release-only mirror that `vsce publish`
-actually runs from. See section 9 — do not confuse the two when asked to
-"release" or "publish."
+clone at `the public repo`, a sibling of this repo inside the
+shared `the project directory/` container directory, NOT nested inside this
+repo), is a script-synced release-only mirror that `vsce publish` actually runs
+from. See section 9 — do not confuse the two when asked to "release" or
+"publish."
 
 ## 4. The data model
 
@@ -525,7 +526,7 @@ handlers, so the rejection wasn't even visible.
 
 `finalizeRun(run, state, exitCode, signal)` is `async` and does, **in this exact
 order** (the ordering is load-bearing, see the in-code comments and Part 2
-bug #7 in `PLAN.md`'s Phase 12 for why):
+bug #7 from the Phase 12 code review for why):
 
 1. Re-entrancy guard (`run.finished`) — Node can fire both `'error'` and
    `'exit'` for the same child in some failure modes; only the first call
@@ -558,7 +559,7 @@ THIS (older) `finish()` call's `setLaneStatus`/`resolveLaneCompletion`
 run's live "running" status with the old run's terminal one, and
 incorrectly resolve the new run's completion promise. Keeping the guard
 "hot" for the entire duration of `finish()`'s cleanup closes this race
-entirely. (Fixed in the Phase 12 review — see `PLAN.md`.)
+entirely. (Fixed in the Phase 12 review.)
 
 `pollReattachment()` (the no-live-child equivalent, 5.4.3) has the identical
 shape and for the identical reason: it sets `finalizing` and clears its own
@@ -798,7 +799,7 @@ cleanup).
   5.11) — this method's only job is gathering `{path, size}` for every
   existing run and unlinking whatever `planPrune` says to delete.
 
-**Family-aware retention** (added in the Phase 12 review, see `PLAN.md`):
+**Family-aware retention** (added in the Phase 12 review):
 a repeat-count batch's lanes (filenames carrying a `_<i>-<total>` suffix,
 produced by `sanitizeLaneSuffix` in `jobRunner.ts`) are grouped by
 `logRetention.ts`'s `groupIntoFamilies` into ONE family for both the count
@@ -1221,7 +1222,7 @@ fields, then **clears `customArgsWrap`, `paramOverridesWrap`, and
 never carries any of the three, so without this clear, a previously-loaded
 job/template's custom args or parameter overrides would silently leak into
 whatever gets loaded next (a real bug found and fixed via the visual-test
-harness — see `PLAN.md`'s Phase 12).
+harness — see the Phase 12 code review).
 
 The **choices-vs-var toggle** (`buildOptionRow`'s `varToggle` button, `✎ var`
 / `◀ choices`): a value-taking option whose metavar is an argparse
@@ -1418,8 +1419,8 @@ choices-metavar/an attached list, a job with custom args/param overrides/a
 post-run command, templates, global params, a full Shell&Env `PanelState`)
 and writes the resulting HTML to `.webview-preview/html/*.html` (gitignored
 AND vscodeignored — **this output directory must never ship in the VSIX**;
-it once did by accident until `.vscodeignore` was updated, see `PLAN.md`'s
-Phase 12).
+it once did by accident until `.vscodeignore` was updated, see the Phase 12
+code review).
 
 `screenshot-webviews.mjs` then loads each of those static HTML files in
 headless Chromium via `playwright-core` (chosen specifically because it
@@ -1474,7 +1475,7 @@ doesn't itself judge correctness). This has already caught two real bugs
 this way: a template Load leaking a stale parameter override into the newly
 loaded job (`jobConfigPanel.ts`), and a non-idempotent client-side re-sort
 in the Tool Setup favorite-toggle patch (section 6.3) — both fixed, see
-`PLAN.md`'s Phase 12 section for full detail.
+the Phase 12 code review for full detail.
 
 **If extending this harness**: keep `.vscodeignore` in sync with anything
 new under `scripts/` or any new generated-output directory — this is the
@@ -1572,34 +1573,49 @@ things.
 
 ## 9. The two-repo Marketplace publishing setup
 
-This is a manual, human-triggered (not automated in CI) process, but it's
-worth understanding the shape even if you're never asked to run it:
+This is a human-triggered (not automated in CI) process, but it's worth
+understanding the shape even if you're never asked to run it:
 
-- **This repo** (`the development repo`, private on GitHub) is where all
-  the actual development happens — the messy iteration, `PLAN.md`/
-  `STATUS.md`, `.github/`, `.claude/`. Its own `release.yml` (section 8.4)
-  is unaffected by any of this.
+- **This repo** (`the development repo`, and
+  `the development repo` on GitHub) is where all the actual
+  development happens — the messy iteration, the agent docs, `.github/`,
+  `.claude/`. Its own `release.yml` (section 8.4) is unaffected by any of this.
 - **A separate public repo**, `github.com/CaioPlazas/eda-job-runner`, local
-  clone at `the public repo` (a sibling directory, NOT nested inside
-  this repo), is a clean release-only snapshot: source + `media/` +
+  clone at `the public repo` (a sibling inside the shared
+  `the project directory/` container, NOT nested inside this repo), is a
+  clean release-only snapshot: source + `media/` +
   `examples/`/`sample-projects/`/`docs/`/`test-fixtures/` (all user-facing) +
   `README.md`/`CHANGELOG.md`/`LICENSE`/`package.json`. **Deliberately
-  excludes** `PLAN.md`/`STATUS.md`/`.claude/`/`.github/` — this is the repo
+  excludes** the agent docs, `.claude/` and `.github/` — this is the repo
   `vsce publish` actually runs from, and the one linked from the
   Marketplace listing's `repository`/`bugs`/`homepage` fields (this repo's
   own `package.json` mirrors those same URLs, so both repos' user-facing
   links point at the same public place).
-- **Sync is manual, not automated**: `rsync -a --exclude node_modules/
-  --exclude dist/ --exclude '*.vsix' --exclude .git/ --exclude .claude/
-  --exclude .github/ --exclude PLAN.md --exclude STATUS.md --exclude
-  .webview-preview/ ./ the public repo/`, then reapply the public
-  clone's own `package.json`-only fields that rsync always overwrites
-  (`galleryBanner`, `keywords` — `repository`/`bugs`/`homepage`/`icon` are
-  actually IDENTICAL in both repos already, no reapplication needed for
-  those), update `CHANGELOG.md`, verify (typecheck/tests/compile/package)
-  in the public clone too, commit, `git tag vX.Y.Z`, push, `gh release
-  create vX.Y.Z *.vsix --repo CaioPlazas/eda-job-runner`, then `npx vsce
-  publish --pre-release` from that clone.
+- **The local directory names and the GitHub repo names differ on purpose** —
+  `private`/`public` on disk, `the development repo`/`eda-job-runner` on
+  GitHub. Nothing in the tooling pattern-matches on a directory name: every
+  script identifies a clone by its `origin` remote, so renaming or relocating
+  either side costs nothing.
+- **Sync is declared, not hand-run**: `PROJECT.yaml` states what the public
+  tree is, and `the publish tooling <private-repo-path>
+  [--channel stable]` builds it. Its `strip:` list replaces what used to be a
+  long chain of `--exclude` flags, and `preserve_public:` records the
+  public-only `package.json` keys (`galleryBanner`, `keywords`) that the old
+  rsync silently overwrote on every run and a human then had to reapply by
+  hand — the step that got forgotten most often. **Dry-run is the default
+  posture**: without `--push` the script builds the tree, diffs it against the
+  public clone, and changes nothing.
+- **`publish.sh` only moves source between the two git repos.** It does not
+  build, package, tag, or publish to the Marketplace. Packaging
+  (`vsce package`), the GitHub Release, and `vsce publish` stay deliberate
+  manual steps run from the public clone, so that "sync the source" and "ship
+  a version to users" can never collapse into one accidental action.
+- **The first `publish.sh` run will remove `ARCHITECTURE_INDEX.MD` and
+  `LLM_WELCOME.MD` from the public repo** — leftovers from before those two
+  documents were folded into `AGENTS.md`; nothing on the private side produces
+  them any more. That removal is expected. (`AGENTS.md` and `CLAUDE.md` are in
+  `strip:`, but they have never been in the public tree, so stripping them is a
+  no-op — verify with `publish.sh --dry-run` rather than assuming either way.)
 - **Published pre-release channel ONLY** — by explicit standing user
   instruction, never publish a non-pre-release version of this extension
   unless told otherwise.
@@ -1610,10 +1626,10 @@ worth understanding the shape even if you're never asked to run it:
   unpublished.
 - Before assuming any of this needs doing, **check actual state directly**
   (`git tag`, `gh run list --workflow=release.yml`, `npx vsce show
-  CaioPlazas.eda-job-runner`) rather than trusting a possibly-stale claim in
-  `STATUS.md` about what has or hasn't been published — this has been wrong
-  before (a `STATUS.md` note claimed a whole batch was still unpublished
-  when it had, in fact, already gone out).
+  CaioPlazas.eda-job-runner`) rather than trusting a checked-in document's
+  claim about what has or hasn't been published — this has been wrong before
+  (a status note claimed a whole batch was still unpublished when it had, in
+  fact, already gone out).
 
 ## 10. House conventions worth internalizing before editing anything
 
@@ -1695,11 +1711,11 @@ bolted on.
    feature seems to need "if the tool is Questa, do X," it almost certainly
    means the feature needs a new generic, user-configurable primitive
    instead (a regex field, a value list, a template) — this is the
-   tool-agnostic-core locked decision from `PLAN.md`.
-10. **Keep `PLAN.md`/`STATUS.md`/`CHANGELOG.md` (and this file, if the change
-    is architectural) updated alongside the code**, and follow the existing
-    commit/tag/release cadence described in `STATUS.md`'s "Working
-    agreement" — one git commit per meaningful change/release, a tag per
+   tool-agnostic-core design constraint in `AGENTS.md`.
+10. **Keep `CHANGELOG.md` (and this file, if the change is architectural)
+    updated alongside the code**; outstanding work belongs in GitHub issues,
+    not in a checked-in document. Follow the existing commit/tag/release
+    cadence — one git commit per meaningful change/release, a tag per
     release (`vX.Y.Z`), never hand-build and attach a VSIX yourself (the tag
     push triggers `release.yml` to do that automatically for this repo; the
     public repo's own release is the manual sequence in section 9).
