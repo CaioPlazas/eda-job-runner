@@ -8,8 +8,8 @@ itself immediately and make changes that fit the existing design instead of
 fighting it or duplicating something that already exists.
 
 **Read this file fully before making changes.** Then check the repo's open GitHub
-issues for what is still outstanding, and run `fleet.sh` for what state the repo
-is actually in right now. If something here contradicts the actual code, trust the code —
+issues for what is still outstanding. If something here contradicts the actual code,
+trust the code —
 this is a snapshot, not a live index — but treat the discrepancy as worth
 fixing in this file too, since keeping it accurate is the whole point of it
 existing.
@@ -23,8 +23,8 @@ custom script) without leaving the editor. It has **zero built-in knowledge**
 of any specific EDA tool's syntax — a "job" is just `{name, command, cwd}`
 run through a configurable shell, with everything else (tool flags, seeds,
 pass/fail detection, value lists) built as generic, tool-agnostic primitives
-on top. This "tool-agnostic core" principle is a locked design decision (see
-`AGENTS.md`'s design constraints) — never special-case a specific
+on top. This "tool-agnostic core" principle is a locked design decision —
+never special-case a specific
 tool's name or CLI syntax anywhere in `src/`; all tool-specific behavior
 (if any is ever needed) belongs in user-supplied regex patterns / a
 `ToolDefinition`, not in this extension's own code.
@@ -73,7 +73,7 @@ bottom.
 ## 3. Repository layout
 
 ```
-the development repo/  <- PRIVATE dev repo (this one)
+<repo root>
 ├── src/                         <- All TypeScript source (see section 5)
 ├── test-fixtures/                <- Standalone Node test harnesses + captured real tool output (section 8)
 ├── scripts/                      <- Dev tooling, NOT shipped in the VSIX (section 8.3, 10)
@@ -85,24 +85,16 @@ the development repo/  <- PRIVATE dev repo (this one)
 ├── sample-projects/              <- Two more complete example EDA projects (uvm_alu, uart_soc) with real testbenches
 ├── docs/                         <- eda-tools-setup.md (user-facing tool-registration walkthrough)
 ├── media/                        <- icon.png / icon.svg (extension + Marketplace icon)
-├── .github/workflows/            <- ci.yml (every push/PR) + release.yml (tag-triggered, builds+attaches VSIX)
 ├── .vscodeignore                 <- What's excluded from the packaged VSIX (dev-only dirs; keep in sync when adding new dev tooling!)
 ├── .gitignore
 ├── package.json                  <- Extension manifest: commands/menus/views/settings (section 7) + npm scripts/devDeps
 ├── tsconfig.json                 <- strict TS, ES2020 target, rootDir src/, outDir out/ (esbuild bundles to dist/ instead, see below)
-├── AGENTS.md                     <- Orientation for any coding agent: verification bar, lookup tables, design constraints
-├── PROJECT.yaml                  <- Machine-readable identity: paired public repo, publish strip list
-├── docs/notes/                   <- Archived design notes (historical; not a backlog)
 ├── CHANGELOG.md                  <- User-facing per-version changelog
 └── ARCHITECTURE.md               <- (this file)
 ```
 
-A **second, public repo**, `github.com/CaioPlazas/eda-job-runner` (local
-clone at `the public repo`, a sibling of this repo inside the
-shared `the project directory/` container directory, NOT nested inside this
-repo), is a script-synced release-only mirror that `vsce publish` actually runs
-from. See section 9 — do not confuse the two when asked to "release" or
-"publish."
+Development happens in a separate repository from the one you may be reading
+this in; see section 9.
 
 ## 4. The data model
 
@@ -1565,71 +1557,36 @@ things.
   for f in test-fixtures/run-*-tests.mjs; do node "$f"; done
   npx vsce package --no-dependencies -o /tmp/some-path.vsix   # dry run, don't commit the .vsix
   ```
-- **`.github/workflows/release.yml`** (triggered on pushing a tag matching
-  `v*`): rebuilds, `vsce package`s, then creates-or-updates a GitHub Release
-  for that tag with the built `.vsix` attached. This is **this (private)
-  repo's own release mechanism** — entirely separate from the Marketplace
-  publish flow (section 9), which runs from the OTHER (public) repo.
+- **There is no release workflow here any more.** `.github/workflows/release.yml`
+  used to fire on a `v*` tag and attach a `.vsix` to a GitHub Release **on this
+  private repo**. It produced a byte-identical duplicate of the asset already on
+  the public repo's release for the same tag, and nobody consumed it. Releases
+  are cut against the *public* repo now, by the maintainer's release tooling.
 
-## 9. The two-repo Marketplace publishing setup
+## 9. The two-repo publishing setup
 
-This is a human-triggered (not automated in CI) process, but it's worth
-understanding the shape even if you're never asked to run it:
+This project is developed in one repository and published from another. The
+public repo is a clean, release-only mirror, and it is the tree that gets
+packaged and published to the Marketplace; development, agent documentation and
+CI live on the other side and are stripped on the way out.
 
-- **This repo** (`the development repo`, and
-  `the development repo` on GitHub) is where all the actual
-  development happens — the messy iteration, the agent docs, `.github/`,
-  `.claude/`. Its own `release.yml` (section 8.4) is unaffected by any of this.
-- **A separate public repo**, `github.com/CaioPlazas/eda-job-runner`, local
-  clone at `the public repo` (a sibling inside the shared
-  `the project directory/` container, NOT nested inside this repo), is a
-  clean release-only snapshot: source + `media/` +
-  `examples/`/`sample-projects/`/`docs/`/`test-fixtures/` (all user-facing) +
-  `README.md`/`CHANGELOG.md`/`LICENSE`/`package.json`. **Deliberately
-  excludes** the agent docs, `.claude/` and `.github/` — this is the repo
-  `vsce publish` actually runs from, and the one linked from the
-  Marketplace listing's `repository`/`bugs`/`homepage` fields (this repo's
-  own `package.json` mirrors those same URLs, so both repos' user-facing
-  links point at the same public place).
-- **The local directory names and the GitHub repo names differ on purpose** —
-  `private`/`public` on disk, `the development repo`/`eda-job-runner` on
-  GitHub. Nothing in the tooling pattern-matches on a directory name: every
-  script identifies a clone by its `origin` remote, so renaming or relocating
-  either side costs nothing.
-- **Sync is declared, not hand-run**: `PROJECT.yaml` states what the public
-  tree is, and `the publish tooling <private-repo-path>
-  [--channel stable]` builds it. Its `strip:` list replaces what used to be a
-  long chain of `--exclude` flags, and `preserve_public:` records the
-  public-only `package.json` keys (`galleryBanner`, `keywords`) that the old
-  rsync silently overwrote on every run and a human then had to reapply by
-  hand — the step that got forgotten most often. **Dry-run is the default
-  posture**: without `--push` the script builds the tree, diffs it against the
-  public clone, and changes nothing.
-- **`publish.sh` only moves source between the two git repos.** It does not
-  build, package, tag, or publish to the Marketplace. Packaging
-  (`vsce package`), the GitHub Release, and `vsce publish` stay deliberate
-  manual steps run from the public clone, so that "sync the source" and "ship
-  a version to users" can never collapse into one accidental action.
-- **The first `publish.sh` run will remove `ARCHITECTURE_INDEX.MD` and
-  `LLM_WELCOME.MD` from the public repo** — leftovers from before those two
-  documents were folded into `AGENTS.md`; nothing on the private side produces
-  them any more. That removal is expected. (`AGENTS.md` and `CLAUDE.md` are in
-  `strip:`, but they have never been in the public tree, so stripping them is a
-  no-op — verify with `publish.sh --dry-run` rather than assuming either way.)
-- **Published pre-release channel ONLY** — by explicit standing user
-  instruction, never publish a non-pre-release version of this extension
-  unless told otherwise.
-- **`vsce unpublish` deletes the ENTIRE Marketplace listing** (all versions,
-  reviews, install counts) — there is no per-version removal via the CLI. A
-  bad version should be superseded by a corrected higher version instead
-  (Marketplace serves the highest version to pre-release opt-ins), not
-  unpublished.
-- Before assuming any of this needs doing, **check actual state directly**
-  (`git tag`, `gh run list --workflow=release.yml`, `npx vsce show
-  CaioPlazas.eda-job-runner`) rather than trusting a checked-in document's
-  claim about what has or hasn't been published — this has been wrong before
-  (a status note claimed a whole batch was still unpublished when it had, in
-  fact, already gone out).
+**The mechanics are not described here.** They are declared in machine-readable
+form and read by the tooling that performs them, so a prose copy in this file
+would be a place to keep current that nothing verifies — and the last one went
+stale.
+
+What is worth knowing while changing code:
+
+- The public tree is built with `git archive`, so **build output, ignored files
+  and local scratch cannot leak into a release** — but equally, anything you
+  have not committed will not be published.
+- The public `package.json` carries `galleryBanner` and `keywords` that this one
+  does not, and this one carries a deliberately fake `publisher` so that a
+  `vsce publish` run from the development repo cannot succeed. Do not "fix"
+  either by copying values across; they are reconciled during the sync.
+- **Never publish, tag, or release anything unless explicitly asked**, and check
+  actual state (`git tag`, `gh release list`, `vsce show`) before trusting any
+  checked-in claim about what has shipped. That has been wrong here before.
 
 ## 10. House conventions worth internalizing before editing anything
 
@@ -1711,7 +1668,7 @@ bolted on.
    feature seems to need "if the tool is Questa, do X," it almost certainly
    means the feature needs a new generic, user-configurable primitive
    instead (a regex field, a value list, a template) — this is the
-   tool-agnostic-core design constraint in `AGENTS.md`.
+   tool-agnostic-core design constraint, §1.
 10. **Keep `CHANGELOG.md` (and this file, if the change is architectural)
     updated alongside the code**; outstanding work belongs in GitHub issues,
     not in a checked-in document. Follow the existing commit/tag/release

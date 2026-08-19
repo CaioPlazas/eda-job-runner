@@ -17,7 +17,7 @@ Search **"EDA Job Runner"** in the Extensions view, or get it from the
 It's **pre-release only** for now — click "Switch to Pre-Release Version"
 to install it.
 
-## What it does
+## Features
 
 - **Sidebar job list.** Add a job, configure it in a real form (not a
   chain of quick-pick prompts), run it with a click. Group jobs into
@@ -117,7 +117,7 @@ Two things trip people up with `bsub`/`qsub`-style jobs:
   or point the job's **Live log file to tail** at that `-o` file (use a
   fixed filename, not `%J`).
 
-## Known rough edges
+## Status
 
 - If VS Code reloads or closes mid-run, the job briefly shows as "running
   (detached)" until reattachment kicks back in (near-instant in practice),
@@ -172,3 +172,13 @@ npm run compile   # or `npm run watch`
 
 Press F5 for an Extension Development Host. `npm run package` builds a
 `.vsix`.
+
+## Credits
+
+Built on the VS Code extension API. The sample projects under `sample-projects/` exist so
+the extension can be tried without any EDA tool installed; the shipped icon is generated
+by `scripts/generate-icon.js`.
+
+## License
+
+GPL-3.0. See [LICENSE](LICENSE).
